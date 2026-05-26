@@ -28,6 +28,7 @@
 #include "drivers/esp32_mcp2515_driver.h"
 #include "t2can_bus2_recovery.h"
 #include "t2can_bus2_table.h"
+#include "t2can_ota_rollback.h"
 #endif
 
 #ifdef DRIVER_MCP2515
@@ -238,6 +239,7 @@ static void app_main_setup()
 #ifdef DRIVER_T2CAN_DUAL
     t2canSetupSecondary();
 #endif
+    otaMarkValid();
 }
 
 static bool app_main_loop()
@@ -321,6 +323,8 @@ extern "C" void app_main(void)
         nvsErr = nvs_flash_init();
     }
     ESP_ERROR_CHECK(nvsErr);
+
+    otaCheckAndBoot();
 
     app_main_setup();
 #if defined(DRIVER_TWAI)
