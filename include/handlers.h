@@ -408,34 +408,6 @@ struct HW3Handler : public TeslaHandlerBase
             return;
         }
         if (frame.id == 2047) { handleGTWStatus(frame, "HW3Handler"); return; }
-        {
-            if (frame.dlc < 6)
-                return;
-            if (readMuxID(frame) != 2)
-                return;
-
-            uint8_t next = readGTWAutopilot(frame);
-            int prev = gatewayAutopilot;
-            gatewayAutopilot = next;
-
-            if (enablePrint && prev != next)
-            {
-                char buf[LogRingBuffer::kMaxMsgLen];
-                snprintf(buf, sizeof(buf), "HW3Handler: GTW_autopilot: %d -> %u (%s)",
-                         prev, (unsigned int)next, describeGTWAutopilot(next));
-                logRing.push(buf,
-#ifndef NATIVE_BUILD
-                             millis()
-#else
-                             0
-#endif
-                );
-#ifndef NATIVE_BUILD
-                Serial.println(buf);
-#endif
-            }
-            return;
-        }
         if (frame.id == 1021)
         {
             if (frame.dlc < 8)
