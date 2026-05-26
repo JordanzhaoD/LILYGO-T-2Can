@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Bus2 MCP2515 error recovery: auto-detects BUS-OFF state via EFLG register polling and resets the transceiver with debounced 1s interval and exponential backoff on repeated failures.
+- Bus2 MCP2515 error recovery: auto-detects BUS-OFF state via EFLG register polling and resets the transceiver with a 1 s debounced interval on repeated failures.
 - Bus2 LRU eviction table: replaces the fixed 160-entry ID array with a bounded table that evicts the least-recently-seen CAN ID when full, preventing silent ID loss under heavy traffic.
 - OTA rollback protection: on dual-OTA partition layout, fresh OTA boots log a warning and call `otaMarkValid()` after CAN init succeeds. If the firmware crashes before validation, the bootloader automatically rolls back to the previous partition.
 - Native unit tests for HW3/Legacy/Nag handlers (10 tests covering park/drive detection, AP state, injection gate, speed profile, nag echo).

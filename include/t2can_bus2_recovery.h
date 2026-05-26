@@ -1,7 +1,7 @@
 #pragma once
 // Bus2 MCP2515 error recovery for DRIVER_T2CAN_DUAL builds.
-// Detects BUS-OFF and TX-error states via EFLG register and performs
-// a soft reset + reconfiguration sequence to restore operation.
+// Detects BUS-OFF state via EFLG_TXBO (bit 5) and performs a soft reset
+// + reconfiguration sequence to restore operation. Debounced at 1 s.
 
 #ifdef ESP_PLATFORM
 #include "platform/espidf_runtime.h"
@@ -45,7 +45,7 @@ public:
                 consecutiveErrors_ = 0;
             } else {
                 Serial.println("bus2 recovery: MCP2515 re-init FAILED");
-                lastErrorMs_ = now + 1000;
+                lastErrorMs_ = now;
             }
             return true;
         }

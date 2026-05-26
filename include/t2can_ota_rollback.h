@@ -5,20 +5,20 @@
 
 static const char *kOtaTag = "ota_rollback";
 
-static bool otaIsFreshBoot() {
+inline bool otaIsFreshBoot() {
     const esp_partition_t *running = esp_ota_get_running_partition();
     const esp_partition_t *boot = esp_ota_get_boot_partition();
     return (running != nullptr && boot != nullptr && running != boot);
 }
 
-static void otaCheckAndBoot() {
+inline void otaCheckAndBoot() {
     if (otaIsFreshBoot()) {
         ESP_LOGW(kOtaTag, "Fresh OTA boot detected — running unvalidated firmware");
         ESP_LOGW(kOtaTag, "If otaMarkValid() is not called, bootloader will roll back");
     }
 }
 
-static void otaMarkValid() {
+inline void otaMarkValid() {
     esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
     if (err == ESP_OK) {
         ESP_LOGI(kOtaTag, "OTA firmware validated — rollback cancelled");
