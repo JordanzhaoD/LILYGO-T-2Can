@@ -26,6 +26,7 @@
 
 #ifdef DRIVER_T2CAN_DUAL
 #include "drivers/esp32_mcp2515_driver.h"
+#include "t2can_bus2_recovery.h"
 #endif
 
 #ifdef DRIVER_MCP2515
@@ -93,6 +94,7 @@ static bool appTwaiGpioValid(gpio_num_t pin, bool tx)
 
 #ifdef DRIVER_T2CAN_DUAL
 static std::unique_ptr<ESP32_MCP2515Driver> appDriverSecondary;
+static T2CanBus2Recovery bus2Recovery;
 static volatile uint32_t t2canSecondaryRxCount = 0;
 
 static void t2canSetupSecondary()
@@ -114,6 +116,7 @@ static void t2canSetupSecondary()
     }
     appDriverSecondary->mcp().setReceiveAllMode();
     Serial.println("CAN B (MCP2515) ready @ 500k");
+    bus2Recovery.begin(appDriverSecondary.get());
 }
 
 // Transmit on the secondary bus. No automatic logic targets bus B yet
@@ -318,6 +321,7 @@ static void app_can_task(void *)
         bool processed = appLoop<TWAIDriver>();
 #ifdef DRIVER_T2CAN_DUAL
         t2canDrainSecondary();
+        bus2Recovery.tick();
         t2canServiceModeTick();
 #endif
         appCanTaskLoops = appCanTaskLoops + 1;
