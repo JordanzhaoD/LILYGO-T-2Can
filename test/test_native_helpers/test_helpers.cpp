@@ -90,10 +90,10 @@ void test_readMuxID_max_value()
 
 // --- isFSDSelectedInUI ---
 
-void test_isFSDSelectedInUI_true_when_bit5_set()
+void test_isFSDSelectedInUI_true_when_bit6_set_legacy()
 {
     CanFrame f = {};
-    f.data[4] = 0x20; // bit 5 set
+    f.data[4] = 0x40; // bit 6 set (verified: data[4]>>6)
     TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
@@ -258,11 +258,11 @@ void test_ui_bit_clear_reads_frame_as_false()
     TEST_ASSERT_FALSE(isFSDSelectedInUI(f));
 }
 
-void test_ui_bit5_still_reads_real_bit()
+void test_ui_bit5_is_not_detected()
 {
     CanFrame f = {};
-    f.data[4] = 0x20;
-    TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
+    f.data[4] = 0x20; // bit 5 only — NOT the FSD bit (which is bit 6)
+    TEST_ASSERT_FALSE(isFSDSelectedInUI(f));
 }
 
 void test_ui_bit6_still_reads_real_bit()
@@ -295,7 +295,7 @@ int main()
     RUN_TEST(test_readMuxID_zero);
     RUN_TEST(test_readMuxID_max_value);
 
-    RUN_TEST(test_isFSDSelectedInUI_true_when_bit5_set);
+    RUN_TEST(test_isFSDSelectedInUI_true_when_bit6_set_legacy);
     RUN_TEST(test_isFSDSelectedInUI_false_when_bit5_clear);
     RUN_TEST(test_isFSDSelectedInUI_ignores_other_bits);
     RUN_TEST(test_isFSDSelectedInUI_true_when_bit6_set);
@@ -319,7 +319,7 @@ int main()
     RUN_TEST(test_computeVehicleChecksum_sums_payload_and_frame_id);
 
     RUN_TEST(test_ui_bit_clear_reads_frame_as_false);
-    RUN_TEST(test_ui_bit5_still_reads_real_bit);
+    RUN_TEST(test_ui_bit5_is_not_detected);
     RUN_TEST(test_ui_bit6_still_reads_real_bit);
     RUN_TEST(test_runtime_defaults_start_disabled);
 

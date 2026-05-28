@@ -3,6 +3,27 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+
+## [3.0.4-beta.1] - 2026-05-28
+
+### Changed (Breaking)
+- FSD detection bit corrected from 37 to 38 (matches verified tesla-fsd-controller)
+- All compile-time feature flags (ISA_SPEED_CHIME_SUPPRESS, EMERGENCY_VEHICLE_DETECTION,
+  ENHANCED_AUTOPILOT, BYPASS_TLSSC_REQUIREMENT, DASH_FSD_252_COMPAT) replaced with
+  runtime switches accessible from Dashboard UI
+- LegacyHandler CAN 760: replaced MPP bucket table with simple offset write
+- HW3Handler mux 2: complete rewrite with auto target, custom buckets, high-speed mode
+
+### Added
+- Auto hardware detection mode (hwMode=3): detects HW3/HW4 from CAN 920
+- Ban Shield: CAN 2047 snapshot protection (opt-in)
+- TLSSC bypass option (bit 38) for HW3+HW4
+- HW4 speed offset support (hw4OffsetRaw) on mux 2
+- Legacy CAN 1080 visionSpeedSlider override
+- Legacy CAN 1006 mux 1 removeVisionSpeedLimit option (bit 48)
+- HW3 auto speed targeting: <60->64kph, =60->100kph, 60-79->85kph, >=80->passthrough
+- 15 new CarManagerBase state fields for runtime FSD configuration
+
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
