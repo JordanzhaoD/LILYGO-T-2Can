@@ -425,127 +425,107 @@ struct HW3Handler : public CarManagerBase
             if (frame.dlc < 8)
                 return;
             auto index = readMuxID(frame);
+
+            // ── Mux 0: FSD activation ──────────────────────────────────────
             if (index == 0)
             {
-                const bool fsdRequested = forceActivateRuntime || isFSDSelectedInUI(frame);
-                ADEnabled = fsdRequested && (!checkAD || checkAD());
+                bool fsdRequested = (bool)forceActivateRuntime || isFSDSelectedInUI(frame);
+                fsdTriggered = fsdRequested && (!checkAD || checkAD());
+                ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && ADEnabled && (!checkAD || checkAD()))
+            if (index == 0 && (bool)fsdTriggered)
             {
-                speedOffset = std::max(std::min(((uint8_t)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
-                // Mirror stock offset to a global so the mux-2 override path
-                // (and the WebUI status JSON) can read it without going
-                // through the Shared<int> wrapper.
-                hw3StockOffsetKph = speedOffset;
-#if defined(ESP32_DASHBOARD) && DASH_FSD_252_COMPAT
-                // 2.5.2 compat sends after the handler from the saved
-                // original frame, once the AP Gate allows injection.
-#else
-                // Built-in full activation sequence for non-compat builds.
-                setSpeedProfileV12V13(frame, speedProfile);
+                speedOffset = std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
+                hw3StockOffsetKph = (int)speedOffset;
                 setBit(frame, 46, true);
+                if ((bool)tlsscBypass) setBit(frame, 38, true);
+                setSpeedProfileV12V13(frame, speedProfile);
                 framesSent++;
                 driver.send(frame);
-                if (onSend)
-                    onSend(0, true);
-#endif
+                if (onSend) onSend(0, true);
             }
-            if (index == 1 && (!checkAD || checkAD()))
-            {
-#if defined(ESP32_DASHBOARD) && DASH_FSD_252_COMPAT
-                // 2.5.2 AD plugin did not shadow mux 1; keep bus writes minimal.
-#else
-                // HW3 mux 1: clear nag bit ONLY. Reference RP2040CAN-FSD
-                // (field-stable on the same car this firmware targets) sends
-                // ONLY bit 19=0 on mux 1 — no bit 46. tesla-open-can-mod and
-                // tesla-fsd-controller-main agree. Setting bit 46 here on top
-                // of the gateway's stock mux 1 byte 5 fights other unrelated
-                // signals in that byte and on some firmwares destabilizes the
-                // grey wheel. Also note: this fires unconditionally (just
-                // requires CAN injection on), not gated on ADEnabled — nag
-                // suppression is harmless when FSD isn't selected.
-                bool modified = false;
-                setBit(frame, 19, false);
-                modified = true;
-#if !defined(ESP32_DASHBOARD)
-#if defined(ENHANCED_AUTOPILOT)
-                if (enhancedAutopilotRuntime && enhancedAutopilotInjectionAllowed(injectionGateOpen()))
-                {
-                    // already set above
-                }
-#endif
-#endif
-                if (modified)
-                {
-                    framesSent++;
-                    driver.send(frame);
-                    if (onSend)
-                        onSend(1, true);
-                }
-#endif
-            }
-#if defined(ESP32_DASHBOARD) && DASH_FSD_252_COMPAT
-            // Stable FSD compatibility keeps mux 0 as bit46-only post-handler
-            // injection. Restore only the HW3 custom-speed write on mux 2:
-            // no readiness assist, no stock passthrough, no default cap frame.
-            if (index == 2 && (ADEnabled || forceActivateRuntime) && dashHw3CustomSpeedActive())
-            {
-                uint8_t fl = fusedSpeedLimitRaw;
-                if (fl > 0 && fl < 31)
-                {
-                    CanFrame shaped = frame;
-                    uint8_t activeRaw = dashComputeHw3OffsetRaw(speedOffset);
-                    hw3OffsetTargetRaw = activeRaw;
-                    dashWriteHw3OffsetRawShared(shaped, activeRaw);
-                    dashApplyHw3OffsetSlew(shaped, frame);
 
-                    if (framePayloadChanged(frame, shaped))
-                    {
-                        framesSent++;
-                        bool ok = driver.send(shaped);
-                        if (onSend)
-                            onSend(2, ok);
+            // ── Mux 1: Nag suppression ─────────────────────────────────────
+            if (index == 1 && (bool)fsdTriggered)
+            {
+                setBit(frame, 19, false);
+                driver.send(frame);
+                if (onSend) onSend(1, true);
+            }
+
+            // ── Mux 2: Speed offset (three-layer + slew limiter) ──────────
+            if (index == 2 && (bool)fsdTriggered)
+            {
+                uint8_t activeRaw = (uint8_t)std::max(std::min((int)speedOffset, 255), 0);
+
+                uint8_t fl = fusedSpeedLimitRaw;
+                if (fl > 0 && fl < 31) {
+                    int fusedLimitKph = (int)fl * 5;
+                    if (fusedLimitKph < kHw3StockOffsetCutoverKph) {
+                        if (hw3CustomSpeed || hw3AutoSpeed) {
+                            uint16_t targetSpeedKph = hw3CustomSpeed
+                                ? dashComputeHw3CustomTargetKph(static_cast<uint8_t>(fusedLimitKph))
+                                : dashComputeHw3AutoTargetKph(static_cast<uint8_t>(fusedLimitKph));
+                            if (targetSpeedKph > 0) {
+                                int desiredOffsetKph = std::max((int)targetSpeedKph - fusedLimitKph, 0);
+                                activeRaw = dashEncodeHw3Offset(desiredOffsetKph, static_cast<uint8_t>(fusedLimitKph));
+                            }
+                        }
+                    } else {
+                        if (hw3HighSpeedEnable) {
+                            int idx = (fusedLimitKph - kHw3HighSpeedBucketBaseKph_verified)
+                                      / kHw3HighSpeedBucketStepKph_verified;
+                            if (idx < 0) idx = 0;
+                            if (idx >= kHw3HighSpeedBucketCount_verified) idx = kHw3HighSpeedBucketCount_verified - 1;
+                            uint8_t pct = hw3HighSpeedTargetPct[idx];
+                            if (pct > 0) {
+                                activeRaw = dashEncodeHw3OffsetFromPct((int)pct, static_cast<uint8_t>(fusedLimitKph));
+                            }
+                        }
                     }
                 }
-            }
+
+                hw3OffsetTargetRaw = activeRaw;
+
+                // Slew limiter: damps downward drops only
+                if (hw3OffsetSlew && fl > 0 && (int)fl * 5 < kHw3StockOffsetCutoverKph) {
+                    uint32_t now =
+#ifndef NATIVE_BUILD
+                        millis();
+#else
+                        0;
 #endif
-#if defined(ESP32_DASHBOARD) && !DASH_FSD_252_COMPAT
-            // ─── 1021 mux 2: HW3 stock-offset passthrough + optional boost ─
-            // 2.3.2-beta.3 always re-injected mux 2 with the stock speed
-            // offset captured from mux 0 byte 3, even when no custom-speed
-            // feature was active. That passthrough is what makes the ECU's
-            // readiness check pass — without it the grey wheel flickers.
-            // The optional Custom/Auto/HighSpeed boost overrides the offset
-            // value but the *frame itself* must always be re-injected.
-            if (index == 2 && (ADEnabled || forceActivateRuntime))
-            {
-                CanFrame shaped = frame;
-                if (dashHw3CustomSpeedActive())
-                {
-                    uint8_t activeRaw = dashComputeHw3OffsetRaw(speedOffset);
-                    hw3OffsetTargetRaw = activeRaw;
-                    dashWriteHw3OffsetRawShared(shaped, activeRaw);
-                    dashApplyHw3OffsetSlew(shaped, frame);
+                    uint8_t last = hw3OffsetLastRaw;
+                    uint8_t ratePctPerSec = dashLoadHw3SlewRate(hw3SlewRate);
+                    uint32_t rateRawPerSec = (uint32_t)ratePctPerSec * 4;
+                    if (activeRaw < last && hw3OffsetLastSentMs != 0) {
+                        uint32_t dt = now - hw3OffsetLastSentMs;
+                        uint32_t maxDrop = (rateRawPerSec * dt + 500) / 1000;
+                        uint8_t floorRaw = last > maxDrop ? (uint8_t)(last - maxDrop) : 0;
+                        if (activeRaw < floorRaw) {
+                            activeRaw = floorRaw;
+                            hw3OffsetSlewCount++;
+                        }
+                    }
+                    hw3OffsetLastRaw = activeRaw;
+                    hw3OffsetLastSentMs = now;
+                } else {
+                    hw3OffsetLastRaw = activeRaw;
+#ifndef NATIVE_BUILD
+                    hw3OffsetLastSentMs = millis();
+#endif
                 }
-                else
-                {
-                    // IDF reference default (fsdSpeedOffsetEnabled=true):
-                    // set the FSD speed-offset cap to 60% by writing 0x0f
-                    // into mux-2 byte1[0:5] while leaving byte0 offset bits
-                    // untouched. The previous stock-offset passthrough wrote
-                    // raw=50, which changed byte0[6:7] and did not match the
-                    // stable "FSD mode CN" behavior.
-                    shaped.data[1] = static_cast<uint8_t>((shaped.data[1] & 0xC0) | 0x0F);
-                    uint8_t raw = 0;
-                    if (dashReadHw3OffsetRawShared(shaped, raw))
-                        hw3OffsetTargetRaw = raw;
-                }
+
+                // Write to wire format
+                frame.data[0] &= ~(0b11000000);
+                frame.data[1] &= ~(0b00111111);
+                frame.data[0] |= (activeRaw & 0x03) << 6;
+                frame.data[1] |= (activeRaw >> 2);
                 framesSent++;
-                driver.send(shaped);
-                if (onSend)
-                    onSend(2, true);
+                driver.send(frame);
+                if (onSend) onSend(2, true);
             }
-#endif
+
             if (index == 0 && enablePrint)
             {
                 char buf[LogRingBuffer::kMaxMsgLen];

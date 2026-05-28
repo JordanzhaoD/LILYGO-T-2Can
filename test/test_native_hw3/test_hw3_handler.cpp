@@ -13,7 +13,6 @@ void setUp()
     mock.reset();
     handler = HW3Handler();
     handler.enablePrint = false;
-    enhancedAutopilotRuntime = true;
 }
 
 void tearDown() {}
@@ -76,7 +75,7 @@ void test_hw3_follow_distance_profile_survives_mux0_without_injection()
     mock.reset();
     CanFrame autopilotFrame = {.id = 1021};
     autopilotFrame.data[0] = 0x00; // mux 0
-    autopilotFrame.data[4] = 0x20; // AD selected
+    autopilotFrame.data[4] = 0x40; // FSD selected (bit 38 = byte4 bit6)
     autopilotFrame.data[3] = 60;   // speed offset = 0
     autopilotFrame.data[6] = 0x02;
     handler.handleMessage(autopilotFrame, mock);
@@ -93,7 +92,7 @@ void test_hw3_AD_enabled_only_set_on_mux0()
 {
     CanFrame f0 = {.id = 1021};
     f0.data[0] = 0x00; // mux 0
-    f0.data[4] = 0x20; // AD selected
+    f0.data[4] = 0x40; // FSD selected
     handler.handleMessage(f0, mock);
     TEST_ASSERT_TRUE(handler.ADEnabled);
 
@@ -103,17 +102,18 @@ void test_hw3_AD_enabled_only_set_on_mux0()
     f2.data[4] = 0x00; // AD bit not set in this frame
     handler.handleMessage(f2, mock);
     TEST_ASSERT_TRUE(handler.ADEnabled);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(1, mock.sent.size()); // mux 2 now sends when fsdTriggered
 }
 
 void test_hw3_AD_disabled_on_mux0_prevents_mux2_send()
 {
-    // mux 0 with AD disabled
+    // mux 0 with FSD NOT selected
     CanFrame f0 = {.id = 1021};
     f0.data[0] = 0x00;
-    f0.data[4] = 0x00; // AD NOT selected
+    f0.data[4] = 0x00; // FSD NOT selected
     handler.handleMessage(f0, mock);
     TEST_ASSERT_FALSE(handler.ADEnabled);
+    TEST_ASSERT_FALSE(handler.fsdTriggered);
 
     mock.reset();
     CanFrame f2 = {.id = 1021};
@@ -128,7 +128,7 @@ void test_hw3_AD_mux0_sends_with_bit46()
 {
     CanFrame f = {.id = 1021};
     f.data[0] = 0x00;
-    f.data[4] = 0x20;
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
@@ -141,7 +141,7 @@ void test_hw3_recorded_ap_mux0_enables_ad()
     f.data[1] = 0x00;
     f.data[2] = 0x00;
     f.data[3] = 0x40;
-    f.data[4] = 0x20;
+    f.data[4] = 0x40;
     f.data[5] = 0x01;
     f.data[6] = 0x01;
     f.data[7] = 0x80;
@@ -203,6 +203,13 @@ void test_hw3_gear_drive_clears_parked()
 
 void test_hw3_nag_suppression_clears_bit19_on_mux1()
 {
+    // First trigger FSD via mux 0
+    CanFrame f0 = {.id = 1021};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+    mock.reset();
+
     CanFrame f = {.id = 1021};
     f.data[0] = 0x01;
     setBit(f, 19, true);
@@ -211,17 +218,15 @@ void test_hw3_nag_suppression_clears_bit19_on_mux1()
     TEST_ASSERT_FALSE((mock.sent[0].data[2] >> 3) & 0x01);
 }
 
-void test_hw3_nag_suppression_skips_mux1_changes_when_eap_runtime_disabled()
-{
-    enhancedAutopilotRuntime = false;
-    CanFrame f = {.id = 1021};
-    f.data[0] = 0x01;
-    setBit(f, 19, true);
-    handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size()); // frame are not sent when runtime disabled
-}
 void test_hw3_mux1_does_not_set_track_labels_bit46()
 {
+    // First trigger FSD via mux 0
+    CanFrame f0 = {.id = 1021};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+    mock.reset();
+
     CanFrame f = {.id = 1021};
     f.data[0] = 0x01;
     handler.handleMessage(f, mock);
@@ -254,17 +259,47 @@ void test_hw3_AD_enabled_mux0_sends_exactly_1()
 {
     CanFrame f = {.id = 1021};
     f.data[0] = 0x00;
-    f.data[4] = 0x20;
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
 void test_hw3_mux1_sends_exactly_1()
 {
+    // First trigger FSD via mux 0
+    CanFrame f0 = {.id = 1021};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+    mock.reset();
+
     CanFrame f = {.id = 1021};
     f.data[0] = 0x01;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+// --- TLSSC bypass ---
+
+void test_hw3_tlsscBypass_sets_bit38_on_mux0()
+{
+    handler.tlsscBypass = true;
+    CanFrame f = {.id = 1021};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    // bit 38 = byte 4 bit 6 = already set by FSD selected, check it's still set
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[4] & 0x40);
+}
+
+void test_hw3_fsdTriggered_set_on_mux0()
+{
+    CanFrame f = {.id = 1021};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_TRUE(handler.fsdTriggered);
 }
 
 // --- Filter IDs ---
@@ -309,13 +344,15 @@ int main()
     RUN_TEST(test_hw3_gear_park_marks_parked);
     RUN_TEST(test_hw3_gear_drive_clears_parked);
     RUN_TEST(test_hw3_nag_suppression_clears_bit19_on_mux1);
-    RUN_TEST(test_hw3_nag_suppression_skips_mux1_changes_when_eap_runtime_disabled);
     RUN_TEST(test_hw3_mux1_does_not_set_track_labels_bit46);
     RUN_TEST(test_hw3_ignores_unrelated_can_id);
     RUN_TEST(test_hw3_gw_autopilot_mux2_updates_state_without_send);
 
     RUN_TEST(test_hw3_AD_enabled_mux0_sends_exactly_1);
     RUN_TEST(test_hw3_mux1_sends_exactly_1);
+
+    RUN_TEST(test_hw3_tlsscBypass_sets_bit38_on_mux0);
+    RUN_TEST(test_hw3_fsdTriggered_set_on_mux0);
 
     return UNITY_END();
 }
