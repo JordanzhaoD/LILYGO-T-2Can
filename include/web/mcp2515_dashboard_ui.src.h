@@ -67,6 +67,8 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .topbar-badge { padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 700; }
 .badge-ok { background: #166534; color: var(--ok); }
 .badge-err { background: #7f1d1d; color: var(--err); }
+.toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%);background:#7f1d1d;color:#fff;padding:8px 18px;border-radius:8px;font-size:13px;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
 .badge-warn { background: #78350f; color: var(--warn); }
 .topbar-fps { color: var(--info); font-size: 14px; font-weight: 700; }
 .topbar-time { margin-left: auto; color: var(--tx3); font-size: 12px; }
@@ -316,6 +318,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </style>
 </head>
 <body>
+<div class="toast" id="toast"></div>
 
 <!-- Mobile overlay -->
 <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
@@ -976,6 +979,9 @@ function setText(id,txt){var e=$(id);if(e)e.textContent=txt}
 function setHtml(id,html){var e=$(id);if(e)e.innerHTML=html}
 function setCls(id,cls){var e=$(id);if(e)e.className=cls}
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function escAttr(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/</g,'\\x3c').replace(/>/g,'\\x3e')}
+function showToast(msg){var t=$('toast');if(t){t.textContent=msg;t.classList.add('show')}}
+function hideToast(){var t=$('toast');if(t)t.classList.remove('show')}
 function toHex(n){return '0x'+('0000'+n.toString(16).toUpperCase()).slice(-4)}
 function fmtUp(sec){
   var h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;
@@ -990,7 +996,7 @@ var I18N={
   'FSD 防御':'FSD Defense','OTA 升级':'OTA Update',
   '网络设置':'Network','CAN 工具':'CAN Tools',
   // Top bar
-  '已连接':'Connected','未连接':'Disconnected',
+  '已连接':'Connected','未连接':'Disconnected','连接丢失':'Connection Lost',
   // Overview
   'FSD 注入':'FSD Injection','FSD 开关':'FSD Toggle',
   '点击切换开关状态':'Tap to toggle','CAN Bus':'CAN Bus',
@@ -1120,12 +1126,15 @@ function openSidebar(){$('sidebar').classList.add('open');$('overlay').classList
 function closeSidebar(){$('sidebar').classList.remove('open');$('overlay').classList.remove('active')}
 
 // ── Fetch Helper ───────────────────────────────────────────
+var _fetchErrCount=0;
 async function fetchJson(url){
   try{
     var r=await fetch(url);
     if(!r.ok)throw new Error(r.status);
-    return await r.json();
-  }catch(e){return null}
+    var d=await r.json();
+    if(_fetchErrCount>0){_fetchErrCount=0;hideToast()}
+    return d;
+  }catch(e){_fetchErrCount++;if(_fetchErrCount>=3)showToast(T('连接丢失')+' ('+_fetchErrCount+')');return null}
 }
 async function postForm(url,data){
   try{
@@ -1373,7 +1382,7 @@ async function toggleServiceMode(){
 }
 
 // ── OTA Upload ─────────────────────────────────────────────
-function uploadFirmware(){
+async function uploadFirmware(){
   var fileInput=$('ota-file');
   if(!fileInput||!fileInput.files||fileInput.files.length===0)return;
   var file=fileInput.files[0];
@@ -1386,7 +1395,8 @@ function uploadFirmware(){
 
   var xhr=new XMLHttpRequest();
   xhr.open('POST','/update',true);
-  xhr.setRequestHeader('Authorization','Basic '+btoa('admin:admin'));
+  // Fetch OTA credentials from backend (AP-local only) instead of hardcoding.
+  try{var c=await(await fetch('/ota_creds')).json();xhr.setRequestHeader('Authorization','Basic '+btoa(c.u+':'+c.p))}catch(e){}
 
   xhr.upload.onprogress=function(e){
     if(e.lengthComputable){
@@ -1515,7 +1525,7 @@ async function scanWifi(){
   var html='<div style="margin-bottom:6px;color:var(--tx3);font-size:11px">'+T('扫描结果')+': '+d.networks.length+'</div>';
   for(var i=0;i<d.networks.length;i++){
     var n=d.networks[i];
-    html+='<div class="setting-row" style="cursor:pointer" onclick="pickScanResult(\''+escHtml(n.ssid)+'\')">'
+    html+='<div class="setting-row" style="cursor:pointer" onclick="pickScanResult(\''+escAttr(n.ssid)+'\')">'
       +'<div class="setting-name">'+escHtml(n.ssid)+'</div>'
       +'<div class="v-dim" style="font-size:11px">'+n.rssi+' dBm</div></div>';
   }
@@ -1550,9 +1560,10 @@ async function pollGatewayStatus(){
 
 async function saveGateway(){
   var natTgl=$('gw-nat-tgl');
-  // Gateway save is handled via gateway_dns endpoint for DNS rules
-  // NAT toggle requires gateway config
+  var perfTgl=$('gw-perf-tgl');
   if(natTgl)await postForm('/gateway_dns',{enabled:natTgl.checked?'1':'0'});
+  // Perf mode: reduce polling from 1s to 3s when forwarding
+  if(typeof restartPoll==='function')restartPoll(perfTgl&&perfTgl.checked?3000:1000);
   pollGatewayStatus();
 }
 
@@ -1756,11 +1767,12 @@ async function pollLastWrite(){
 async function loadCanPins(){
   var d=await fetchJson('/can_pins');
   if(!d)return;
-  setText('can-cs','GPIO 10');
-  setText('can-sck','GPIO 12');
-  setText('can-miso','GPIO 13');
-  setText('can-mosi','GPIO 11');
-  setText('can-rst','GPIO 9');
+  // Bus2 MCP2515 pins from API response, fallback to compile-time defaults
+  setText('can-cs',d.cs!=null?'GPIO '+d.cs:'GPIO 10');
+  setText('can-sck',d.sck!=null?'GPIO '+d.sck:'GPIO 12');
+  setText('can-miso',d.miso!=null?'GPIO '+d.miso:'GPIO 13');
+  setText('can-mosi',d.mosi!=null?'GPIO '+d.mosi:'GPIO 11');
+  setText('can-rst',d.rst!=null?'GPIO '+d.rst:'GPIO 9');
 }
 
 // ── Temp from system_status ────────────────────────────────
@@ -1839,30 +1851,25 @@ document.addEventListener('DOMContentLoaded',function(){
 
   // Start polling
   poll();
-  pollTimer=setInterval(function(){
-    poll();
-    loadTemp();
-    // Conditional sub-page polling
+  var pollMs=1000;
+  function restartPoll(ms){pollMs=ms;if(pollTimer){clearInterval(pollTimer);pollTimer=setInterval(tick,pollMs)}}
+  function tick(){
+    poll();loadTemp();
     var activePage=document.querySelector('.page.active');
     if(activePage){
       var pid=activePage.id;
-      if(pid==='pg-can'){
-        if(canTab==='sniffer'&&!sniffPaused)pollSniffer();
-        else if(canTab==='debug')pollLastWrite();
-      }
+      if(pid==='pg-can'){if(canTab==='sniffer'&&!sniffPaused)pollSniffer();else if(canTab==='debug')pollLastWrite()}
       if(pid==='pg-bus2')pollBus2();
     }
-  },1000);
+  }
+  pollTimer=setInterval(tick,pollMs);
 
   // Visibility handling
   document.addEventListener('visibilitychange',function(){
     if(document.hidden){
       if(pollTimer){clearInterval(pollTimer);pollTimer=null}
     }else{
-      if(!pollTimer){
-        poll();
-        pollTimer=setInterval(function(){poll();loadTemp()},1000);
-      }
+      if(!pollTimer){poll();pollTimer=setInterval(tick,pollMs)}
     }
   });
 });

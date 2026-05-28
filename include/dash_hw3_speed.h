@@ -46,18 +46,22 @@ inline constexpr uint8_t kHw3CustomTargetMaxByBucket[kHw3CustomTargetCount] = {4
 inline constexpr uint8_t kHw3HighSpeedTargetMaxByBucket[kHw3HighSpeedBucketCount] = {120, 150, 180};
 
 // ─── Runtime state (settings) ────────────────────────────────────────────────
-inline bool hw3CustomSpeed = false;
-inline uint8_t hw3CustomTarget[kHw3CustomTargetCount] = {45, 60, 75, 90, 105};
-inline bool hw3HighSpeedEnable = false;
-inline uint8_t hw3HighSpeedTarget[kHw3HighSpeedBucketCount] = {90, 110, 130};
-inline uint8_t hw3WireEncoding = kHw3WireEncDefault;
+// Written from web server task, read from CAN task. volatile to prevent
+// the compiler from caching these in registers across task switches.
+// For ESP32-S3 (Xtensa, 32-bit aligned), single-byte and uint32_t reads
+// are naturally atomic on aligned boundaries.
+inline volatile bool hw3CustomSpeed = false;
+inline volatile uint8_t hw3CustomTarget[kHw3CustomTargetCount] = {45, 60, 75, 90, 105};
+inline volatile bool hw3HighSpeedEnable = false;
+inline volatile uint8_t hw3HighSpeedTarget[kHw3HighSpeedBucketCount] = {90, 110, 130};
+inline volatile uint8_t hw3WireEncoding = kHw3WireEncDefault;
 
 // --- HW3 auto speed targeting (from tesla-fsd-controller fsd_config.h) ---
 inline constexpr uint8_t kHw3AutoTargetBelow60Kph = 64;
 inline constexpr uint8_t kHw3AutoTargetAt60Kph = 100;
 inline constexpr uint8_t kHw3AutoTargetForVisible80Kph = 85;
 
-inline bool hw3AutoSpeed = true;
+inline volatile bool hw3AutoSpeed = true;
 
 inline uint8_t dashComputeHw3AutoTargetKph(uint8_t fusedLimitKph) {
     if (fusedLimitKph == 60) return kHw3AutoTargetAt60Kph;
@@ -71,7 +75,7 @@ inline constexpr uint8_t kHw3HighSpeedBucketBaseKph_verified = 80;
 inline constexpr uint8_t kHw3HighSpeedBucketStepKph_verified = 10;
 inline constexpr uint8_t kHw3HighSpeedBucketCount_verified = 5;
 
-inline uint8_t hw3HighSpeedTargetPct[kHw3HighSpeedBucketCount_verified] = {25, 25, 25, 25, 25};
+inline volatile uint8_t hw3HighSpeedTargetPct[kHw3HighSpeedBucketCount_verified] = {25, 25, 25, 25, 25};
 
 // Forward-declare encoding helpers (defined below) for use by dashEncodeHw3OffsetFromPct.
 inline uint8_t dashEncodeHw3OffsetPct4(int pct);
@@ -90,9 +94,11 @@ inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
 // ─── Runtime state (live values) ─────────────────────────────────────────────
 // Fused/ISA speed limit raw byte from 0x399/921 byte1[4:0] (×5 = kph).
 // 0 = SNA, 31 = NONE → no override (stock pass-through).
-inline uint8_t fusedSpeedLimitRaw = 0;
+// volatile: written from CAN task, read by dashComputeHw3OffsetRaw() helpers
+// which may be called from web server task for diagnostics.
+inline volatile uint8_t fusedSpeedLimitRaw = 0;
 // Latest stock offset captured from 1021 mux 0 byte3[1:6] (kph, 0..100).
-inline int hw3StockOffsetKph = 0;
+inline volatile int hw3StockOffsetKph = 0;
 
 // ─── Math helpers ────────────────────────────────────────────────────────────
 inline uint8_t dashClampHw3HighSpeedTargetKph(int v)
@@ -221,12 +227,14 @@ inline constexpr uint8_t kHw3SlewRateMin = 1;
 inline constexpr uint8_t kHw3SlewRateMax = 25;
 inline constexpr uint8_t kHw3SlewRateDefault = 25;
 
-inline bool hw3OffsetSlew = false;
-inline uint8_t hw3SlewRate = kHw3SlewRateDefault;
-inline uint8_t hw3OffsetTargetRaw = 0;
-inline uint8_t hw3OffsetLastRaw = 0;
-inline uint32_t hw3OffsetLastSentMs = 0;
-inline uint32_t hw3OffsetSlewCount = 0;
+// volatile: hw3OffsetSlew and hw3SlewRate are written from web server task,
+// the rest are CAN-task-only but marked volatile for diagnostic reads.
+inline volatile bool hw3OffsetSlew = false;
+inline volatile uint8_t hw3SlewRate = kHw3SlewRateDefault;
+inline volatile uint8_t hw3OffsetTargetRaw = 0;
+inline volatile uint8_t hw3OffsetLastRaw = 0;
+inline volatile uint32_t hw3OffsetLastSentMs = 0;
+inline volatile uint32_t hw3OffsetSlewCount = 0;
 
 inline uint8_t dashClampHw3SlewRate(int rate)
 {
@@ -272,7 +280,7 @@ inline bool dashApplyHw3OffsetSlew(CanFrame &modified, const CanFrame & /*origin
             if (activeRaw < floorRaw)
             {
                 shapedRaw = floorRaw;
-                hw3OffsetSlewCount++;
+                hw3OffsetSlewCount = hw3OffsetSlewCount + 1;
             }
         }
     }

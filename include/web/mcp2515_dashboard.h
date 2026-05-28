@@ -136,6 +136,17 @@ static uint8_t dashManualSpeedProfile = 1;
 // (parsed before this file) can read fusedSpeedLimitRaw and call the
 // encoders. See include/dash_hw3_speed.h.
 
+// --- FSD runtime switch NVS staging (loaded before handlerPool init) ---
+static bool nvsAutoModeEnabled = false;
+static bool nvsTlsscBypass = false;
+static bool nvsEmergencyVehicleDetection = true;
+static bool nvsIsaChimeSuppress = false;
+static uint8_t nvsHw4OffsetRaw = 0;
+static bool nvsBanShieldEnable = false;
+static int nvsLegacyOffset = 0;
+static bool nvsRemoveVisionSpeedLimit = true;
+static bool nvsOverrideSpeedLimit = false;
+
 #ifdef RGB_BRIGHTNESS
 static constexpr uint8_t kDashLedBrightnessDefault = RGB_BRIGHTNESS;
 #else
@@ -947,6 +958,19 @@ static void dashSavePrefs()
         snprintf(k, sizeof(k), "lg_ht%u", (unsigned)i);
         prefs.putUChar(k, legacyMppHighSpeedTarget[i]);
     }
+    // --- FSD runtime switches (obfuscated NVS keys) ---
+    if (dashHandler)
+    {
+        prefs.putBool("fa", (bool)dashHandler->autoModeEnabled);
+        prefs.putBool("fb", (bool)dashHandler->tlsscBypass);
+        prefs.putBool("fc", (bool)dashHandler->emergencyVehicleDetection);
+        prefs.putBool("fd", (bool)dashHandler->isaChimeSuppress);
+        prefs.putUChar("fe", (uint8_t)dashHandler->hw4OffsetRaw);
+        prefs.putBool("ff", (bool)dashHandler->banShieldEnable);
+        prefs.putUChar("fg", (uint8_t)((int)dashHandler->legacyOffset + 30));
+        prefs.putBool("fh", (bool)dashHandler->removeVisionSpeedLimit);
+        prefs.putBool("fi", (bool)dashHandler->overrideSpeedLimit);
+    }
     prefs.end();
 }
 
@@ -1037,8 +1061,8 @@ static void dashLoadPrefs()
     uint8_t storedDefaultHw = prefs.getUChar("hw_def", kDashUnsetU8);
     bool migratedHw = false;
 
-    hwMode = storedHw <= 2 ? storedHw : DASH_DEFAULT_HW;
-    if (!hasStoredHw || storedHw > 2)
+    hwMode = storedHw <= 3 ? storedHw : DASH_DEFAULT_HW;
+    if (!hasStoredHw || storedHw > 3)
         migratedHw = true;
 
     // If the stored selection only mirrors the old firmware default, follow the
@@ -1107,6 +1131,19 @@ static void dashLoadPrefs()
         }
     }
     bool ep = prefs.getBool("eprn", true);
+    // --- FSD runtime switches (staged, applied after handlerPool init) ---
+    nvsAutoModeEnabled = prefs.getBool("fa", false);
+    nvsTlsscBypass = prefs.getBool("fb", false);
+    nvsEmergencyVehicleDetection = prefs.getBool("fc", true);
+    nvsIsaChimeSuppress = prefs.getBool("fd", false);
+    nvsHw4OffsetRaw = prefs.getUChar("fe", 0);
+    nvsBanShieldEnable = prefs.getBool("ff", false);
+    {
+        uint8_t raw = prefs.getUChar("fg", 30);
+        nvsLegacyOffset = (int)raw - 30;
+    }
+    nvsRemoveVisionSpeedLimit = prefs.getBool("fh", true);
+    nvsOverrideSpeedLimit = prefs.getBool("fi", false);
 
     dashApplyRuntimeState();
     if (dashHandler)
@@ -1464,6 +1501,33 @@ static void handleStatus()
     j += legacyMppLastRaw;
     j += ",\"legacyMppLastSentRaw\":";
     j += legacyMppLastSentRaw;
+    // --- FSD runtime state fields (runtime switches) ---
+    j += ",\"fsdTriggered\":";
+    j += dashHandler ? ((bool)dashHandler->fsdTriggered ? "true" : "false") : "false";
+    j += ",\"hwDetected\":";
+    j += dashHandler ? (int)dashHandler->hwDetected : 0;
+    j += ",\"autoMode\":";
+    j += dashHandler ? ((bool)dashHandler->autoModeEnabled ? "true" : "false") : "false";
+    j += ",\"tlsscBypass\":";
+    j += dashHandler ? ((bool)dashHandler->tlsscBypass ? "true" : "false") : "false";
+    j += ",\"isaChimeSuppress\":";
+    j += dashHandler ? ((bool)dashHandler->isaChimeSuppress ? "true" : "false") : "false";
+    j += ",\"evd\":";
+    j += dashHandler ? ((bool)dashHandler->emergencyVehicleDetection ? "true" : "false") : "false";
+    j += ",\"hw4OffsetRaw\":";
+    j += dashHandler ? (int)dashHandler->hw4OffsetRaw : 0;
+    j += ",\"banShield\":";
+    j += dashHandler ? ((bool)dashHandler->banShieldEnable ? "true" : "false") : "false";
+    j += ",\"banShieldBlocks\":";
+    j += dashHandler ? (uint32_t)dashHandler->banShieldBlocks : 0;
+    j += ",\"legacyOffset\":";
+    j += dashHandler ? (int)dashHandler->legacyOffset : 0;
+    j += ",\"removeVisionSpeedLimit\":";
+    j += dashHandler ? ((bool)dashHandler->removeVisionSpeedLimit ? "true" : "false") : "false";
+    j += ",\"overrideSpeedLimit\":";
+    j += dashHandler ? ((bool)dashHandler->overrideSpeedLimit ? "true" : "false") : "false";
+    j += ",\"hw3AutoSpeed\":";
+    j += hw3AutoSpeed ? "true" : "false";
     j += ",\"can\":";
     j += canOnline ? "true" : "false";
     j += ",\"ci\":";
@@ -1538,12 +1602,18 @@ static void handleConfig()
     if (server.hasArg("hw"))
     {
         uint8_t v = server.arg("hw").toInt();
-        if (v <= 2 && v != hwMode)
+        if (v <= 3 && v != hwMode)
         {
             hwMode = v;
             hwChanged = true;
-            dashLog("[CFG] HW=" + String(v == 0 ? "LEGACY" : v == 1 ? "HW3"
-                                                                    : "HW4"));
+            const char *hwName = v == 0 ? "LEGACY" : v == 1 ? "HW3"
+                                       : v == 2   ? "HW4"
+                                                   : "AUTO";
+            dashLog(String("[CFG] HW=") + hwName);
+            // For hwMode=3 (auto), set autoModeEnabled on active handler;
+            // the actual handler swap happens when CAN 920 detects HW version.
+            if (dashHandler)
+                dashHandler->autoModeEnabled = (v == 3);
         }
     }
     bool requestedFsdSwitch = canActive;
@@ -1960,6 +2030,14 @@ static void handleReboot()
     server.send(200, "text/plain", "Rebooting...");
     delay(200);
     ESP.restart();
+}
+
+static void handleOtaCreds()
+{
+    // Credentials for dashboard OTA — only reachable by clients on the
+    // same AP/STA network (protected by WiFi password at the link layer).
+    String json = "{\"u\":\"" + String(DASH_OTA_USER) + "\",\"p\":\"" + String(DASH_OTA_PASS) + "\"}";
+    server.send(200, "application/json", json);
 }
 
 static void handleOtaResult()
@@ -4333,9 +4411,11 @@ static void dashInitHandlers()
 
 static void dashSwapHandler(uint8_t mode)
 {
-    if (mode > 2 || !handlerPool[mode])
+    // mode=3 (AUTO): use DASH_DEFAULT_HW until CAN 920 detection kicks in.
+    uint8_t effective = (mode == 3) ? DASH_DEFAULT_HW : mode;
+    if (effective > 2 || !handlerPool[effective])
         return;
-    CarManagerBase *next = handlerPool[mode];
+    CarManagerBase *next = handlerPool[effective];
     if (dashHandler)
         next->enablePrint = (bool)dashHandler->enablePrint;
     appActiveHandler = next;
@@ -4347,11 +4427,33 @@ static void dashSwapHandler(uint8_t mode)
     if (dashDriver)
         dashDriver->setFilters(next->filterIds(), next->filterIdCount());
     const char *hwName = "LEGACY";
-    if (mode == 1)
+    if (mode == 1 || (mode == 3 && effective == 1))
         hwName = "HW3";
-    else if (mode == 2)
+    else if (mode == 2 || (mode == 3 && effective == 2))
         hwName = "HW4";
-    dashLog("[CFG] Handler switched to " + String(hwName));
+    if (mode == 3)
+        dashLog(String("[CFG] Handler AUTO -> ") + hwName);
+    else
+        dashLog("[CFG] Handler switched to " + String(hwName));
+}
+
+// Apply NVS-staged runtime switches to all handlerPool entries.
+// Called once after dashInitHandlers() + dashSwapHandler().
+static void dashApplyNvsRuntimeSwitches()
+{
+    for (int i = 0; i < 3; i++)
+    {
+        if (!handlerPool[i]) continue;
+        handlerPool[i]->autoModeEnabled = nvsAutoModeEnabled;
+        handlerPool[i]->tlsscBypass = nvsTlsscBypass;
+        handlerPool[i]->emergencyVehicleDetection = nvsEmergencyVehicleDetection;
+        handlerPool[i]->isaChimeSuppress = nvsIsaChimeSuppress;
+        handlerPool[i]->hw4OffsetRaw = nvsHw4OffsetRaw;
+        handlerPool[i]->banShieldEnable = nvsBanShieldEnable;
+        handlerPool[i]->legacyOffset = nvsLegacyOffset;
+        handlerPool[i]->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
+        handlerPool[i]->overrideSpeedLimit = nvsOverrideSpeedLimit;
+    }
 }
 
 #if defined(DRIVER_ESP32_EXT_MCP2515)
@@ -4386,6 +4488,7 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 
     dashInitHandlers();
     dashSwapHandler(hwMode);
+    dashApplyNvsRuntimeSwitches();
     dashApplyFilters();
 
 
@@ -4418,6 +4521,7 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/disable", HTTP_POST, handleDisable);
     server.on("/reboot", HTTP_POST, handleReboot);
     server.on("/update", HTTP_POST, handleOtaResult, handleOtaUpload);
+    server.on("/ota_creds", HTTP_GET, handleOtaCreds);
     server.on("/ap_config", HTTP_POST, handleApConfig);
     server.on("/ap_status", HTTP_GET, handleApStatus);
     server.on("/can_pins", HTTP_GET, handleCanPins);

@@ -196,6 +196,31 @@ struct CarManagerBase
             clearSummonOnPark();
     }
 
+    // Process DI_systemStatus (CAN 280) — gear + summon update.
+    // Returns true if the frame was handled.
+    bool handleDISystemStatus(const CanFrame &frame)
+    {
+        if (frame.id != 280 || frame.dlc < 3)
+            return false;
+        uint8_t diGear = readDIGear(frame);
+        Parked = isVehicleParked(diGear);
+        updateSummonFromDISystemStatus(frame);
+        clearSummonOnParkIfAcaInactive(diGear);
+        return true;
+    }
+
+    // Process DI_vehicleStatus (CAN 390) — gear update.
+    // Returns true if the frame was handled.
+    bool handleDIVehicleStatus(const CanFrame &frame)
+    {
+        if (frame.id != 390 || frame.dlc < 8)
+            return false;
+        uint8_t difGear = readVehicleGear(frame);
+        Parked = isVehicleParked(difGear);
+        clearSummonOnParkIfAcaInactive(difGear);
+        return true;
+    }
+
     bool shouldInjectSpeedProfile() const
     {
 #if defined(ESP32_DASHBOARD)
@@ -270,35 +295,8 @@ struct LegacyHandler : public CarManagerBase
             if (onSend) onSend(0, true);
             return;
         }
-        if (frame.id == 280)
-        {
-            if (frame.dlc < 3)
-                return;
-            {
-                uint8_t diGear = readDIGear(frame);
-                Parked = isVehicleParked(diGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions
-                // (e.g. during a Summon shift to Reverse) and would
-                // otherwise drop the gate mid-summon.
-                updateSummonFromDISystemStatus(frame);
-                clearSummonOnParkIfAcaInactive(diGear);
-            }
-            return;
-        }
-        if (frame.id == 390)
-        {
-            if (frame.dlc < 8)
-                return;
-            {
-                uint8_t difGear = readVehicleGear(frame);
-                Parked = isVehicleParked(difGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions.
-                clearSummonOnParkIfAcaInactive(difGear);
-            }
-            return;
-        }
+        if (handleDISystemStatus(frame)) return;
+        if (handleDIVehicleStatus(frame)) return;
         if (frame.id == 921)
         {
             if (frame.dlc < 1)
@@ -368,35 +366,8 @@ struct HW3Handler : public CarManagerBase
         if (onFrame)
             onFrame(frame);
         updateHwDetectedFrom920(frame);
-        if (frame.id == 280)
-        {
-            if (frame.dlc < 3)
-                return;
-            {
-                uint8_t diGear = readDIGear(frame);
-                Parked = isVehicleParked(diGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions
-                // (e.g. during a Summon shift to Reverse) and would
-                // otherwise drop the gate mid-summon.
-                updateSummonFromDISystemStatus(frame);
-                clearSummonOnParkIfAcaInactive(diGear);
-            }
-            return;
-        }
-        if (frame.id == 390)
-        {
-            if (frame.dlc < 8)
-                return;
-            {
-                uint8_t difGear = readVehicleGear(frame);
-                Parked = isVehicleParked(difGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions.
-                clearSummonOnParkIfAcaInactive(difGear);
-            }
-            return;
-        }
+        if (handleDISystemStatus(frame)) return;
+        if (handleDIVehicleStatus(frame)) return;
         if (frame.id == 1016)
         {
             if (frame.dlc < 6)
@@ -547,7 +518,7 @@ struct HW3Handler : public CarManagerBase
                         uint8_t floorRaw = last > maxDrop ? (uint8_t)(last - maxDrop) : 0;
                         if (activeRaw < floorRaw) {
                             activeRaw = floorRaw;
-                            hw3OffsetSlewCount++;
+                            hw3OffsetSlewCount = hw3OffsetSlewCount + 1;
                         }
                     }
                     hw3OffsetLastRaw = activeRaw;
@@ -691,29 +662,8 @@ struct HW4Handler : public CarManagerBase
         if (onFrame)
             onFrame(frame);
         updateHwDetectedFrom920(frame);
-        if (frame.id == 280)
-        {
-            if (frame.dlc < 3)
-                return;
-            {
-                uint8_t diGear = readDIGear(frame);
-                Parked = isVehicleParked(diGear);
-                updateSummonFromDISystemStatus(frame);
-                clearSummonOnParkIfAcaInactive(diGear);
-            }
-            return;
-        }
-        if (frame.id == 390)
-        {
-            if (frame.dlc < 8)
-                return;
-            {
-                uint8_t difGear = readVehicleGear(frame);
-                Parked = isVehicleParked(difGear);
-                clearSummonOnParkIfAcaInactive(difGear);
-            }
-            return;
-        }
+        if (handleDISystemStatus(frame)) return;
+        if (handleDIVehicleStatus(frame)) return;
         if (frame.id == 921)
         {
             if (frame.dlc < 1)
