@@ -18,8 +18,8 @@ static const char DASH_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   --main-bg: #1f2937;
   --card-bg: #374151;
   --card-bg-alt: #1f2937;
-  --accent: #dc2626;
-  --accent-light: #ef4444;
+  --accent: #7c3aed;
+  --accent-light: #a78bfa;
   --ok: #4ade80;
   --err: #f87171;
   --warn: #fbbf24;
@@ -29,7 +29,7 @@ static const char DASH_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   --tx3: #9ca3af;
   --border: #4b5563;
   --header-bg: #111827;
-  --sidebar-w: 160px;
+  --sidebar-w: 170px;
 }
 /* === Reset & Base === */
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -46,9 +46,10 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .sidebar-hdr h1 { font-size: 18px; font-weight: 700; color: var(--tx1); letter-spacing: 0.5px; }
 .sidebar-hdr p { font-size: 11px; color: var(--tx3); margin-top: 2px; }
 .sidebar-nav { flex: 1; padding: 6px 0; }
-.nav-item { display: block; padding: 12px 14px; color: var(--tx3);
+.nav-item { display: flex; align-items: center; gap: 8px; padding: 11px 14px; color: var(--tx3);
   font-size: 13px; cursor: pointer; border-radius: 0;
-  transition: background .15s, color .15s; user-select: none; font-weight: 500; }
+  transition: background .15s, color .15s; user-select: none; font-weight: 600; }
+.nav-item .nav-icon { font-size: 16px; line-height: 1; flex-shrink: 0; }
 .nav-item:hover { background: var(--main-bg); color: var(--tx2); }
 .nav-item.active { background: var(--accent); color: #fff; font-weight: 700; font-size: 14px; }
 .sidebar-ft { padding: 10px 12px; border-top: 1px solid var(--border);
@@ -85,10 +86,10 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   margin-bottom: 10px; }
 
 /* === Stats Grid === */
-.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
-  margin-bottom: 8px; }
-.stat { background: var(--card-bg-alt); border-radius: 8px; padding: 12px;
-  text-align: center; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  margin-bottom: 4px; }
+.stat { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+  text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
 .stat-lbl { font-size: 11px; color: var(--tx3); margin-bottom: 2px; font-weight: 500; }
 .stat-val { font-size: 16px; font-weight: 700; }
 .v-ok { color: var(--ok); }
@@ -287,15 +288,15 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <p>T-2CAN 控制面板</p>
   </div>
   <div class="sidebar-nav">
-    <div class="nav-item active" data-page="pg-overview">概览</div>
-    <div class="nav-item" data-page="pg-hardware">模块配置</div>
-    <div class="nav-item" data-page="pg-fsd">FSD 开关</div>
-    <div class="nav-item" data-page="pg-speed">速度偏移</div>
-    <div class="nav-item" data-page="pg-bus2">Bus2 控制</div>
-    <div class="nav-item" data-page="pg-defense">FSD 防御</div>
-    <div class="nav-item" data-page="pg-ota">OTA 升级</div>
-    <div class="nav-item" data-page="pg-network">网络设置</div>
-    <div class="nav-item" data-page="pg-can">CAN 工具</div>
+    <div class="nav-item active" data-page="pg-overview"><span class="nav-icon">📊</span>概览</div>
+    <div class="nav-item" data-page="pg-hardware"><span class="nav-icon">🔧</span>模块配置</div>
+    <div class="nav-item" data-page="pg-fsd"><span class="nav-icon">⚡</span>FSD 开关</div>
+    <div class="nav-item" data-page="pg-speed"><span class="nav-icon">🚀</span>速度偏移</div>
+    <div class="nav-item" data-page="pg-bus2"><span class="nav-icon">🔌</span>Bus2 控制</div>
+    <div class="nav-item" data-page="pg-defense"><span class="nav-icon">🛡</span>FSD 防御</div>
+    <div class="nav-item" data-page="pg-ota"><span class="nav-icon">📦</span>OTA 升级</div>
+    <div class="nav-item" data-page="pg-network"><span class="nav-icon">📶</span>网络设置</div>
+    <div class="nav-item" data-page="pg-can"><span class="nav-icon">🔬</span>CAN 工具</div>
   </div>
   <div class="sidebar-ft">
     <button onclick="toggleLanguage()" id="lang-btn">EN</button>
@@ -335,6 +336,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 
 <!-- Stats Grid -->
+<div class="card">
+<div class="card-title">系统状态</div>
 <div class="stats">
   <div class="stat"><div class="stat-lbl">CAN Bus</div><div class="stat-val v-dim" id="s-can">Offline</div></div>
   <div class="stat"><div class="stat-lbl">RX</div><div class="stat-val v-info" id="s-rx">0</div></div>
@@ -343,12 +346,16 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="stat"><div class="stat-lbl">硬件版本</div><div class="stat-val v-acc" id="s-hw">--</div></div>
   <div class="stat"><div class="stat-lbl">速度偏移</div><div class="stat-val v-dim" id="s-soff">0</div></div>
 </div>
+</div>
 
 <!-- Secondary Stats -->
+<div class="card">
+<div class="card-title">设备信息</div>
 <div class="stats">
   <div class="stat"><div class="stat-lbl">芯片温度</div><div class="stat-val v-dim" id="s-temp">--</div></div>
   <div class="stat"><div class="stat-lbl">TX Errors</div><div class="stat-val v-dim" id="s-txerr">0</div></div>
   <div class="stat"><div class="stat-lbl">跟随距离</div><div class="stat-val v-dim" id="s-fd">--</div></div>
+</div>
 </div>
     </div>
 
@@ -996,7 +1003,9 @@ function applyI18n(){
   var navs=document.querySelectorAll('.nav-item');
   var zhTexts=['概览','模块配置','FSD 开关','速度偏移','Bus2 控制','FSD 防御','OTA 升级','网络设置','CAN 工具'];
   for(var i=0;i<navs.length;i++){
-    navs[i].textContent=lang==='zh'?zhTexts[i]:I18N[zhTexts[i]];
+    var icon=navs[i].querySelector('.nav-icon');
+    var iconHtml=icon?icon.outerHTML:'';
+    navs[i].innerHTML=iconHtml+(lang==='zh'?zhTexts[i]:I18N[zhTexts[i]]);
   }
   $('lang-btn').textContent=lang==='zh'?'EN':'中';
 }
