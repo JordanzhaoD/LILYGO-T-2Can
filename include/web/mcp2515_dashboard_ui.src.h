@@ -9,7 +9,7 @@ static const char DASH_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Atlas T-2CAN</title>
 <style>
 /* === CSS Variables === */
@@ -35,7 +35,8 @@ static const char DASH_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   background: var(--main-bg); color: var(--tx1); font-size: 13px;
-  display: flex; height: 100vh; overflow: hidden; }
+  display: flex; height: 100vh; overflow: hidden;
+  -webkit-text-size-adjust: 100%; -webkit-overflow-scrolling: touch; }
 
 /* === Sidebar === */
 .sidebar { width: var(--sidebar-w); background: var(--sidebar-bg);
@@ -68,7 +69,8 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .badge-warn { background: #78350f; color: var(--warn); }
 .topbar-fps { color: var(--info); font-size: 12px; font-weight: 600; }
 .topbar-time { margin-left: auto; color: var(--tx3); font-size: 11px; }
-.content { flex: 1; overflow-y: auto; padding: 16px; }
+.content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px;
+  -webkit-overflow-scrolling: touch; }
 
 /* === Pages === */
 .page { display: none; }
@@ -149,16 +151,19 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .sub-tab.active { background: var(--accent); color: #fff; font-weight: 500; }
 
 /* === Table === */
-.tbl { width: 100%; border-collapse: collapse; font-size: 11px; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }
 .tbl th { text-align: left; padding: 6px 8px; color: var(--tx3);
   border-bottom: 1px solid var(--border); font-weight: 500; font-size: 10px; }
-.tbl td { padding: 4px 8px; border-bottom: 1px solid rgba(75,85,99,0.2); }
+.tbl td { padding: 4px 8px; border-bottom: 1px solid rgba(75,85,99,0.2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tbl .hex { font-family: 'SF Mono', 'Courier New', monospace; color: var(--accent-light); }
+.tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+select.inp { font-size: 16px; }
 
 /* === Inputs === */
 .inp { background: var(--card-bg-alt); border: 1px solid var(--border);
-  border-radius: 6px; padding: 6px 10px; color: var(--tx1); font-size: 12px;
-  width: 100%; outline: none; }
+  border-radius: 6px; padding: 6px 10px; color: var(--tx1); font-size: 16px;
+  width: 100%; outline: none; max-width: 100%; box-sizing: border-box; }
 .inp:focus { border-color: var(--accent-light); }
 .inp::placeholder { color: var(--tx3); }
 textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
@@ -172,18 +177,60 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
 /* === Mobile Responsive === */
 @media (max-width: 768px) {
-  .sidebar { position: fixed; left: -200px; z-index: 100;
-    transition: left .25s; width: 180px; height: 100vh; }
-  .sidebar.open { left: 0; }
-  .mobile-toggle { display: block; }
+  .sidebar { position: fixed; left: -220px; z-index: 200;
+    transition: left .25s ease; width: 180px; height: 100vh;
+    box-shadow: none; }
+  .sidebar.open { left: 0; box-shadow: 4px 0 20px rgba(0,0,0,0.5); }
+  .mobile-toggle { display: block !important; }
   .main { width: 100%; }
+  .topbar { padding: 6px 8px; gap: 6px; flex-wrap: wrap; min-height: 32px; }
+  .topbar-fps { font-size: 11px; }
+  .topbar-badge { font-size: 10px; padding: 1px 6px; }
+  .topbar-time { font-size: 10px; }
+  .content { padding: 10px 8px; }
+  .card { padding: 10px 8px; margin-bottom: 8px; border-radius: 8px; }
+  .card-title { font-size: 13px; margin-bottom: 8px; }
+  .stats { grid-template-columns: repeat(2, 1fr); gap: 4px; }
+  .stat { padding: 6px 4px; }
+  .stat-lbl { font-size: 9px; }
+  .stat-val { font-size: 12px; }
+  .sel-cards.c2 { grid-template-columns: repeat(2, 1fr); gap: 4px; }
+  .sel-cards.c3 { grid-template-columns: repeat(2, 1fr); gap: 4px; }
+  .sel-cards.c4 { grid-template-columns: repeat(2, 1fr); gap: 4px; }
+  .sel-card { padding: 8px 4px; }
+  .sel-card .sel-name { font-size: 12px; }
+  .setting-row { flex-wrap: wrap; gap: 4px; padding: 6px 0; }
+  .setting-name { font-size: 11px; }
+  .setting-desc { font-size: 9px; }
+  .tbl { font-size: 10px; }
+  .tbl th { padding: 4px 4px; font-size: 9px; }
+  .tbl td { padding: 3px 4px; font-size: 10px; }
+  .inp { font-size: 14px; padding: 8px 10px; }
+  .btn { padding: 8px 12px; font-size: 12px; }
+  .btn-sm { padding: 5px 8px; font-size: 10px; }
+  .big-toggle { padding: 14px 8px; }
+  .big-toggle .toggle-visual { width: 60px; height: 30px; }
+  .big-toggle .toggle-visual .thumb { width: 26px; height: 26px; }
+  .big-toggle.on .toggle-visual .thumb { left: 32px; }
+  .big-toggle .toggle-label { font-size: 14px; }
+  .sub-tabs { gap: 1px; padding: 2px; }
+  .sub-tab { padding: 4px 4px; font-size: 10px; }
+  .diag-grid { grid-template-columns: 1fr 1fr; gap: 3px; }
+  .diag-item { padding: 3px 6px; font-size: 10px; }
+  .upload-area { padding: 14px 8px; }
+}
+@media (max-width: 380px) {
   .stats { grid-template-columns: repeat(2, 1fr); }
-  .sel-cards.c4 { grid-template-columns: repeat(2, 1fr); }
+  .sel-cards.c2, .sel-cards.c3, .sel-cards.c4 { grid-template-columns: 1fr 1fr; }
+  .topbar { gap: 4px; padding: 4px 6px; }
+  .content { padding: 8px 6px; }
+  .card { padding: 8px 6px; }
+  .card-title { font-size: 12px; }
 }
 .mobile-toggle { display: none; background: none; border: none;
   color: var(--tx2); font-size: 20px; cursor: pointer; padding: 4px 8px; }
 .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-  z-index: 99; }
+  z-index: 150; }
 .overlay.active { display: block; }
 
 /* === Scrollbar === */
