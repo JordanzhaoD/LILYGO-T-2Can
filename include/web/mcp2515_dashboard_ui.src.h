@@ -175,37 +175,52 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .status-dot.err { background: var(--err); }
 .status-dot.warn { background: var(--warn); }
 
+/* === Mobile Bottom Tab Bar === */
+.mob-tabs { display: none; position: fixed; bottom: 0; left: 0; right: 0;
+  z-index: 200; background: var(--sidebar-bg); border-top: 1px solid var(--border);
+  padding: 2px 0; padding-bottom: env(safe-area-inset-bottom, 0px);
+  flex-shrink: 0; }
+.mob-tab { display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 4px 0; color: var(--tx3);
+  font-size: 9px; cursor: pointer; flex: 1; -webkit-tap-highlight-color: transparent; }
+.mob-tab.active { color: var(--accent-light); }
+.mob-tab .mob-icon { font-size: 18px; line-height: 1; margin-bottom: 1px; }
+.mob-more-panel { display: none; position: fixed; bottom: 52px; left: 0; right: 0;
+  z-index: 210; background: var(--sidebar-bg); border-top: 1px solid var(--border);
+  border-radius: 12px 12px 0 0; padding: 12px 16px; max-height: 60vh; overflow-y: auto; }
+.mob-more-panel.open { display: block; }
+.mob-more-item { display: block; padding: 10px 0; color: var(--tx2);
+  font-size: 13px; border-bottom: 1px solid rgba(75,85,99,0.3); cursor: pointer; }
+.mob-more-item:last-child { border-bottom: none; }
+.mob-more-item.active { color: var(--accent-light); }
+.mob-more-close { position: absolute; top: 8px; right: 12px; color: var(--tx3);
+  font-size: 18px; cursor: pointer; }
+
 /* === Mobile Responsive === */
 @media (max-width: 768px) {
-  .sidebar { position: fixed; left: -220px; z-index: 200;
-    transition: left .25s ease; width: 180px; height: 100vh;
-    box-shadow: none; }
-  .sidebar.open { left: 0; box-shadow: 4px 0 20px rgba(0,0,0,0.5); }
-  .mobile-toggle { display: block !important; }
-  .main { width: 100%; }
-  .topbar { padding: 6px 8px; gap: 6px; flex-wrap: wrap; min-height: 32px; }
+  .sidebar { display: none !important; }
+  .overlay { display: none !important; }
+  .mobile-toggle { display: none !important; }
+  .mob-tabs { display: flex; }
+  .main { width: 100%; padding-bottom: 52px; }
+  .topbar { padding: 6px 10px; gap: 6px; min-height: auto; }
   .topbar-fps { font-size: 11px; }
   .topbar-badge { font-size: 10px; padding: 1px 6px; }
-  .topbar-time { font-size: 10px; }
-  .content { padding: 10px 8px; }
+  .topbar-time { font-size: 10px; margin-left: auto; }
+  .content { padding: 10px 10px; }
   .card { padding: 10px 8px; margin-bottom: 8px; border-radius: 8px; }
   .card-title { font-size: 13px; margin-bottom: 8px; }
   .stats { grid-template-columns: repeat(2, 1fr); gap: 4px; }
   .stat { padding: 6px 4px; }
   .stat-lbl { font-size: 9px; }
   .stat-val { font-size: 12px; }
-  .sel-cards.c2 { grid-template-columns: repeat(2, 1fr); gap: 4px; }
-  .sel-cards.c3 { grid-template-columns: repeat(2, 1fr); gap: 4px; }
-  .sel-cards.c4 { grid-template-columns: repeat(2, 1fr); gap: 4px; }
+  .sel-cards.c2, .sel-cards.c3, .sel-cards.c4 { grid-template-columns: repeat(2, 1fr); gap: 4px; }
   .sel-card { padding: 8px 4px; }
-  .sel-card .sel-name { font-size: 12px; }
   .setting-row { flex-wrap: wrap; gap: 4px; padding: 6px 0; }
-  .setting-name { font-size: 11px; }
-  .setting-desc { font-size: 9px; }
+  .setting-name { font-size: 12px; }
   .tbl { font-size: 10px; }
   .tbl th { padding: 4px 4px; font-size: 9px; }
   .tbl td { padding: 3px 4px; font-size: 10px; }
-  .inp { font-size: 14px; padding: 8px 10px; }
   .btn { padding: 8px 12px; font-size: 12px; }
   .btn-sm { padding: 5px 8px; font-size: 10px; }
   .big-toggle { padding: 14px 8px; }
@@ -218,14 +233,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .diag-grid { grid-template-columns: 1fr 1fr; gap: 3px; }
   .diag-item { padding: 3px 6px; font-size: 10px; }
   .upload-area { padding: 14px 8px; }
-}
-@media (max-width: 380px) {
-  .stats { grid-template-columns: repeat(2, 1fr); }
-  .sel-cards.c2, .sel-cards.c3, .sel-cards.c4 { grid-template-columns: 1fr 1fr; }
-  .topbar { gap: 4px; padding: 4px 6px; }
-  .content { padding: 8px 6px; }
-  .card { padding: 8px 6px; }
-  .card-title { font-size: 12px; }
 }
 .mobile-toggle { display: none; background: none; border: none;
   color: var(--tx2); font-size: 20px; cursor: pointer; padding: 4px 8px; }
@@ -1035,6 +1042,7 @@ function showPage(pageId){
     navs[i].classList.toggle('active',navs[i].getAttribute('data-page')===pageId);
   }
   closeSidebar();
+  if(typeof updateMobTabs==='function')updateMobTabs(pageId);
   if(pageId==='pg-can')pollCanTab();
   if(pageId==='pg-bus2')pollBus2();
   if(pageId==='pg-network'){pollWifiStatus();pollGatewayStatus();loadGatewayDns();}
@@ -1698,12 +1706,48 @@ async function saveApConfig(){
 }
 
 // ── Init ───────────────────────────────────────────────────
+// ── Mobile Tab Bar ──────────────────────────────────────────
+function toggleMobMore(){
+  var p=$('mob-more');
+  if(p)p.classList.toggle('open');
+}
+function updateMobTabs(pageId){
+  var tabs=document.querySelectorAll('.mob-tab[data-page]');
+  for(var i=0;i<tabs.length;i++){
+    tabs[i].classList.toggle('active',tabs[i].getAttribute('data-page')===pageId);
+  }
+  var items=document.querySelectorAll('.mob-more-item');
+  for(var i=0;i<items.length;i++){
+    items[i].classList.toggle('active',items[i].getAttribute('data-page')===pageId);
+  }
+}
+
 document.addEventListener('DOMContentLoaded',function(){
-  // Nav click handlers
+  // Desktop sidebar nav
   var navs=document.querySelectorAll('.nav-item');
   for(var i=0;i<navs.length;i++){
     navs[i].addEventListener('click',function(){
       showPage(this.getAttribute('data-page'));
+    });
+  }
+
+  // Mobile bottom tab bar
+  var mtabs=document.querySelectorAll('.mob-tab[data-page]');
+  for(var i=0;i<mtabs.length;i++){
+    mtabs[i].addEventListener('click',function(){
+      var pid=this.getAttribute('data-page');
+      showPage(pid);
+      updateMobTabs(pid);
+    });
+  }
+  // Mobile more menu items
+  var mitems=document.querySelectorAll('.mob-more-item');
+  for(var i=0;i<mitems.length;i++){
+    mitems[i].addEventListener('click',function(){
+      var pid=this.getAttribute('data-page');
+      showPage(pid);
+      updateMobTabs(pid);
+      toggleMobMore();
     });
   }
 
@@ -1747,5 +1791,26 @@ document.addEventListener('DOMContentLoaded',function(){
   });
 });
 </script>
+<!-- Mobile Bottom Tab Bar -->
+<div class="mob-tabs" id="mob-tabs">
+  <div class="mob-tab active" data-page="pg-overview"><div class="mob-icon">📊</div><div>概览</div></div>
+  <div class="mob-tab" data-page="pg-fsd"><div class="mob-icon">⚡</div><div>FSD</div></div>
+  <div class="mob-tab" data-page="pg-bus2"><div class="mob-icon">🔌</div><div>Bus2</div></div>
+  <div class="mob-tab" data-page="pg-network"><div class="mob-icon">📶</div><div>网络</div></div>
+  <div class="mob-tab" onclick="toggleMobMore()"><div class="mob-icon">···</div><div>更多</div></div>
+</div>
+<!-- Mobile More Menu -->
+<div class="mob-more-panel" id="mob-more">
+  <div class="mob-more-close" onclick="toggleMobMore()">✕</div>
+  <div class="mob-more-item" data-page="pg-overview">📊 概览</div>
+  <div class="mob-more-item" data-page="pg-hardware">🔧 模块配置</div>
+  <div class="mob-more-item" data-page="pg-fsd">⚡ FSD 开关</div>
+  <div class="mob-more-item" data-page="pg-speed">🚀 速度偏移</div>
+  <div class="mob-more-item" data-page="pg-bus2">🔌 Bus2 控制</div>
+  <div class="mob-more-item" data-page="pg-defense">🛡 FSD 防御</div>
+  <div class="mob-more-item" data-page="pg-ota">📦 OTA 升级</div>
+  <div class="mob-more-item" data-page="pg-network">📶 网络设置</div>
+  <div class="mob-more-item" data-page="pg-can">🔧 CAN 工具</div>
+</div>
 </body>
 </html>)HTML";
