@@ -264,7 +264,37 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 1: Overview -->
     <div class="page active" id="pg-overview">
-      <p style="color:var(--tx3)">Loading...</p>
+<!-- FSD Quick Toggle -->
+<div class="card">
+  <div class="card-title">FSD 注入</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">FSD 开关</div>
+      <div class="setting-desc" id="ov-fsd-desc">点击切换开关状态</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="ov-fsd-tgl" onchange="toggleFsd()">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+</div>
+
+<!-- Stats Grid -->
+<div class="stats">
+  <div class="stat"><div class="stat-lbl">CAN Bus</div><div class="stat-val v-dim" id="s-can">Offline</div></div>
+  <div class="stat"><div class="stat-lbl">RX</div><div class="stat-val v-info" id="s-rx">0</div></div>
+  <div class="stat"><div class="stat-lbl">TX</div><div class="stat-val v-info" id="s-tx">0</div></div>
+  <div class="stat"><div class="stat-lbl">帧率</div><div class="stat-val v-info" id="s-fps">0.0 Hz</div></div>
+  <div class="stat"><div class="stat-lbl">硬件版本</div><div class="stat-val v-acc" id="s-hw">--</div></div>
+  <div class="stat"><div class="stat-lbl">速度偏移</div><div class="stat-val v-dim" id="s-soff">0</div></div>
+</div>
+
+<!-- Secondary Stats -->
+<div class="stats">
+  <div class="stat"><div class="stat-lbl">芯片温度</div><div class="stat-val v-dim" id="s-temp">--</div></div>
+  <div class="stat"><div class="stat-lbl">TX Errors</div><div class="stat-val v-dim" id="s-txerr">0</div></div>
+  <div class="stat"><div class="stat-lbl">跟随距离</div><div class="stat-val v-dim" id="s-fd">--</div></div>
+</div>
     </div>
 
     <!-- Page 2: Hardware Config -->
@@ -274,7 +304,35 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 3: FSD Switch -->
     <div class="page" id="pg-fsd">
-      <p style="color:var(--tx3)">Loading...</p>
+<div class="card">
+  <div class="big-toggle off" id="fsd-toggle" onclick="toggleFsd()">
+    <div class="card-title">FSD 注入控制</div>
+    <div class="setting-desc" style="margin-bottom:12px">启用后设备将注入 CAN 帧到车辆总线</div>
+    <div class="toggle-visual"><div class="thumb"></div></div>
+    <div class="toggle-label" id="fsd-label">已关闭</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">开机自动启用</div>
+      <div class="setting-desc">设备重启后自动开启 FSD 注入</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="fsd-boot-tgl" onchange="saveConfig()">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">紧急控制</div>
+  <div style="display:flex;gap:8px">
+    <button class="btn btn-danger" onclick="fetch('/reboot')" style="flex:1">重启设备</button>
+    <button class="btn" onclick="fetch('/reset_stats')" style="flex:1">重置计数</button>
+  </div>
+</div>
     </div>
 
     <!-- Page 4: Speed Offset -->
