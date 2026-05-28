@@ -637,17 +637,10 @@ struct HW4Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-#if defined(ISA_SPEED_CHIME_SUPPRESS) && !defined(ESP32_DASHBOARD)
         static constexpr uint32_t ids[] = {280, 390, 921, 1016, 1021, 2047};
         return ids;
     }
     uint8_t filterIdCount() const override { return 6; }
-#else
-        static constexpr uint32_t ids[] = {280, 390, 921, 1016, 1021, 2047};
-        return ids;
-    }
-    uint8_t filterIdCount() const override { return 6; }
-#endif
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -660,10 +653,6 @@ struct HW4Handler : public CarManagerBase
             {
                 uint8_t diGear = readDIGear(frame);
                 Parked = isVehicleParked(diGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions
-                // (e.g. during a Summon shift to Reverse) and would
-                // otherwise drop the gate mid-summon.
                 updateSummonFromDISystemStatus(frame);
                 clearSummonOnParkIfAcaInactive(diGear);
             }
@@ -676,8 +665,6 @@ struct HW4Handler : public CarManagerBase
             {
                 uint8_t difGear = readVehicleGear(frame);
                 Parked = isVehicleParked(difGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions.
                 clearSummonOnParkIfAcaInactive(difGear);
             }
             return;
@@ -687,30 +674,20 @@ struct HW4Handler : public CarManagerBase
             if (frame.dlc < 1)
                 return;
             APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
-            // Capture ISA fused speed limit; same path as HW3.
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
-        }
-#if defined(ISA_SPEED_CHIME_SUPPRESS) && !defined(ESP32_DASHBOARD)
-        if (isaSpeedChimeSuppressRuntime && frame.id == 921)
-        {
-            if (frame.dlc < 8)
+            // ISA chime suppress — runtime gate (all build modes)
+            if ((bool)isaChimeSuppress && frame.dlc >= 8)
+            {
+                frame.data[1] |= 0x20;
+                frame.data[7] = computeVehicleChecksum(frame);
+                framesSent++;
+                driver.send(frame);
+                if (onSend) onSend(0, true);
                 return;
-            if (!isaSpeedChimeSuppressRuntime)
-                return;
-            frame.data[1] |= 0x20;
-            uint8_t sum = 0;
-            for (int i = 0; i < 7; i++)
-                sum += frame.data[i];
-            sum += (921 & 0xFF) + (921 >> 8);
-            frame.data[7] = sum & 0xFF;
-            framesSent++;
-            driver.send(frame);
-            if (onSend)
-                onSend(0, true);
+            }
             return;
         }
-#endif
         if (frame.id == 1016)
         {
             if (frame.dlc < 6)
@@ -737,6 +714,7 @@ struct HW4Handler : public CarManagerBase
                 speedProfile = 4;
                 break;
             }
+            return;
         }
         if (frame.id == 2047)
         {
@@ -772,48 +750,49 @@ struct HW4Handler : public CarManagerBase
             if (frame.dlc < 8)
                 return;
             auto index = readMuxID(frame);
+
+            // Mux 0: FSD activation
             if (index == 0)
             {
-                const bool fsdRequested = forceActivateRuntime || isFSDSelectedInUI(frame);
-                ADEnabled = fsdRequested && (!checkAD || checkAD());
+                bool fsdRequested = (bool)forceActivateRuntime || isFSDSelectedInUI(frame);
+                fsdTriggered = fsdRequested && (!checkAD || checkAD());
+                ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && ADEnabled && (!checkAD || checkAD()))
+            if (index == 0 && (bool)fsdTriggered)
             {
-                // Built-in FSD activation (ported from tesla-fsd-controller-main mod_fsd.h
-                // handleHW4 mux-0). Bit 46 = FSD activation latch, bit 60 = HW4-specific
-                // FSD enable. Done in C++ to ensure stable
-                // activation matching the reference project.
                 setBit(frame, 46, true);
                 setBit(frame, 60, true);
-#if defined(EMERGENCY_VEHICLE_DETECTION)
-                if (emergencyVehicleDetectionRuntime)
-                    setBit(frame, 59, true);
-#endif
+                if ((bool)emergencyVehicleDetection) setBit(frame, 59, true);
+                if ((bool)tlsscBypass) setBit(frame, 38, true);
                 framesSent++;
                 driver.send(frame);
-                if (onSend)
-                    onSend(0, true);
+                if (onSend) onSend(0, true);
             }
-            if (index == 2 && ADEnabled && !speedProfileAuto && (!checkAD || checkAD()))
+
+            // Mux 1: Nag suppression + FSD ready signal
+            if (index == 1 && (bool)fsdTriggered)
             {
-                setSpeedProfileHW4(frame, speedProfile);
-                framesSent++;
-                driver.send(frame);
-                if (onSend)
-                    onSend(2, true);
-            }
-            if (index == 1 && ADEnabled && (!checkAD || checkAD()))
-            {
-                // Nag suppression + FSD ready (ported from tesla-fsd-controller-main
-                // mod_fsd.h handleHW4 mux-1). bit 19=0 (suppress nag), bit 47=1
-                // (HW4-specific FSD ready signal — without this HW4 will NOT activate).
                 setBit(frame, 19, false);
                 setBit(frame, 47, true);
                 framesSent++;
                 driver.send(frame);
-                if (onSend)
-                    onSend(1, true);
+                if (onSend) onSend(1, true);
             }
+
+            // Mux 2: Speed profile + offset
+            if (index == 2 && (bool)fsdTriggered)
+            {
+                // Speed profile
+                frame.data[7] &= static_cast<uint8_t>(~(0x07 << 4));
+                frame.data[7] |= static_cast<uint8_t>((int)speedProfile & 0x07) << 4;
+                // Offset (HW4 offset support)
+                if ((int)hw4OffsetRaw > 0)
+                    frame.data[1] = (frame.data[1] & 0xC0) | ((int)hw4OffsetRaw & 0x3F);
+                framesSent++;
+                driver.send(frame);
+                if (onSend) onSend(2, true);
+            }
+
             if (index == 0 && enablePrint)
             {
                 char buf[LogRingBuffer::kMaxMsgLen];

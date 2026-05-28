@@ -18,9 +18,8 @@ void setUp()
     mock.reset();
     handler = HW4Handler();
     handler.enablePrint = false;
-    isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
-    emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;
-    enhancedAutopilotRuntime = true;
+    handler.emergencyVehicleDetection = true;
+    handler.isaChimeSuppress = true;
 }
 
 void tearDown() {}
@@ -86,7 +85,7 @@ void test_hw4_AD_enabled_only_set_on_mux0()
 {
     CanFrame f0 = {.id = 1021};
     f0.data[0] = 0x00;
-    f0.data[4] = 0x20;
+    f0.data[4] = 0x40;
     handler.handleMessage(f0, mock);
     TEST_ASSERT_TRUE(handler.ADEnabled);
 
@@ -96,7 +95,7 @@ void test_hw4_AD_enabled_only_set_on_mux0()
     f2.data[4] = 0x00; // AD bit not set in mux 2
     handler.handleMessage(f2, mock);
     TEST_ASSERT_TRUE(handler.ADEnabled);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(1, mock.sent.size()); // mux 2 now sends when fsdTriggered
 }
 
 // --- AD activation (mux 0) ---
@@ -105,7 +104,7 @@ void test_hw4_AD_mux0_sets_bits_46_and_60()
 {
     CanFrame f = {.id = 1021};
     f.data[0] = 0x00;
-    f.data[4] = 0x20;
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40); // bit 46
@@ -116,18 +115,18 @@ void test_hw4_AD_mux0_sets_emergency_bit59()
 {
     CanFrame f = {.id = 1021};
     f.data[0] = 0x00;
-    f.data[4] = 0x20;
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x08, mock.sent[0].data[7] & 0x08); // bit 59
 }
 
-void test_hw4_AD_mux0_skips_emergency_bit59_when_runtime_disabled()
+void test_hw4_AD_mux0_skips_emergency_bit59_when_disabled()
 {
-    emergencyVehicleDetectionRuntime = false;
+    handler.emergencyVehicleDetection = false;
     CanFrame f = {.id = 1021};
     f.data[0] = 0x00;
-    f.data[4] = 0x20;
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x00, mock.sent[0].data[7] & 0x08);
@@ -149,7 +148,7 @@ void test_hw4_checkAD_blocks_mux0_and_mux2_send()
 
     CanFrame f0 = {.id = 1021};
     f0.data[0] = 0x00;
-    f0.data[4] = 0x20;
+    f0.data[4] = 0x40;
     handler.handleMessage(f0, mock);
     TEST_ASSERT_FALSE(handler.ADEnabled);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -162,11 +161,30 @@ void test_hw4_checkAD_blocks_mux0_and_mux2_send()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
+// --- TLSSC bypass (bit 38 on mux 0) ---
+
+void test_hw4_tlsscBypass_sets_bit38_on_mux0()
+{
+    handler.tlsscBypass = true;
+    CanFrame f = {.id = 1021};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[4] & 0x40); // bit 38
+}
+
 // --- Nag suppression (mux 1) ---
 
 void test_hw4_nag_suppression_clears_bit19_sets_bit47()
 {
-    handler.ADEnabled = true;
+    // Trigger fsd via mux 0 first
+    CanFrame f0 = {.id = 1021};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+    mock.reset();
+
     CanFrame f = {.id = 1021};
     f.data[0] = 0x01;
     setBit(f, 19, true);
@@ -176,82 +194,105 @@ void test_hw4_nag_suppression_clears_bit19_sets_bit47()
     TEST_ASSERT_EQUAL_HEX8(0x80, mock.sent[0].data[5] & 0x80); // bit 47 set
 }
 
-void test_hw4_nag_suppression_skips_mux1_changes_when_eap_runtime_disabled()
+void test_hw4_mux1_sends_0_when_fsd_not_triggered()
 {
-    enhancedAutopilotRuntime = false;
+    // No mux 0 trigger, so fsdTriggered is false
+    handler.ADEnabled = true;
     CanFrame f = {.id = 1021};
     f.data[0] = 0x01;
     setBit(f, 19, true);
     handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size()); // frame are not sent when runtime disabled
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
-// --- Profile is observed but not injected (mux 2 stays silent) ---
-void test_hw4_mux2_does_not_inject_speed_profile()
+// --- Mux 2: always injects speed profile + offset when fsdTriggered ---
+
+void test_hw4_mux2_injects_speed_profile_when_triggered()
 {
     handler.speedProfile = 3;
+    // Trigger fsd via mux 0
     CanFrame f0 = {.id = 1021};
     f0.data[0] = 0x00;
-    f0.data[4] = 0x20;
+    f0.data[4] = 0x40;
     handler.handleMessage(f0, mock);
     mock.reset();
+
     CanFrame f = {.id = 1021};
     f.data[0] = 0x02;
     f.data[7] = 0x00;
     handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x30, mock.sent[0].data[7] & 0x70); // profile 3 = 0x03 << 4
 }
 
-void test_hw4_mux2_preserves_old_profile_bits_by_not_sending()
+void test_hw4_mux2_preserves_profile_bits()
 {
     handler.speedProfile = 0;
+    // Trigger fsd via mux 0
     CanFrame f0 = {.id = 1021};
     f0.data[0] = 0x00;
-    f0.data[4] = 0x20;
+    f0.data[4] = 0x40;
     handler.handleMessage(f0, mock);
     mock.reset();
+
     CanFrame f = {.id = 1021};
     f.data[0] = 0x02;
     f.data[7] = 0x70; // old profile bits all set
     handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x00, mock.sent[0].data[7] & 0x70); // profile 0 clears all
 }
+
 // --- Send counts ---
 
 void test_hw4_mux0_AD_enabled_sends_1()
 {
     CanFrame f = {.id = 1021};
     f.data[0] = 0x00;
-    f.data[4] = 0x20;
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
 void test_hw4_mux1_sends_1()
 {
-    handler.ADEnabled = true;
+    // Trigger fsd via mux 0
+    CanFrame f0 = {.id = 1021};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+    mock.reset();
+
     CanFrame f = {.id = 1021};
     f.data[0] = 0x01;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
-void test_hw4_mux2_sends_0()
+void test_hw4_mux2_sends_1_when_triggered()
 {
+    // Trigger fsd via mux 0
     CanFrame f0 = {.id = 1021};
     f0.data[0] = 0x00;
-    f0.data[4] = 0x20;
+    f0.data[4] = 0x40;
     handler.handleMessage(f0, mock);
     mock.reset();
+
     CanFrame f = {.id = 1021};
     f.data[0] = 0x02;
     handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
 void test_hw4_manual_profile_injects_mux2_speed_profile()
 {
-    handler.ADEnabled = true;
+    // Trigger fsd via mux 0
+    CanFrame f0 = {.id = 1021};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+    mock.reset();
+
     handler.speedProfileAuto = false;
     handler.speedProfile = 4;
 
@@ -261,7 +302,7 @@ void test_hw4_manual_profile_injects_mux2_speed_profile()
     handler.handleMessage(f, mock);
 
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[7] & 0x70);
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[7] & 0x70); // profile 4 = 0x04 << 4
 }
 
 void test_hw4_ignores_unrelated_can_id()
@@ -269,6 +310,25 @@ void test_hw4_ignores_unrelated_can_id()
     CanFrame f = {.id = 999};
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+// --- Mux 2 offset ---
+
+void test_hw4_mux2_writes_offset()
+{
+    handler.hw4OffsetRaw = 10;
+    // Trigger fsd via mux 0
+    CanFrame f0 = {.id = 1021};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+    mock.reset();
+    // Mux 2
+    CanFrame f2 = {.id = 1021};
+    f2.data[0] = 0x02;
+    handler.handleMessage(f2, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(10, mock.sent[0].data[1] & 0x3F);
 }
 
 // --- ISA speed chime suppression (CAN ID 921) ---
@@ -302,9 +362,8 @@ void test_hw4_isa_suppress_checksum_correct()
     f.data[6] = 0x00;
     handler.handleMessage(f, mock);
     // After OR: data[1] = 0x25
-    // sum of data[0..6] = 0x10 + 0x25 = 0x35
-    // sum += (921 & 0xFF) + (921 >> 8) = 0x99 + 0x03 = 0x9C
-    // total = 0x35 + 0x9C = 0xD1
+    // computeVehicleChecksum: sum of (id_lo + id_hi) + data[0..6] (skip byte 7)
+    // = 0x99 + 0x03 + 0x10 + 0x25 + 0 + 0 + 0 + 0 = 0xD1
     TEST_ASSERT_EQUAL_HEX8(0xD1, mock.sent[0].data[7]);
 }
 
@@ -318,7 +377,7 @@ void test_hw4_isa_suppress_returns_early_no_further_processing()
 
 void test_hw4_isa_suppress_runtime_off_skips_send()
 {
-    isaSpeedChimeSuppressRuntime = false;
+    handler.isaChimeSuppress = false;
     CanFrame f = {.id = 921};
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -414,21 +473,23 @@ int main()
     RUN_TEST(test_hw4_AD_enabled_only_set_on_mux0);
     RUN_TEST(test_hw4_AD_mux0_sets_bits_46_and_60);
     RUN_TEST(test_hw4_AD_mux0_sets_emergency_bit59);
-    RUN_TEST(test_hw4_AD_mux0_skips_emergency_bit59_when_runtime_disabled);
+    RUN_TEST(test_hw4_AD_mux0_skips_emergency_bit59_when_disabled);
     RUN_TEST(test_hw4_no_send_when_AD_disabled_mux0);
     RUN_TEST(test_hw4_checkAD_blocks_mux0_and_mux2_send);
+    RUN_TEST(test_hw4_tlsscBypass_sets_bit38_on_mux0);
 
     RUN_TEST(test_hw4_nag_suppression_clears_bit19_sets_bit47);
-    RUN_TEST(test_hw4_nag_suppression_skips_mux1_changes_when_eap_runtime_disabled);
+    RUN_TEST(test_hw4_mux1_sends_0_when_fsd_not_triggered);
 
-    RUN_TEST(test_hw4_mux2_does_not_inject_speed_profile);
-    RUN_TEST(test_hw4_mux2_preserves_old_profile_bits_by_not_sending);
+    RUN_TEST(test_hw4_mux2_injects_speed_profile_when_triggered);
+    RUN_TEST(test_hw4_mux2_preserves_profile_bits);
 
     RUN_TEST(test_hw4_mux0_AD_enabled_sends_1);
     RUN_TEST(test_hw4_mux1_sends_1);
-    RUN_TEST(test_hw4_mux2_sends_0);
+    RUN_TEST(test_hw4_mux2_sends_1_when_triggered);
     RUN_TEST(test_hw4_manual_profile_injects_mux2_speed_profile);
     RUN_TEST(test_hw4_ignores_unrelated_can_id);
+    RUN_TEST(test_hw4_mux2_writes_offset);
 
     RUN_TEST(test_hw4_isa_suppress_sets_bit5_of_data1);
     RUN_TEST(test_hw4_isa_suppress_preserves_existing_data1_bits);
