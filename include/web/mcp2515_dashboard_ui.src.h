@@ -70,6 +70,11 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .badge-warn { background: #78350f; color: var(--warn); }
 .topbar-fps { color: var(--info); font-size: 14px; font-weight: 700; }
 .topbar-time { margin-left: auto; color: var(--tx3); font-size: 12px; }
+.topbar-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+  flex-shrink: 0; }
+.topbar-dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.topbar-dot.err { background: var(--err); box-shadow: 0 0 6px var(--err); }
+.topbar-dot.warn { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
 .content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px;
   -webkit-overflow-scrolling: touch; }
 
@@ -79,11 +84,25 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 
 /* === Cards === */
 .card { background: var(--card-bg); border-radius: 10px; padding: 18px;
-  margin-bottom: 14px; }
+  margin-bottom: 16px; }
 .card-title { font-size: 16px; font-weight: 700; color: var(--tx1);
   margin-bottom: 10px; }
 .card-subtitle { font-size: 12px; color: var(--tx3); margin-top: -6px;
   margin-bottom: 10px; }
+.quick-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+.qa-btn { background: var(--card-bg); border: 2px solid var(--border); border-radius: 12px;
+  padding: 14px 8px; cursor: pointer; text-align: center; color: var(--tx1);
+  transition: all .2s; min-height: 80px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px; }
+.qa-btn:hover { border-color: var(--accent); transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+.qa-btn:active { transform: translateY(0); }
+.qa-btn.qa-fsd.active { border-color: var(--ok); background: rgba(74,222,128,0.1); }
+.qa-btn.qa-danger { border-color: rgba(248,113,113,0.3); }
+.qa-btn.qa-danger:hover { border-color: var(--err); }
+.qa-icon { font-size: 24px; line-height: 1; }
+.qa-label { font-size: 13px; font-weight: 700; }
+.qa-status { font-size: 10px; color: var(--tx3); font-weight: 500; }
 
 /* === Stats Grid === */
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
@@ -235,6 +254,10 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .diag-grid { grid-template-columns: 1fr 1fr; gap: 3px; }
   .diag-item { padding: 4px 6px; font-size: 11px; }
   .upload-area { padding: 14px 8px; }
+  .quick-actions { gap: 6px; }
+  .qa-btn { padding: 10px 4px; min-height: 68px; }
+  .qa-icon { font-size: 20px; }
+  .qa-label { font-size: 12px; }
 }
 .mobile-toggle { display: none; background: none; border: none;
   color: var(--tx2); font-size: 20px; cursor: pointer; padding: 4px 8px; }
@@ -255,12 +278,28 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .big-toggle .toggle-visual .thumb { width: 36px; height: 36px; border-radius: 50%;
   background: #fff; position: absolute; top: 2px; transition: left .3s; }
 .big-toggle .toggle-label { font-size: 18px; font-weight: 700; }
+.big-toggle.on .toggle-visual { animation: pulse-ok 2s ease-in-out infinite; }
+@keyframes pulse-ok {
+  0%,100% { box-shadow: 0 0 10px rgba(74,222,128,0.3); }
+  50% { box-shadow: 0 0 25px rgba(74,222,128,0.6); }
+}
+.big-toggle.off .toggle-visual { animation: pulse-err 2.5s ease-in-out infinite; }
+@keyframes pulse-err {
+  0%,100% { box-shadow: 0 0 8px rgba(248,113,113,0.2); }
+  50% { box-shadow: 0 0 18px rgba(248,113,113,0.4); }
+}
 .big-toggle.on .toggle-visual { background: var(--ok);
   box-shadow: 0 0 20px rgba(74,222,128,0.3); }
 .big-toggle.on .toggle-visual .thumb { left: 42px; }
 .big-toggle.off .toggle-visual { background: var(--err);
   box-shadow: 0 0 20px rgba(248,113,113,0.3); }
 .big-toggle.off .toggle-visual .thumb { left: 2px; }
+
+/* === Card Hover (desktop) === */
+@media (min-width: 769px) {
+  .card { transition: transform .2s, box-shadow .2s; }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+}
 
 /* === Upload Area === */
 .upload-area { border: 2px dashed var(--border); border-radius: 10px;
@@ -310,7 +349,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="topbar">
     <button class="mobile-toggle" onclick="openSidebar()">☰</button>
     <span class="topbar-fps" id="tb-fps">0.0 Hz</span>
+    <span class="topbar-dot ok" id="tb-dot-status"></span>
     <span class="topbar-badge badge-ok" id="tb-status">已连接</span>
+    <span class="topbar-dot warn" id="tb-dot-fsd"></span>
     <span class="topbar-badge badge-warn" id="tb-fsd">FSD OFF</span>
     <span class="topbar-time" id="tb-up">00:00:00</span>
   </div>
@@ -320,6 +361,24 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 1: Overview -->
     <div class="page active" id="pg-overview">
+<!-- Quick Actions -->
+<div class="quick-actions">
+  <button class="qa-btn qa-fsd" id="qa-fsd" onclick="toggleFsd()">
+    <div class="qa-icon" id="qa-fsd-icon">⚡</div>
+    <div class="qa-label">FSD 注入</div>
+    <div class="qa-status" id="qa-fsd-st">OFF</div>
+  </button>
+  <button class="qa-btn" onclick="fetch('/reset_stats');setTimeout(poll,500)">
+    <div class="qa-icon">🔄</div>
+    <div class="qa-label">重置计数</div>
+    <div class="qa-status">RX/TX</div>
+  </button>
+  <button class="qa-btn qa-danger" onclick="if(confirm('确认重启设备？'))fetch('/reboot')">
+    <div class="qa-icon">🔁</div>
+    <div class="qa-label">重启设备</div>
+    <div class="qa-status">Reboot</div>
+  </button>
+</div>
 <!-- FSD Quick Toggle -->
 <div class="card">
   <div class="card-title">FSD 注入</div>
@@ -1101,8 +1160,10 @@ async function poll(){
   setText('tb-fps',d.fps.toFixed(1)+' Hz');
   setCls('tb-status','topbar-badge '+(d.can?'badge-ok':'badge-err'));
   setText('tb-status',d.can?T('已连接'):T('未连接'));
+  setCls('tb-dot-status','topbar-dot '+(d.can?'ok':'err'));
   setCls('tb-fsd','topbar-badge '+(d.ia?'badge-ok':'badge-warn'));
   setText('tb-fsd',d.ia?'FSD ON':'FSD OFF');
+  setCls('tb-dot-fsd','topbar-dot '+(d.ia?'ok':'warn'));
   setText('tb-up',fmtUp(d.up||0));
 
   // Overview
@@ -1121,6 +1182,11 @@ async function poll(){
 
   // FSD page toggle
   updateFsdToggle(d.ci);
+
+  // Quick action FSD button
+  var qaBtn=$('qa-fsd');var qaSt=$('qa-fsd-st');
+  if(qaBtn){qaBtn.classList.toggle('active',!!d.ci)}
+  if(qaSt){qaSt.textContent=d.ci?'ON':'OFF';qaSt.style.color=d.ci?'var(--ok)':'var(--err)'}
 
   // Boot toggle
   var bt=$('fsd-boot-tgl');
