@@ -176,11 +176,11 @@ struct LegacyHandler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        // 760 added for UI_mppSpeedLimit override (Legacy MPP custom-speed feature).
-        static constexpr uint32_t ids[] = {69, 280, 390, 760, 921, 1006};
+        // 1080 added for UI_driverAssistAnonDebugParams visionSpeedSlider override.
+        static constexpr uint32_t ids[] = {69, 280, 390, 760, 921, 1006, 1080};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 7; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -203,30 +203,27 @@ struct LegacyHandler : public CarManagerBase
                 speedProfile = 0;
             return;
         }
-        // UI_gpsVehicleSpeed (0x2F8 = 760): UI_mppSpeedLimit raise-only override.
-        // byte 6 low 5 bits hold the AP-fused/MPP speed limit raw, where
-        // raw × 5 = km/h (max raw 31 → 155 km/h). We bucket-look up a target
-        // km/h based on the gateway's current raw_mpp using the same low /
-        // high bucket layout as HW3, then write the higher value back ONLY
-        // when our target exceeds what the gateway sent. Byte 7 vehicle
-        // checksum must be recomputed because byte 6 changed.
+        // UI_gpsVehicleSpeed (0x2F8 = 760): write UI_userSpeedOffset (bit40|6,
+        // raw = kph+30). Byte 5 layout: bits 0-5 = offset (0-63), bit 6 reserved,
+        // bit 7 = UI_userSpeedOffsetUnits (0=MPH, 1=KPH). We preserve bits 6-7
+        // so the offset unit follows the car's setting.
         if (frame.id == 760)
         {
+            if ((int)legacyOffset == 0) return;
+            if (frame.dlc < 6) return;
+            uint8_t raw = (uint8_t)((int)legacyOffset + 30);
+            frame.data[5] = (frame.data[5] & 0xC0) | (raw & 0x3F);
+            framesSent++;
+            driver.send(frame);
+            if (onSend) onSend(0, true);
+            return;
+        }
+        // 0x438 (1080) — UI_driverAssistAnonDebugParams: visionSpeedSlider = 100
+        if (frame.id == 1080)
+        {
             if (frame.dlc < 8) return;
-            uint8_t rawMpp = frame.data[6] & 0x1F;
-            legacyMppLastRaw = rawMpp;
-            if (!dashLegacyMppActive()) return;
-            if (rawMpp == 0) return;                  // gateway has no valid MPP yet
-            int currentKph = static_cast<int>(rawMpp) * 5;
-            uint16_t targetKph = dashComputeLegacyMppTargetKph(currentKph);
-            if (targetKph == 0) return;               // no enabled feature covers this bucket
-            if (static_cast<int>(targetKph) <= currentKph) return; // raise-only
-            int targetKphClamped = std::min<int>(targetKph, kLegacyMppMaxKph);
-            uint8_t targetRaw = static_cast<uint8_t>(targetKphClamped / 5);
-            if (targetRaw > kLegacyMppMaxRaw) targetRaw = kLegacyMppMaxRaw;
-            frame.data[6] = (frame.data[6] & 0xE0) | (targetRaw & 0x1F);
-            frame.data[7] = computeVehicleChecksum(frame);
-            legacyMppLastSentRaw = targetRaw;
+            if (!overrideSpeedLimit) return;
+            frame.data[7] = (frame.data[7] & 0x80) | 100;
             framesSent++;
             driver.send(frame);
             if (onSend) onSend(0, true);
@@ -268,46 +265,33 @@ struct LegacyHandler : public CarManagerBase
             APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
             return;
         }
+        // 0x3EE (1006) — FSD activation frame (mux 0/1)
         if (frame.id == 1006)
         {
             if (frame.dlc < 8)
                 return;
             auto index = readMuxID(frame);
+            // Mux 0: detect FSD selection and activate
             if (index == 0)
             {
-                const bool fsdRequested = forceActivateRuntime || isFSDSelectedInUI(frame);
-                ADEnabled = fsdRequested && (!checkAD || checkAD());
+                fsdTriggered = (bool)forceActivateRuntime || isFSDSelectedInUI(frame);
             }
-            if (index == 0 && ADEnabled && (!checkAD || checkAD()))
+            if (index == 0 && (bool)fsdTriggered && (!checkAD || checkAD()))
             {
-#if defined(ESP32_DASHBOARD) && DASH_FSD_252_COMPAT
-                // Dashboard compatibility path injects after the handler from
-                // the saved original 1006 mux0 frame, matching the Legacy
-                // plugin rule: copy original, set bit46, optionally apply the
-                // selected driving profile, then send once.
-#else
-                if (shouldInjectSpeedProfile())
-                    setSpeedProfileV12V13(frame, speedProfile);
+                ADEnabled = true;
                 setBit(frame, 46, true);
-                // Match the stable FSD mode path: request smart speed offset
-                // together with the FSD latch when the master switch is enabled.
-                setBit(frame, 40, true);
-                setBit(frame, 41, true);
+                setSpeedProfileV12V13(frame, speedProfile);
                 framesSent++;
                 driver.send(frame);
-                if (onSend)
-                    onSend(0, true);
-#endif
+                if (onSend) onSend(0, true);
             }
-            if (index == 1 && (!checkNag || checkNag()))
+            // Mux 1: nag suppression + optional vision speed limit removal
+            if (index == 1 && (bool)fsdTriggered && (!checkAD || checkAD()))
             {
-#if !defined(ESP32_DASHBOARD)
                 setBit(frame, 19, false);
-                framesSent++;
+                if ((bool)removeVisionSpeedLimit) setBit(frame, 48, false);
                 driver.send(frame);
-                if (onSend)
-                    onSend(1, true);
-#endif
+                if (onSend) onSend(1, true);
             }
             if (index == 0 && enablePrint)
             {

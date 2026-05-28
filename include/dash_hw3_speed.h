@@ -73,6 +73,10 @@ inline constexpr uint8_t kHw3HighSpeedBucketCount_verified = 5;
 
 inline uint8_t hw3HighSpeedTargetPct[kHw3HighSpeedBucketCount_verified] = {25, 25, 25, 25, 25};
 
+// Forward-declare encoding helpers (defined below) for use by dashEncodeHw3OffsetFromPct.
+inline uint8_t dashEncodeHw3OffsetPct4(int pct);
+inline uint8_t dashEncodeHw3OffsetKph5(int kph);
+
 // Offset from pct for high-speed mode
 inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
     if (pct <= 0 || flKph == 0) return 0;

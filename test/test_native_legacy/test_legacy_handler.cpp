@@ -13,11 +13,6 @@ static bool denyAD()
     return false;
 }
 
-static bool denyNag()
-{
-    return false;
-}
-
 void setUp()
 {
     mock.reset();
@@ -81,7 +76,7 @@ void test_legacy_AD_enabled_on_mux0()
 {
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00; // mux 0
-    f.data[4] = 0x20; // AD bit set
+    f.data[4] = 0x40; // FSD bit set (bit 38 = bit 6 of byte 4)
     handler.handleMessage(f, mock);
     TEST_ASSERT_TRUE(handler.ADEnabled);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
@@ -91,7 +86,7 @@ void test_legacy_no_send_when_AD_disabled()
 {
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00; // mux 0
-    f.data[4] = 0x00; // AD bit NOT set
+    f.data[4] = 0x00; // FSD bit NOT set
     handler.handleMessage(f, mock);
     TEST_ASSERT_FALSE(handler.ADEnabled);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -101,7 +96,7 @@ void test_legacy_AD_sets_bit46()
 {
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00;
-    f.data[4] = 0x20;
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
@@ -112,7 +107,7 @@ void test_legacy_AD_applies_selected_speed_profile_bits()
     handler.speedProfile = 2;
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00;
-    f.data[4] = 0x20;
+    f.data[4] = 0x40;
     f.data[6] = 0x02;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_HEX8(0x04, mock.sent[0].data[6] & 0x06);
@@ -124,31 +119,82 @@ void test_legacy_checkAD_blocks_mux0_send()
 
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00;
-    f.data[4] = 0x20;
+    f.data[4] = 0x40;
     handler.handleMessage(f, mock);
     TEST_ASSERT_FALSE(handler.ADEnabled);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+// --- fsdTriggered state tracking ---
+
+void test_legacy_fsdTriggered_set_on_mux0()
+{
+    CanFrame f = {.id = 1006};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_TRUE(handler.fsdTriggered);
 }
 
 // --- Nag suppression (mux 1) ---
 
 void test_legacy_nag_suppression_clears_bit19_on_mux1()
 {
+    // First activate FSD via mux 0
+    CanFrame f0 = {.id = 1006};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+
+    // Then send mux 1
     CanFrame f = {.id = 1006};
     f.data[0] = 0x01;    // mux 1
     setBit(f, 19, true); // pre-set nag bit
     handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_FALSE((mock.sent[0].data[2] >> 3) & 0x01);
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+    TEST_ASSERT_FALSE((mock.sent[1].data[2] >> 3) & 0x01);
 }
 
-void test_legacy_checkNag_blocks_mux1_send()
-{
-    handler.checkNag = denyNag;
+// --- CAN 760 offset write ---
 
-    CanFrame f = {.id = 1006};
-    f.data[0] = 0x01;
-    setBit(f, 19, true);
+void test_legacy_can760_writes_offset()
+{
+    handler.legacyOffset = 10;
+    CanFrame f = {.id = 760};
+    f.dlc = 8;
+    f.data[5] = 0xC0;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0xC0 | 40, mock.sent[0].data[5]);
+}
+
+void test_legacy_can760_skips_when_offset_zero()
+{
+    handler.legacyOffset = 0;
+    CanFrame f = {.id = 760};
+    f.dlc = 8;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+// --- CAN 1080 visionSpeedSlider override ---
+
+void test_legacy_can1080_sets_vision_slider()
+{
+    handler.overrideSpeedLimit = true;
+    CanFrame f = {.id = 1080};
+    f.dlc = 8;
+    f.data[7] = 0x80;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x80 | 100, mock.sent[0].data[7]);
+}
+
+void test_legacy_can1080_skips_when_disabled()
+{
+    handler.overrideSpeedLimit = false;
+    CanFrame f = {.id = 1080};
+    f.dlc = 8;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
@@ -166,7 +212,7 @@ void test_legacy_ignores_unrelated_can_id()
 
 void test_legacy_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(6, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(7, handler.filterIdCount());
 }
 
 void test_legacy_filter_ids_values()
@@ -178,6 +224,7 @@ void test_legacy_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(760, ids[3]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[4]);
     TEST_ASSERT_EQUAL_UINT32(1006, ids[5]);
+    TEST_ASSERT_EQUAL_UINT32(1080, ids[6]);
 }
 
 int main()
@@ -198,9 +245,15 @@ int main()
     RUN_TEST(test_legacy_AD_sets_bit46);
     RUN_TEST(test_legacy_AD_applies_selected_speed_profile_bits);
     RUN_TEST(test_legacy_checkAD_blocks_mux0_send);
+    RUN_TEST(test_legacy_fsdTriggered_set_on_mux0);
 
     RUN_TEST(test_legacy_nag_suppression_clears_bit19_on_mux1);
-    RUN_TEST(test_legacy_checkNag_blocks_mux1_send);
+
+    RUN_TEST(test_legacy_can760_writes_offset);
+    RUN_TEST(test_legacy_can760_skips_when_offset_zero);
+    RUN_TEST(test_legacy_can1080_sets_vision_slider);
+    RUN_TEST(test_legacy_can1080_skips_when_disabled);
+
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
 
     return UNITY_END();
