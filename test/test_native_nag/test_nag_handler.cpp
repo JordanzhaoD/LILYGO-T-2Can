@@ -57,13 +57,14 @@ void tearDown() {}
 
 void test_nag_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(1, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(2, handler.filterIdCount());
 }
 
 void test_nag_filter_ids_value()
 {
     const uint32_t *ids = handler.filterIds();
     TEST_ASSERT_EQUAL_UINT32(880, ids[0]);
+    TEST_ASSERT_EQUAL_UINT32(920, ids[1]);
 }
 
 // ============================================================

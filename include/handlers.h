@@ -73,6 +73,45 @@ struct CarManagerBase
     uint8_t banShieldSnapshot[8][8] = {};
     bool banShieldValid[8] = {};
 
+    bool handleBanShield(CanFrame &frame, CanDriver &driver)
+    {
+        if (!(bool)banShieldEnable) return false;
+        if (frame.id != 2047 || frame.dlc < 8) return false;
+
+        uint8_t mux = readMuxID(frame);
+        if (mux >= 8) return false;
+
+        if (!banShieldValid[mux]) {
+            for (int i = 0; i < 8; i++) banShieldSnapshot[mux][i] = frame.data[i];
+            banShieldValid[mux] = true;
+            return false;
+        }
+
+        bool changed = false;
+        for (int i = 0; i < 8; i++) {
+            if (frame.data[i] != banShieldSnapshot[mux][i]) {
+                changed = true;
+                break;
+            }
+        }
+        if (!changed) return false;
+
+        CanFrame out = frame;
+        for (int i = 0; i < 8; i++) out.data[i] = banShieldSnapshot[mux][i];
+        banShieldBlocks++;
+        driver.send(out);
+        return true;
+    }
+
+    // Auto hardware detection from GTW_carConfig (CAN 920)
+    void updateHwDetectedFrom920(const CanFrame &frame)
+    {
+        if (frame.id != 920 || frame.dlc < 1) return;
+        uint8_t das_hw = (frame.data[0] >> 6) & 0x03;
+        if (das_hw == 2) hwDetected = 1;   // HW3
+        else if (das_hw == 3) hwDetected = 2; // HW4
+    }
+
     unsigned long lastSummonActivityMs = 0;
     // Summon-vs-AP/TACC discrimination state. ACA (DI_autonomyControlActive)
     // alone is set during AP, TACC, and Smart Summon, so it cannot be the
@@ -177,15 +216,17 @@ struct LegacyHandler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
         // 1080 added for UI_driverAssistAnonDebugParams visionSpeedSlider override.
-        static constexpr uint32_t ids[] = {69, 280, 390, 760, 921, 1006, 1080};
+        // 920 added for auto hardware detection (GTW_carConfig).
+        static constexpr uint32_t ids[] = {69, 280, 390, 760, 920, 921, 1006, 1080};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 7; }
+    uint8_t filterIdCount() const override { return 8; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
         if (onFrame)
             onFrame(frame);
+        updateHwDetectedFrom920(frame);
         // STW_ACTN_RQ (0x045 = 69): Follow-Distance-Stalk as Source for Profile Mapping
         // byte[1]: 0x00=Pos1, 0x21=Pos2, 0x42=Pos3, 0x64=Pos4, 0x85=Pos5, 0xA6=Pos6, 0xC8=Pos7
         if (frame.id == 69)
@@ -317,15 +358,16 @@ struct HW3Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {280, 390, 921, 1016, 1021, 2047};
+        static constexpr uint32_t ids[] = {280, 390, 920, 921, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 7; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
         if (onFrame)
             onFrame(frame);
+        updateHwDetectedFrom920(frame);
         if (frame.id == 280)
         {
             if (frame.dlc < 3)
@@ -418,6 +460,7 @@ struct HW3Handler : public CarManagerBase
                 Serial.println(buf);
 #endif
             }
+            handleBanShield(frame, driver);
             return;
         }
         if (frame.id == 1021)
@@ -571,13 +614,14 @@ struct NagHandler : public CarManagerBase
 
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {880};
+        static constexpr uint32_t ids[] = {880, 920};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 1; }
+    uint8_t filterIdCount() const override { return 2; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
+        updateHwDetectedFrom920(frame);
         if (frame.id != 880 || frame.dlc < 8)
             return;
 
@@ -637,15 +681,16 @@ struct HW4Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {280, 390, 921, 1016, 1021, 2047};
+        static constexpr uint32_t ids[] = {280, 390, 920, 921, 1016, 1021, 2047};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 7; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
         if (onFrame)
             onFrame(frame);
+        updateHwDetectedFrom920(frame);
         if (frame.id == 280)
         {
             if (frame.dlc < 3)
@@ -743,6 +788,7 @@ struct HW4Handler : public CarManagerBase
                 Serial.println(buf);
 #endif
             }
+            handleBanShield(frame, driver);
             return;
         }
         if (frame.id == 1021)

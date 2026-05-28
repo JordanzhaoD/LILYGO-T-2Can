@@ -306,7 +306,7 @@ void test_hw3_fsdTriggered_set_on_mux0()
 
 void test_hw3_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(6, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(7, handler.filterIdCount());
 }
 
 void test_hw3_filter_ids_values()
@@ -314,10 +314,56 @@ void test_hw3_filter_ids_values()
     const uint32_t *ids = handler.filterIds();
     TEST_ASSERT_EQUAL_UINT32(280, ids[0]);
     TEST_ASSERT_EQUAL_UINT32(390, ids[1]);
-    TEST_ASSERT_EQUAL_UINT32(921, ids[2]);
-    TEST_ASSERT_EQUAL_UINT32(1016, ids[3]);
-    TEST_ASSERT_EQUAL_UINT32(1021, ids[4]);
-    TEST_ASSERT_EQUAL_UINT32(2047, ids[5]);
+    TEST_ASSERT_EQUAL_UINT32(920, ids[2]);
+    TEST_ASSERT_EQUAL_UINT32(921, ids[3]);
+    TEST_ASSERT_EQUAL_UINT32(1016, ids[4]);
+    TEST_ASSERT_EQUAL_UINT32(1021, ids[5]);
+    TEST_ASSERT_EQUAL_UINT32(2047, ids[6]);
+}
+
+// --- Ban Shield ---
+
+void test_hw3_ban_shield_blocks_changed_2047_mux2()
+{
+    handler.banShieldEnable = true;
+    // Learn baseline
+    CanFrame learn = {.id = 2047};
+    learn.data[0] = 0x02;
+    learn.dlc = 8;
+    learn.data[5] = 0x08;
+    handler.handleMessage(learn, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+
+    // Changed frame should be blocked
+    mock.reset();
+    CanFrame attack = {.id = 2047};
+    attack.data[0] = 0x02;
+    attack.dlc = 8;
+    attack.data[5] = 0x0C;
+    handler.handleMessage(attack, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x08, mock.sent[0].data[5]);
+    TEST_ASSERT_EQUAL_UINT32(1, (uint32_t)handler.banShieldBlocks);
+}
+
+// --- Auto hardware detection (CAN 920) ---
+
+void test_hw3_auto_detect_hw3_from_can920()
+{
+    CanFrame f = {.id = 920};
+    f.dlc = 1;
+    f.data[0] = 0x80; // das_hw = 2 (HW3)
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL_UINT8(1, (uint8_t)handler.hwDetected);
+}
+
+void test_hw3_auto_detect_hw4_from_can920()
+{
+    CanFrame f = {.id = 920};
+    f.dlc = 1;
+    f.data[0] = 0xC0; // das_hw = 3 (HW4)
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL_UINT8(2, (uint8_t)handler.hwDetected);
 }
 
 int main()
@@ -353,6 +399,10 @@ int main()
 
     RUN_TEST(test_hw3_tlsscBypass_sets_bit38_on_mux0);
     RUN_TEST(test_hw3_fsdTriggered_set_on_mux0);
+
+    RUN_TEST(test_hw3_ban_shield_blocks_changed_2047_mux2);
+    RUN_TEST(test_hw3_auto_detect_hw3_from_can920);
+    RUN_TEST(test_hw3_auto_detect_hw4_from_can920);
 
     return UNITY_END();
 }
