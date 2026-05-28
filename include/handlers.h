@@ -56,6 +56,22 @@ struct CarManagerBase
     Shared<uint32_t> frameCount{0};
     Shared<uint32_t> framesSent{0};
     Shared<int> speedOffset{0};
+    // --- FSD activation state (from tesla-fsd-controller verified logic) ---
+    Shared<bool> fsdTriggered{false};
+    Shared<bool> removeVisionSpeedLimit{true};
+    Shared<int> legacyOffset{0};
+    Shared<bool> overrideSpeedLimit{false};
+    Shared<bool> tlsscBypass{false};
+    Shared<bool> emergencyVehicleDetection{true};
+    Shared<bool> isaChimeSuppress{false};
+    Shared<uint8_t> hw4OffsetRaw{0};
+    Shared<bool> banShieldEnable{false};
+    Shared<uint32_t> banShieldBlocks{0};
+    Shared<uint8_t> hwDetected{0};
+    Shared<bool> autoModeEnabled{false};
+    // Ban Shield per-mux state (CAN task only, non-atomic)
+    uint8_t banShieldSnapshot[8][8] = {};
+    bool banShieldValid[8] = {};
 
     unsigned long lastSummonActivityMs = 0;
     // Summon-vs-AP/TACC discrimination state. ACA (DI_autonomyControlActive)

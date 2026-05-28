@@ -52,6 +52,37 @@ inline bool hw3HighSpeedEnable = false;
 inline uint8_t hw3HighSpeedTarget[kHw3HighSpeedBucketCount] = {90, 110, 130};
 inline uint8_t hw3WireEncoding = kHw3WireEncDefault;
 
+// --- HW3 auto speed targeting (from tesla-fsd-controller fsd_config.h) ---
+inline constexpr uint8_t kHw3AutoTargetBelow60Kph = 64;
+inline constexpr uint8_t kHw3AutoTargetAt60Kph = 100;
+inline constexpr uint8_t kHw3AutoTargetForVisible80Kph = 85;
+
+inline bool hw3AutoSpeed = true;
+
+inline uint8_t dashComputeHw3AutoTargetKph(uint8_t fusedLimitKph) {
+    if (fusedLimitKph == 60) return kHw3AutoTargetAt60Kph;
+    if (fusedLimitKph < kHw3AutoTargetBelow60Kph) return kHw3AutoTargetBelow60Kph;
+    if (fusedLimitKph < kHw3StockOffsetCutoverKph) return kHw3AutoTargetForVisible80Kph;
+    return fusedLimitKph;
+}
+
+// High-speed bucket configuration (tesla-fsd-controller: 5 buckets at 10kph step)
+inline constexpr uint8_t kHw3HighSpeedBucketBaseKph_verified = 80;
+inline constexpr uint8_t kHw3HighSpeedBucketStepKph_verified = 10;
+inline constexpr uint8_t kHw3HighSpeedBucketCount_verified = 5;
+
+inline uint8_t hw3HighSpeedTargetPct[kHw3HighSpeedBucketCount_verified] = {25, 25, 25, 25, 25};
+
+// Offset from pct for high-speed mode
+inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
+    if (pct <= 0 || flKph == 0) return 0;
+    if (hw3WireEncoding == kHw3WireEncPct4) {
+        return dashEncodeHw3OffsetPct4(pct);
+    }
+    int offsetKph = (static_cast<int>(flKph) * pct + 50) / 100;
+    return dashEncodeHw3OffsetKph5(offsetKph);
+}
+
 // ─── Runtime state (live values) ─────────────────────────────────────────────
 // Fused/ISA speed limit raw byte from 0x399/921 byte1[4:0] (×5 = kph).
 // 0 = SNA, 31 = NONE → no override (stock pass-through).
