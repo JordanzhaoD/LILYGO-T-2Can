@@ -27,13 +27,6 @@ void test_ui_bit6_selects_ad()
     TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
-void test_ui_bit6_selects_ad_for_newer_traces()
-{
-    CanFrame f = {};
-    f.data[4] = 0x40;
-    TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
-}
-
 void test_hw3_dashboard_does_not_inject_builtin_when_ui_bit_clear()
 {
     HW3Handler handler;
@@ -55,7 +48,6 @@ int main()
 
     RUN_TEST(test_bypass_tlssc_build_flag_no_longer_forces_ui_bit_clear);
     RUN_TEST(test_ui_bit6_selects_ad);
-    RUN_TEST(test_ui_bit6_selects_ad_for_newer_traces);
     RUN_TEST(test_hw3_dashboard_does_not_inject_builtin_when_ui_bit_clear);
 
     return UNITY_END();

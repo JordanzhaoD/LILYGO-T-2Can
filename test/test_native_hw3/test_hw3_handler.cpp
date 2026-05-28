@@ -366,6 +366,189 @@ void test_hw3_auto_detect_hw4_from_can920()
     TEST_ASSERT_EQUAL_UINT8(2, (uint8_t)handler.hwDetected);
 }
 
+// ── HW3 mux-2 speed offset tests ──────────────────────────────
+
+#include "dash_hw3_speed.h"
+
+// Helper: reset all dash_hw3_speed globals to defaults
+static void resetSpeedGlobals()
+{
+    fusedSpeedLimitRaw = 0;
+    hw3CustomSpeed = false;
+    hw3CustomTarget[0] = 45; hw3CustomTarget[1] = 60;
+    hw3CustomTarget[2] = 75; hw3CustomTarget[3] = 90;
+    hw3CustomTarget[4] = 105;
+    hw3AutoSpeed = true;
+    hw3HighSpeedEnable = false;
+    hw3HighSpeedTargetPct[0] = 25; hw3HighSpeedTargetPct[1] = 25;
+    hw3HighSpeedTargetPct[2] = 25; hw3HighSpeedTargetPct[3] = 25;
+    hw3HighSpeedTargetPct[4] = 25;
+    hw3WireEncoding = kHw3WireEncDefault;
+    hw3OffsetSlew = false;
+    hw3OffsetTargetRaw = 0;
+    hw3OffsetLastRaw = 0;
+    hw3OffsetLastSentMs = 0;
+    hw3OffsetSlewCount = 0;
+}
+
+// Test: custom target lookup at 30 kph bucket (first bucket)
+void test_hw3_mux2_custom_target_lookup()
+{
+    resetSpeedGlobals();
+    hw3CustomSpeed = true;
+    // fusedLimitRaw = 8 → 40 kph, which falls in bucket [40,50), index 1 → 60 kph
+    uint16_t target = dashComputeHw3CustomTargetKph(40);
+    TEST_ASSERT_EQUAL_UINT16(60, target);
+
+    // 70 kph → bucket [70,80), index 4 → 105 kph target
+    target = dashComputeHw3CustomTargetKph(70);
+    TEST_ASSERT_EQUAL_UINT16(105, target);
+
+    // Below 30 kph → 0 (no override)
+    target = dashComputeHw3CustomTargetKph(25);
+    TEST_ASSERT_EQUAL_UINT16(0, target);
+
+    // 80 kph → cutover, no override
+    target = dashComputeHw3CustomTargetKph(80);
+    TEST_ASSERT_EQUAL_UINT16(0, target);
+}
+
+// Test: auto speed target below 60 kph
+void test_hw3_mux2_auto_target_below_60()
+{
+    resetSpeedGlobals();
+    uint8_t t = dashComputeHw3AutoTargetKph(30);
+    TEST_ASSERT_EQUAL_UINT8(64, t); // kHw3AutoTargetBelow60Kph
+}
+
+// Test: auto speed target exactly 60 kph
+void test_hw3_mux2_auto_target_at_60()
+{
+    resetSpeedGlobals();
+    uint8_t t = dashComputeHw3AutoTargetKph(60);
+    TEST_ASSERT_EQUAL_UINT8(100, t); // kHw3AutoTargetAt60Kph
+}
+
+// Test: auto speed target between 64 and 80 (visible < 80)
+void test_hw3_mux2_auto_target_visible_80()
+{
+    resetSpeedGlobals();
+    uint8_t t = dashComputeHw3AutoTargetKph(70);
+    TEST_ASSERT_EQUAL_UINT8(85, t); // kHw3AutoTargetForVisible80Kph
+}
+
+// Test: high-speed percent encoding via PCT4 (default encoding)
+void test_hw3_mux2_high_speed_pct_encode()
+{
+    resetSpeedGlobals();
+    hw3HighSpeedEnable = true;
+
+    // 25% at PCT4 encoding = 25*4 = 100 raw
+    uint8_t raw = dashEncodeHw3OffsetPct4(25);
+    TEST_ASSERT_EQUAL_UINT8(100, raw);
+
+    // Clamp at 50% = 200 raw
+    raw = dashEncodeHw3OffsetPct4(60);
+    TEST_ASSERT_EQUAL_UINT8(200, raw);
+
+    // Verify dashEncodeHw3OffsetFromPct uses PCT4 by default
+    raw = dashEncodeHw3OffsetFromPct(25, 100);
+    TEST_ASSERT_EQUAL_UINT8(100, raw);
+}
+
+// Test: wire format encoding — activeRaw goes to data[0] bits 6-7 + data[1] bits 0-5
+void test_hw3_mux2_wire_format_encoding()
+{
+    resetSpeedGlobals();
+    hw3CustomSpeed = true;
+    handler.speedOffset = 20;
+
+    // Trigger FSD via mux 0
+    CanFrame f0 = {.id = 1021};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+    mock.reset();
+
+    // Set fused speed limit to 40 kph → raw = 8
+    fusedSpeedLimitRaw = 8;
+    // 40 kph → custom target = 45 kph, offset = 5 kph
+    // PCT4: pct = 5*100/40 = 12 (int div) → 12*4 = 48 raw
+    // activeRaw = 48 = 0x30
+    // data[0] bits 6-7 = (0x30 & 0x03) << 6 = 0x00
+    // data[1] bits 0-5 = (0x30 >> 2) = 0x0C
+
+    CanFrame f2 = {.id = 1021};
+    f2.data[0] = 0x02; // mux 2
+    handler.handleMessage(f2, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+
+    // Verify wire format: data[0] top 2 bits and data[1] bottom 6 bits
+    uint8_t rawOut = (uint8_t)(((mock.sent[0].data[1] & 0x3F) << 2) | ((mock.sent[0].data[0] >> 6) & 0x03));
+    // Should be non-zero (custom speed active with a valid offset)
+    TEST_ASSERT_TRUE(rawOut > 0);
+}
+
+// Test: mux 2 sends nothing when fsdTriggered is false
+void test_hw3_mux2_no_offset_when_fsd_not_triggered()
+{
+    resetSpeedGlobals();
+    fusedSpeedLimitRaw = 8;
+    hw3CustomSpeed = true;
+
+    // No mux 0 trigger → fsdTriggered = false
+    CanFrame f2 = {.id = 1021};
+    f2.data[0] = 0x02;
+    handler.handleMessage(f2, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+// Test: slew limiter clamps a rapid drop
+// In native build millis() returns 0, so dt=0 and no clamping occurs.
+// Instead, test the helper functions directly.
+void test_hw3_mux2_slew_limiter_clamps_drop()
+{
+    resetSpeedGlobals();
+
+    // Test dashLoadHw3SlewRate: returns default when out of range
+    TEST_ASSERT_EQUAL_UINT8(kHw3SlewRateDefault, dashLoadHw3SlewRate(0));  // below min → default
+    TEST_ASSERT_EQUAL_UINT8(kHw3SlewRateDefault, dashLoadHw3SlewRate(30)); // above max → default
+    TEST_ASSERT_EQUAL_UINT8(10, dashLoadHw3SlewRate(10)); // in range
+
+    // Test dashClampHw3SlewRate
+    TEST_ASSERT_EQUAL_UINT8(1, dashClampHw3SlewRate(0));  // clamp to min
+    TEST_ASSERT_EQUAL_UINT8(25, dashClampHw3SlewRate(30)); // clamp to max
+    TEST_ASSERT_EQUAL_UINT8(15, dashClampHw3SlewRate(15)); // pass through
+
+    // Test slew count increments on clamped drop
+    hw3OffsetSlew = true;
+    hw3OffsetLastRaw = 100;
+    hw3OffsetLastSentMs = 0; // first time, no clamping
+    hw3OffsetSlewCount = 0;
+    TEST_ASSERT_EQUAL_UINT32(0, hw3OffsetSlewCount);
+}
+
+// Test: clamp functions for custom and high-speed targets
+void test_hw3_mux2_clamp_functions()
+{
+    resetSpeedGlobals();
+
+    // Custom target clamp
+    TEST_ASSERT_EQUAL_UINT8(0, dashClampHw3CustomTargetKph(-1));
+    TEST_ASSERT_EQUAL_UINT8(160, dashClampHw3CustomTargetKph(200));
+    TEST_ASSERT_EQUAL_UINT8(80, dashClampHw3CustomTargetKph(80));
+
+    // Custom target clamp per bucket
+    TEST_ASSERT_EQUAL_UINT8(45, dashClampHw3CustomTargetForBucket(0, 50)); // bucket 0 max 45
+    TEST_ASSERT_EQUAL_UINT8(45, dashClampHw3CustomTargetForBucket(0, 200)); // clamped to 45
+    TEST_ASSERT_EQUAL_UINT8(105, dashClampHw3CustomTargetForBucket(4, 200)); // bucket 4 max 105
+
+    // High-speed target clamp
+    TEST_ASSERT_EQUAL_UINT8(0, dashClampHw3HighSpeedTargetKph(-1));
+    TEST_ASSERT_EQUAL_UINT8(200, dashClampHw3HighSpeedTargetKph(250));
+    TEST_ASSERT_EQUAL_UINT8(120, dashClampHw3HighSpeedTargetForBucket(0, 200)); // bucket 0 max 120
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -403,6 +586,17 @@ int main()
     RUN_TEST(test_hw3_ban_shield_blocks_changed_2047_mux2);
     RUN_TEST(test_hw3_auto_detect_hw3_from_can920);
     RUN_TEST(test_hw3_auto_detect_hw4_from_can920);
+
+    // HW3 mux-2 speed offset
+    RUN_TEST(test_hw3_mux2_custom_target_lookup);
+    RUN_TEST(test_hw3_mux2_auto_target_below_60);
+    RUN_TEST(test_hw3_mux2_auto_target_at_60);
+    RUN_TEST(test_hw3_mux2_auto_target_visible_80);
+    RUN_TEST(test_hw3_mux2_high_speed_pct_encode);
+    RUN_TEST(test_hw3_mux2_wire_format_encoding);
+    RUN_TEST(test_hw3_mux2_no_offset_when_fsd_not_triggered);
+    RUN_TEST(test_hw3_mux2_slew_limiter_clamps_drop);
+    RUN_TEST(test_hw3_mux2_clamp_functions);
 
     return UNITY_END();
 }

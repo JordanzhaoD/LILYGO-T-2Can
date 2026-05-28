@@ -97,14 +97,14 @@ void test_isFSDSelectedInUI_true_when_bit6_set_legacy()
     TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
-void test_isFSDSelectedInUI_false_when_bit5_clear()
+void test_isFSDSelectedInUI_false_when_all_bits_clear()
 {
     CanFrame f = {};
     f.data[4] = 0x00;
     TEST_ASSERT_FALSE(isFSDSelectedInUI(f));
 }
 
-void test_isFSDSelectedInUI_ignores_other_bits()
+void test_isFSDSelectedInUI_ignores_all_bits_except_bit6()
 {
     CanFrame f = {};
     f.data[4] = 0x9F; // all bits set except bit 5 and bit 6
@@ -296,8 +296,8 @@ int main()
     RUN_TEST(test_readMuxID_max_value);
 
     RUN_TEST(test_isFSDSelectedInUI_true_when_bit6_set_legacy);
-    RUN_TEST(test_isFSDSelectedInUI_false_when_bit5_clear);
-    RUN_TEST(test_isFSDSelectedInUI_ignores_other_bits);
+    RUN_TEST(test_isFSDSelectedInUI_false_when_all_bits_clear);
+    RUN_TEST(test_isFSDSelectedInUI_ignores_all_bits_except_bit6);
     RUN_TEST(test_isFSDSelectedInUI_true_when_bit6_set);
     RUN_TEST(test_isFSDSelectedInUI_true_with_other_bits);
     RUN_TEST(test_readGTWAutopilot_extracts_bits_42_to_44);

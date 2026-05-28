@@ -457,6 +457,31 @@ void test_hw4_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(2047, ids[6]);
 }
 
+// --- Ban Shield ---
+
+void test_hw4_ban_shield_blocks_changed_2047_mux2()
+{
+    handler.banShieldEnable = true;
+    // Learn baseline
+    CanFrame learn = {.id = 2047};
+    learn.data[0] = 0x02;
+    learn.dlc = 8;
+    learn.data[5] = 0x08;
+    handler.handleMessage(learn, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+
+    // Changed frame should be blocked
+    mock.reset();
+    CanFrame attack = {.id = 2047};
+    attack.data[0] = 0x02;
+    attack.dlc = 8;
+    attack.data[5] = 0x0C;
+    handler.handleMessage(attack, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x08, mock.sent[0].data[5]);
+    TEST_ASSERT_EQUAL_UINT32(1, (uint32_t)handler.banShieldBlocks);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -502,6 +527,8 @@ int main()
     RUN_TEST(test_hw4_gw_autopilot_mux2_updates_state_without_send);
     RUN_TEST(test_hw4_gear_park_marks_parked);
     RUN_TEST(test_hw4_gear_drive_clears_parked);
+
+    RUN_TEST(test_hw4_ban_shield_blocks_changed_2047_mux2);
 
     return UNITY_END();
 }
