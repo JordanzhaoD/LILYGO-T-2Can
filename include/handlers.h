@@ -259,7 +259,7 @@ struct LegacyHandler : public CarManagerBase
             auto index = readMuxID(frame);
             if (index == 0)
             {
-                const bool fsdRequested = forceActivateRuntime || isADSelectedInUI(frame);
+                const bool fsdRequested = forceActivateRuntime || isFSDSelectedInUI(frame);
                 ADEnabled = fsdRequested && (!checkAD || checkAD());
             }
             if (index == 0 && ADEnabled && (!checkAD || checkAD()))
@@ -427,7 +427,7 @@ struct HW3Handler : public CarManagerBase
             auto index = readMuxID(frame);
             if (index == 0)
             {
-                const bool fsdRequested = forceActivateRuntime || isADSelectedInUI(frame);
+                const bool fsdRequested = forceActivateRuntime || isFSDSelectedInUI(frame);
                 ADEnabled = fsdRequested && (!checkAD || checkAD());
             }
             if (index == 0 && ADEnabled && (!checkAD || checkAD()))
@@ -794,7 +794,7 @@ struct HW4Handler : public CarManagerBase
             auto index = readMuxID(frame);
             if (index == 0)
             {
-                const bool fsdRequested = forceActivateRuntime || isADSelectedInUI(frame);
+                const bool fsdRequested = forceActivateRuntime || isFSDSelectedInUI(frame);
                 ADEnabled = fsdRequested && (!checkAD || checkAD());
             }
             if (index == 0 && ADEnabled && (!checkAD || checkAD()))

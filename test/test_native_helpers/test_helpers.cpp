@@ -88,41 +88,41 @@ void test_readMuxID_max_value()
     TEST_ASSERT_EQUAL_UINT8(7, readMuxID(f));
 }
 
-// --- isADSelectedInUI ---
+// --- isFSDSelectedInUI ---
 
-void test_isADSelectedInUI_true_when_bit5_set()
+void test_isFSDSelectedInUI_true_when_bit5_set()
 {
     CanFrame f = {};
     f.data[4] = 0x20; // bit 5 set
-    TEST_ASSERT_TRUE(isADSelectedInUI(f));
+    TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
-void test_isADSelectedInUI_false_when_bit5_clear()
+void test_isFSDSelectedInUI_false_when_bit5_clear()
 {
     CanFrame f = {};
     f.data[4] = 0x00;
-    TEST_ASSERT_FALSE(isADSelectedInUI(f));
+    TEST_ASSERT_FALSE(isFSDSelectedInUI(f));
 }
 
-void test_isADSelectedInUI_ignores_other_bits()
+void test_isFSDSelectedInUI_ignores_other_bits()
 {
     CanFrame f = {};
     f.data[4] = 0x9F; // all bits set except bit 5 and bit 6
-    TEST_ASSERT_FALSE(isADSelectedInUI(f));
+    TEST_ASSERT_FALSE(isFSDSelectedInUI(f));
 }
 
-void test_isADSelectedInUI_true_when_bit6_set()
+void test_isFSDSelectedInUI_true_when_bit6_set()
 {
     CanFrame f = {};
     f.data[4] = 0x40; // bit 6 set
-    TEST_ASSERT_TRUE(isADSelectedInUI(f));
+    TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
-void test_isADSelectedInUI_true_with_other_bits()
+void test_isFSDSelectedInUI_true_with_other_bits()
 {
     CanFrame f = {};
     f.data[4] = 0xFF;
-    TEST_ASSERT_TRUE(isADSelectedInUI(f));
+    TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
 // --- readGTWAutopilot ---
@@ -255,21 +255,21 @@ void test_ui_bit_clear_reads_frame_as_false()
 {
     CanFrame f = {};
     f.data[4] = 0x00;
-    TEST_ASSERT_FALSE(isADSelectedInUI(f));
+    TEST_ASSERT_FALSE(isFSDSelectedInUI(f));
 }
 
 void test_ui_bit5_still_reads_real_bit()
 {
     CanFrame f = {};
     f.data[4] = 0x20;
-    TEST_ASSERT_TRUE(isADSelectedInUI(f));
+    TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
 void test_ui_bit6_still_reads_real_bit()
 {
     CanFrame f = {};
     f.data[4] = 0x40;
-    TEST_ASSERT_TRUE(isADSelectedInUI(f));
+    TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
 void test_runtime_defaults_start_disabled()
@@ -295,11 +295,11 @@ int main()
     RUN_TEST(test_readMuxID_zero);
     RUN_TEST(test_readMuxID_max_value);
 
-    RUN_TEST(test_isADSelectedInUI_true_when_bit5_set);
-    RUN_TEST(test_isADSelectedInUI_false_when_bit5_clear);
-    RUN_TEST(test_isADSelectedInUI_ignores_other_bits);
-    RUN_TEST(test_isADSelectedInUI_true_when_bit6_set);
-    RUN_TEST(test_isADSelectedInUI_true_with_other_bits);
+    RUN_TEST(test_isFSDSelectedInUI_true_when_bit5_set);
+    RUN_TEST(test_isFSDSelectedInUI_false_when_bit5_clear);
+    RUN_TEST(test_isFSDSelectedInUI_ignores_other_bits);
+    RUN_TEST(test_isFSDSelectedInUI_true_when_bit6_set);
+    RUN_TEST(test_isFSDSelectedInUI_true_with_other_bits);
     RUN_TEST(test_readGTWAutopilot_extracts_bits_42_to_44);
     RUN_TEST(test_readGTWAutopilot_masks_other_bits);
     RUN_TEST(test_readDASAutopilotStatus_extracts_lower_nibble);

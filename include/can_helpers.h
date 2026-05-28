@@ -3,14 +3,6 @@
 #include "can_frame_types.h"
 #include "shared_types.h"
 
-#if defined(BYPASS_TLSSC_REQUIREMENT) && !defined(ESP32_DASHBOARD)
-inline constexpr bool kBypassTlsscRequirementDefaultEnabled = true;
-inline constexpr bool kBypassTlsscRequirementBuildEnabled = true;
-#else
-inline constexpr bool kBypassTlsscRequirementDefaultEnabled = false;
-inline constexpr bool kBypassTlsscRequirementBuildEnabled = false;
-#endif
-
 #if defined(ISA_SPEED_CHIME_SUPPRESS) && !defined(ESP32_DASHBOARD)
 inline constexpr bool kIsaSpeedChimeSuppressDefaultEnabled = true;
 inline constexpr bool kIsaSpeedChimeSuppressBuildEnabled = true;
@@ -49,7 +41,6 @@ inline constexpr bool kInjectionAfterApBuildEnabled = true;
 inline constexpr bool kInjectionAfterApBuildEnabled = false;
 #endif
 
-inline Shared<bool> bypassTlsscRequirementRuntime{kBypassTlsscRequirementDefaultEnabled};
 inline Shared<bool> forceActivateRuntime{false};
 inline Shared<bool> isaSpeedChimeSuppressRuntime{kIsaSpeedChimeSuppressDefaultEnabled};
 inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionDefaultEnabled};
@@ -66,11 +57,9 @@ inline uint8_t readMuxID(const CanFrame &frame)
     return frame.data[0] & 0x07;
 }
 
-inline bool isADSelectedInUI(const CanFrame &frame)
+inline bool isFSDSelectedInUI(const CanFrame &frame)
 {
-    if (bypassTlsscRequirementRuntime)
-        return true;
-    return (frame.data[4] >> 5) & 0x01;
+    return (frame.data[4] >> 6) & 0x01;
 }
 
 inline uint8_t readGTWAutopilot(const CanFrame &frame)
@@ -131,6 +120,7 @@ inline const char *describeGTWAutopilot(uint8_t value)
 
 inline void setSpeedProfileV12V13(CanFrame &frame, int profile)
 {
+    if (profile > 2) profile = 2;  // Clamp: profiles 3/4 are HW4-only
     frame.data[6] &= ~0x06;
     frame.data[6] |= (profile << 1);
 }
