@@ -3,6 +3,7 @@
 // 自动关机：5分钟无CAN数据 → deep sleep，TWAI_RX(GPIO6)唤醒
 // WiFi自动关闭：5分钟无Web请求 → 仅关STA保AP
 
+#include <cstdint>
 #include <esp_sleep.h>
 
 // ── 配置参数 ─────────────────────────────────────────
