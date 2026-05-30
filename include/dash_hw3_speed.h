@@ -13,6 +13,12 @@
 // Two encodings exist for offset_raw → speed boost:
 //   KPH5: raw = offsetKph * 5  (legacy fleets)
 //   PCT4: raw = pct * 4        (current default)
+//
+// ── Algorithm versioning ──────────────────────────────────────────────
+// USE_NEW_SPEED_ALGO=1 (default): 3-mode + 4-zone segmented lookup from
+//   DouyinFSD v3.68. Replaces bucket-based mapping with percentage-based
+//   zones + smooth deceleration engine.
+// USE_NEW_SPEED_ALGO=0: Original bucket-based mapping (rollback path).
 
 #include <cstdint>
 #include <algorithm>
@@ -28,6 +34,256 @@
 inline uint32_t millis() { return 0; }
 #endif
 
+// ─── Algorithm version switch ────────────────────────────────────────────────
+#ifndef USE_NEW_SPEED_ALGO
+#define USE_NEW_SPEED_ALGO 1  // 1=DouyinFSD v3.68 3-mode algo, 0=old bucket
+#endif
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Shared constants & runtime state (used by both algorithm versions)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+inline constexpr uint8_t kHw3SpeedOffsetMaxPct = 50;
+inline constexpr uint8_t kHw3WireEncKph5 = 0;
+inline constexpr uint8_t kHw3WireEncPct4 = 1;
+inline constexpr uint8_t kHw3WireEncDefault = kHw3WireEncPct4;
+inline volatile uint8_t hw3WireEncoding = kHw3WireEncDefault;
+
+// ─── Runtime state (live values) ─────────────────────────────────────────────
+// Fused/ISA speed limit raw byte from 0x399/921 byte1[4:0] (×5 = kph).
+// 0 = SNA, 31 = NONE → no override (stock pass-through).
+// volatile: written from CAN task, read by dashComputeHw3OffsetRaw() helpers
+// which may be called from web server task for diagnostics.
+inline volatile uint8_t fusedSpeedLimitRaw = 0;
+// Latest stock offset captured from 1021 mux 0 byte3[1:6] (kph, 0..100).
+inline volatile int hw3StockOffsetKph = 0;
+
+// Forward-declare encoding helpers (defined below) for use by both paths.
+inline uint8_t dashEncodeHw3OffsetPct4(int pct);
+inline uint8_t dashEncodeHw3OffsetKph5(int kph);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+#if USE_NEW_SPEED_ALGO
+// ═══════════════════════════════════════════════════════════════════════════════
+//  NEW: DouyinFSD v3.68 — 3-mode + 4-zone segmented lookup + smooth decel
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── New speed system tunables ───────────────────────────────────────────────
+
+// Speed limit below which custom-speed buckets are used (legacy compat).
+inline constexpr uint8_t kHw3StockOffsetCutoverKph = 80;
+
+// ─── New runtime state (settings) ────────────────────────────────────────────
+// Written from web server task, read from CAN task.
+static volatile uint8_t offsetMode = 1;         // 0=fixed, 1=auto(default), 2=custom
+static volatile uint8_t manualOffsetPct = 0;    // Fixed mode: 0/10/20/30/40/50%
+static volatile uint8_t customPct[4] = {30,20,10,10}; // 4-zone custom percentages
+static volatile float smoothedOffset = 0.0f;    // Smooth decel tracker (km/h)
+static volatile float actualOffset = 0.0f;      // Current actual offset (km/h)
+static constexpr float SMOOTH_RATE = 5.0f;      // Decel smoothing rate km/h/s
+
+// ─── Legacy compatibility shims ──────────────────────────────────────────────
+// The web UI and NVS still reference these names. Map them to the new system.
+inline volatile bool hw3CustomSpeed = false;   // true when offsetMode==2
+inline volatile bool hw3HighSpeedEnable = false; // true when offsetMode!=0
+inline volatile bool hw3AutoSpeed = true;      // true when offsetMode==1
+
+// ─── Auto offset: 5-segment lookup table ─────────────────────────────────────
+// Matches DouyinFSD v3.68 auto-mode logic exactly.
+//
+// limit ≤ 40 → target = min(60,  limit × 1.5)  (city/住宅区)
+// limit ≤ 60 → target = min(90,  limit × 1.5)  (市区)
+// limit ≤ 90 → target = min(117, limit × 1.3)  (快速路)
+// limit ≤110 → target = min(132, limit × 1.2)  (高速1)
+// limit >110 → target = min(132, limit × 1.1)  (高速2)
+
+inline float dashComputeAutoTarget(float limitKph) {
+    if (limitKph <= 40.0f) return std::min(60.0f, limitKph * 1.5f);
+    if (limitKph <= 60.0f) return std::min(90.0f, limitKph * 1.5f);
+    if (limitKph <= 90.0f) return std::min(117.0f, limitKph * 1.3f);
+    if (limitKph <= 110.0f) return std::min(132.0f, limitKph * 1.2f);
+    return std::min(132.0f, limitKph * 1.1f);
+}
+
+// ─── Custom offset: 4-zone percentage lookup ────────────────────────────────
+// Each zone has a user-configurable percentage (0-50%).
+//
+// limit ≤ 50  → zone 0 (customPct[0])
+// limit ≤ 70  → zone 1 (customPct[1])
+// limit ≤ 100 → zone 2 (customPct[2])
+// limit > 100 → zone 3 (customPct[3])
+
+inline float dashComputeCustomTarget(float limitKph) {
+    uint8_t pct;
+    if (limitKph <= 50.0f) pct = customPct[0];
+    else if (limitKph <= 70.0f) pct = customPct[1];
+    else if (limitKph <= 100.0f) pct = customPct[2];
+    else pct = customPct[3];
+    return limitKph * (1.0f + static_cast<float>(pct) / 100.0f);
+}
+
+// ─── Unified offset computation + smooth deceleration engine ─────────────────
+// All three modes funnel through here. The smooth decel engine prevents
+// sudden speed drops: rising edge passes through instantly, falling edge
+// decays at SMOOTH_RATE (5 km/h/s).
+
+inline float dashComputeOffset(float limitKph, float dt) {
+    float target;
+    switch (offsetMode) {
+        case 0:  // Fixed percentage
+            target = limitKph * (1.0f + static_cast<float>(manualOffsetPct) / 100.0f);
+            break;
+        case 1:  // Auto segmented lookup
+            target = dashComputeAutoTarget(limitKph);
+            break;
+        case 2:  // Custom 4-zone
+            target = dashComputeCustomTarget(limitKph);
+            break;
+        default:
+            target = limitKph;
+            break;
+    }
+    float rawOffset = target - limitKph;
+
+    // Smooth deceleration engine
+    if (rawOffset < smoothedOffset) {
+        // Falling edge: gradual decay
+        smoothedOffset = std::max(rawOffset, smoothedOffset - SMOOTH_RATE * dt);
+    } else {
+        // Rising edge: instant follow
+        smoothedOffset = rawOffset;
+    }
+    actualOffset = smoothedOffset;
+    return smoothedOffset;
+}
+
+// ─── Sync legacy shims when mode changes ─────────────────────────────────────
+
+inline void dashSyncLegacyShims() {
+    hw3AutoSpeed = (offsetMode == 1);
+    hw3CustomSpeed = (offsetMode == 2);
+    hw3HighSpeedEnable = (offsetMode != 0);
+}
+
+// ─── Wire encoding helpers (new path) ────────────────────────────────────────
+
+inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
+    if (pct <= 0 || flKph == 0) return 0;
+    if (hw3WireEncoding == kHw3WireEncPct4) {
+        return dashEncodeHw3OffsetPct4(pct);
+    }
+    int offsetKph = (static_cast<int>(flKph) * pct + 50) / 100;
+    return dashEncodeHw3OffsetKph5(offsetKph);
+}
+
+// ─── Main offset computation (new path) ──────────────────────────────────────
+// Replaces the old bucket-based dashComputeHw3OffsetRaw().
+// Uses dashComputeOffset() with a 50ms dt assumption for the main loop.
+
+inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
+{
+    uint8_t fl = fusedSpeedLimitRaw;
+    if (fl == 0 || fl == 31) // SNA / NONE: pass through stock raw.
+        return static_cast<uint8_t>(std::max(std::min(stockOffsetRaw, 255), 0));
+    float flKph = static_cast<float>(fl) * 5.0f;
+
+    // Compute offset with 50ms timestep (main loop ~20Hz)
+    float offsetKph = dashComputeOffset(flKph, 0.05f);
+
+    if (offsetKph <= 0.0f) return 0;
+
+    int pct = static_cast<int>((offsetKph / flKph) * 100.0f + 0.5f);
+    if (pct > kHw3SpeedOffsetMaxPct) pct = kHw3SpeedOffsetMaxPct;
+    return dashEncodeHw3OffsetFromPct(pct, static_cast<uint8_t>(flKph));
+}
+
+// ─── Compatibility: hw3 active check ─────────────────────────────────────────
+
+inline bool dashHw3CustomSpeedActive()
+{
+    return offsetMode != 0;  // Any non-fixed mode is "active"
+}
+
+// ─── Legacy API compatibility shims ──────────────────────────────────────────
+// These provide the old constants/variables/functions that mcp2515_dashboard.h
+// still references. They map to the new 3-mode+4-zone system.
+// Will be removed once dashboard.h is fully migrated (Task 2).
+
+// Old constants (dashboard.h loops over these for NVS/JSON)
+inline constexpr uint8_t kHw3CustomTargetCount = 5;
+inline constexpr uint8_t kHw3HighSpeedBucketCount = 3;
+inline constexpr uint8_t kHw3CustomBucketBaseKph = 30;
+inline constexpr uint8_t kHw3CustomBucketStepKph = 10;
+inline constexpr uint8_t kHw3HighSpeedBucketBaseKph = 80;
+inline constexpr uint8_t kHw3HighSpeedBucketStepKph = 20;
+inline constexpr uint8_t kHw3CustomTargetMaxKph = 160;
+inline constexpr uint8_t kHw3HighSpeedTargetMaxKph = 200;
+inline constexpr uint8_t kHw3CustomTargetMaxByBucket[kHw3CustomTargetCount] = {45, 60, 75, 90, 105};
+inline constexpr uint8_t kHw3HighSpeedTargetMaxByBucket[kHw3HighSpeedBucketCount] = {120, 150, 180};
+inline constexpr uint8_t kHw3AutoTargetBelow60Kph = 64;
+inline constexpr uint8_t kHw3AutoTargetAt60Kph = 100;
+inline constexpr uint8_t kHw3AutoTargetForVisible80Kph = 85;
+
+// Old-style bucket arrays — kept for NVS migration and JSON output.
+// In the new system these are derived from customPct[4] + auto lookup,
+// but we maintain separate storage so NVS round-trips work during migration.
+inline volatile uint8_t hw3CustomTarget[kHw3CustomTargetCount] = {45, 60, 75, 90, 105};
+inline volatile uint8_t hw3HighSpeedTarget[kHw3HighSpeedBucketCount] = {90, 110, 130};
+
+// High-speed bucket verified (5-bucket) — kept for NVS compat
+inline constexpr uint8_t kHw3HighSpeedBucketBaseKph_verified = 80;
+inline constexpr uint8_t kHw3HighSpeedBucketStepKph_verified = 10;
+inline constexpr uint8_t kHw3HighSpeedBucketCount_verified = 5;
+inline volatile uint8_t hw3HighSpeedTargetPct[kHw3HighSpeedBucketCount_verified] = {25, 25, 25, 25, 25};
+
+// Old clamp helpers (dashboard.h uses these for NVS and POST validation)
+inline uint8_t dashClampHw3CustomTargetKph(int v) {
+    if (v < 0) v = 0;
+    if (v > (int)kHw3CustomTargetMaxKph) v = (int)kHw3CustomTargetMaxKph;
+    return static_cast<uint8_t>(v);
+}
+inline uint8_t dashClampHw3HighSpeedTargetKph(int v) {
+    if (v < 0) v = 0;
+    if (v > (int)kHw3HighSpeedTargetMaxKph) v = (int)kHw3HighSpeedTargetMaxKph;
+    return static_cast<uint8_t>(v);
+}
+inline uint8_t dashClampHw3CustomTargetForBucket(uint8_t idx, int v) {
+    uint8_t maxKph = idx < kHw3CustomTargetCount ? kHw3CustomTargetMaxByBucket[idx] : kHw3CustomTargetMaxKph;
+    if (v < 0) v = 0;
+    if (v > maxKph) v = maxKph;
+    return static_cast<uint8_t>(v);
+}
+inline uint8_t dashClampHw3HighSpeedTargetForBucket(uint8_t idx, int v) {
+    uint8_t maxKph = idx < kHw3HighSpeedBucketCount ? kHw3HighSpeedTargetMaxByBucket[idx] : kHw3HighSpeedTargetMaxKph;
+    if (v < 0) v = 0;
+    if (v > maxKph) v = maxKph;
+    return static_cast<uint8_t>(v);
+}
+
+// Old auto/compute helpers (dashboard.h calls these for status JSON)
+inline uint8_t dashComputeHw3AutoTargetKph(uint8_t fusedLimitKph) {
+    return static_cast<uint8_t>(dashComputeAutoTarget(static_cast<float>(fusedLimitKph)));
+}
+inline uint16_t dashComputeHw3CustomTargetKph(uint8_t flKph) {
+    if (flKph < kHw3CustomBucketBaseKph) return 0;
+    if (flKph >= kHw3StockOffsetCutoverKph) return 0;
+    return static_cast<uint16_t>(dashComputeCustomTarget(static_cast<float>(flKph)));
+}
+
+// Old encode helper (used by some legacy code paths)
+inline uint8_t dashEncodeHw3Offset(int offsetKph, uint8_t flKph) {
+    if (hw3WireEncoding == kHw3WireEncPct4) {
+        if (flKph == 0) return 0;
+        int pct = (offsetKph * 100 + flKph / 2) / flKph;
+        return dashEncodeHw3OffsetPct4(pct);
+    }
+    return dashEncodeHw3OffsetKph5(offsetKph);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+#else // !USE_NEW_SPEED_ALGO — Original bucket-based algorithm
+// ═══════════════════════════════════════════════════════════════════════════════
+
 // ─── Tunables ────────────────────────────────────────────────────────────────
 inline constexpr uint8_t kHw3CustomBucketBaseKph = 30;
 inline constexpr uint8_t kHw3CustomBucketStepKph = 10;
@@ -36,25 +292,16 @@ inline constexpr uint8_t kHw3StockOffsetCutoverKph = 80;
 inline constexpr uint8_t kHw3HighSpeedBucketBaseKph = 80;
 inline constexpr uint8_t kHw3HighSpeedBucketStepKph = 20;
 inline constexpr uint8_t kHw3HighSpeedBucketCount = 3; // 80/100/120
-inline constexpr uint8_t kHw3SpeedOffsetMaxPct = 50;
-inline constexpr uint8_t kHw3WireEncKph5 = 0;
-inline constexpr uint8_t kHw3WireEncPct4 = 1;
-inline constexpr uint8_t kHw3WireEncDefault = kHw3WireEncPct4;
 inline constexpr uint8_t kHw3CustomTargetMaxKph = 160;
 inline constexpr uint8_t kHw3HighSpeedTargetMaxKph = 200;
 inline constexpr uint8_t kHw3CustomTargetMaxByBucket[kHw3CustomTargetCount] = {45, 60, 75, 90, 105};
 inline constexpr uint8_t kHw3HighSpeedTargetMaxByBucket[kHw3HighSpeedBucketCount] = {120, 150, 180};
 
 // ─── Runtime state (settings) ────────────────────────────────────────────────
-// Written from web server task, read from CAN task. volatile to prevent
-// the compiler from caching these in registers across task switches.
-// For ESP32-S3 (Xtensa, 32-bit aligned), single-byte and uint32_t reads
-// are naturally atomic on aligned boundaries.
 inline volatile bool hw3CustomSpeed = false;
 inline volatile uint8_t hw3CustomTarget[kHw3CustomTargetCount] = {45, 60, 75, 90, 105};
 inline volatile bool hw3HighSpeedEnable = false;
 inline volatile uint8_t hw3HighSpeedTarget[kHw3HighSpeedBucketCount] = {90, 110, 130};
-inline volatile uint8_t hw3WireEncoding = kHw3WireEncDefault;
 
 // --- HW3 auto speed targeting (from tesla-fsd-controller fsd_config.h) ---
 inline constexpr uint8_t kHw3AutoTargetBelow60Kph = 64;
@@ -77,10 +324,6 @@ inline constexpr uint8_t kHw3HighSpeedBucketCount_verified = 5;
 
 inline volatile uint8_t hw3HighSpeedTargetPct[kHw3HighSpeedBucketCount_verified] = {25, 25, 25, 25, 25};
 
-// Forward-declare encoding helpers (defined below) for use by dashEncodeHw3OffsetFromPct.
-inline uint8_t dashEncodeHw3OffsetPct4(int pct);
-inline uint8_t dashEncodeHw3OffsetKph5(int kph);
-
 // Offset from pct for high-speed mode
 inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
     if (pct <= 0 || flKph == 0) return 0;
@@ -91,16 +334,8 @@ inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
     return dashEncodeHw3OffsetKph5(offsetKph);
 }
 
-// ─── Runtime state (live values) ─────────────────────────────────────────────
-// Fused/ISA speed limit raw byte from 0x399/921 byte1[4:0] (×5 = kph).
-// 0 = SNA, 31 = NONE → no override (stock pass-through).
-// volatile: written from CAN task, read by dashComputeHw3OffsetRaw() helpers
-// which may be called from web server task for diagnostics.
-inline volatile uint8_t fusedSpeedLimitRaw = 0;
-// Latest stock offset captured from 1021 mux 0 byte3[1:6] (kph, 0..100).
-inline volatile int hw3StockOffsetKph = 0;
+// ─── Math helpers (old path) ─────────────────────────────────────────────────
 
-// ─── Math helpers ────────────────────────────────────────────────────────────
 inline uint8_t dashClampHw3HighSpeedTargetKph(int v)
 {
     if (v < 0) v = 0;
@@ -143,38 +378,8 @@ inline uint16_t dashComputeHw3CustomTargetKph(uint8_t flKph)
     return hw3CustomTarget[idx];
 }
 
-inline uint8_t dashEncodeHw3OffsetPct4(int pct)
-{
-    if (pct < 0) pct = 0;
-    if (pct > kHw3SpeedOffsetMaxPct) pct = kHw3SpeedOffsetMaxPct;
-    return static_cast<uint8_t>(pct * 4);
-}
+// ─── Main offset computation (old path) ──────────────────────────────────────
 
-inline uint8_t dashEncodeHw3OffsetKph5(int kph)
-{
-    if (kph < 0) kph = 0;
-    if (kph > 40) kph = 40;
-    return static_cast<uint8_t>(kph * 5);
-}
-
-inline uint8_t dashEncodeHw3Offset(int offsetKph, uint8_t flKph)
-{
-    if (hw3WireEncoding == kHw3WireEncPct4)
-    {
-        if (flKph == 0) return 0;
-        int pct = (offsetKph * 100 + flKph / 2) / flKph;
-        return dashEncodeHw3OffsetPct4(pct);
-    }
-    return dashEncodeHw3OffsetKph5(offsetKph);
-}
-
-inline bool dashHw3CustomSpeedActive()
-{
-    return hw3CustomSpeed || hw3HighSpeedEnable;
-}
-
-// Compute the raw byte to write into 1021 mux-2. stockOffsetRaw is the
-// previously-captured stock offset from mux 0 (used as fallback).
 inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
 {
     uint8_t fl = fusedSpeedLimitRaw;
@@ -201,7 +406,50 @@ inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
     return dashEncodeHw3Offset(desiredOffsetKph, static_cast<uint8_t>(flKph));
 }
 
-// ─── 1021 mux-2 wire codec ───────────────────────────────────────────────────
+inline bool dashHw3CustomSpeedActive()
+{
+    return hw3CustomSpeed || hw3HighSpeedEnable;
+}
+
+inline uint8_t dashEncodeHw3Offset(int offsetKph, uint8_t flKph)
+{
+    if (hw3WireEncoding == kHw3WireEncPct4)
+    {
+        if (flKph == 0) return 0;
+        int pct = (offsetKph * 100 + flKph / 2) / flKph;
+        return dashEncodeHw3OffsetPct4(pct);
+    }
+    return dashEncodeHw3OffsetKph5(offsetKph);
+}
+
+// ─── Stub for new-algo functions used by dashboard.h ─────────────────────────
+inline float dashComputeOffset(float, float) { return 0.0f; }
+inline void dashSyncLegacyShims() {}
+
+#endif // USE_NEW_SPEED_ALGO
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Shared: Wire encoding primitives (always available)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+inline uint8_t dashEncodeHw3OffsetPct4(int pct)
+{
+    if (pct < 0) pct = 0;
+    if (pct > kHw3SpeedOffsetMaxPct) pct = kHw3SpeedOffsetMaxPct;
+    return static_cast<uint8_t>(pct * 4);
+}
+
+inline uint8_t dashEncodeHw3OffsetKph5(int kph)
+{
+    if (kph < 0) kph = 0;
+    if (kph > 40) kph = 40;
+    return static_cast<uint8_t>(kph * 5);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Shared: 1021 mux-2 wire codec
+// ═══════════════════════════════════════════════════════════════════════════════
+
 inline bool dashReadHw3OffsetRawShared(const CanFrame &frame, uint8_t &raw)
 {
     if (frame.id != 1021 || frame.dlc < 2)
@@ -216,7 +464,9 @@ inline void dashWriteHw3OffsetRawShared(CanFrame &frame, uint8_t raw)
     frame.data[1] = static_cast<uint8_t>((frame.data[1] & ~0x3F) | (raw >> 2));
 }
 
-// ─── Slew limiter ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Shared: Slew limiter (rate now fixed at 5 km/h/s matching smooth engine)
+// ═══════════════════════════════════════════════════════════════════════════════
 // Damps drops in the wire offset to avoid sudden braking when the AP-fused
 // limit suddenly drops (e.g. transitioning into a school zone). Only limits
 // downward motion; rising edge passes through immediately. Kept here (rather
