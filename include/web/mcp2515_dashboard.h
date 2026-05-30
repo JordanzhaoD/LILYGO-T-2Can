@@ -42,6 +42,8 @@
 #include "drivers/esp32_mcp2515_driver.h"
 #endif
 #include "web/mcp2515_dashboard_ui.h"
+#include "dash_ota_guard.h"
+#include "dash_power_mgmt.h"
 
 #ifndef DASH_SSID
 #error "Define -DDASH_SSID in build_flags (e.g. -DDASH_SSID=\\\"ADUnlock-1234\\\")"
@@ -128,6 +130,17 @@ static bool apAutoRestore = false;
 static volatile uint32_t lastInjectMs = 0;
 static bool dashSpeedProfileAuto = true;
 static uint8_t dashManualSpeedProfile = 1;
+static uint8_t dashDriveProfile = 0;      // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
+static uint8_t dashSpeedStrategy = 1;     // 0=fixed, 1=auto, 2=custom
+static bool dashLightingEnabled = false;
+static uint8_t dashLightingCount = 3;
+static uint8_t dashLightingFrequency = 1; // 0=slow, 1=medium, 2=fast
+static uint8_t dashRearFogStrategy = 0;   // 0=off, 1=strobe, 2=continuous
+static bool dashDefenseEnabled = false;
+static bool dashBionicSteering = false;
+static bool dashSpeedNoDisturb = false;
+static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行逻辑）
+static bool dashApEapCompatible = true;
 
 // HW3 slew limiter constants/state moved to include/dash_hw3_speed.h so
 // HW3Handler can call dashApplyHw3OffsetSlew directly.
@@ -232,6 +245,7 @@ static void dashApplyFilters();
 static void dashApplyRuntimeState();
 static void dashClearLegacyOptionPrefs();
 static void dashLog(const String &s);
+static const char *dashWifiStatusName(int status);
 
 // CAN recorder
 #ifndef REC_CAP
@@ -682,6 +696,10 @@ static void mcpDashOnFrame(const CanFrame &f)
         followDist = (f.data[5] & 0xE0) >> 5;
     dashRecordApRestoreFrame(f, now);
     dashRecordCanFrame(f, 'R');
+    // Phase 1: OTA guard 检测 0x318 帧
+    dashOtaGuardProcessFrame(f);
+    // Phase 1: 功耗管理 — 记录 CAN 活动
+    dashPowerMgmtTouchCan();
     if (dashWriteProbe.active && dashWriteProbe.state != kDashWriteProbeFailed && dashWriteProbeMatches(f))
     {
         dashWriteProbe.hasRx = true;
@@ -763,6 +781,8 @@ static bool dashApInjectionAllowed()
 
 static bool dashInjectionActive()
 {
+    // Phase 1: OTA保护 — 车辆OTA进行中时暂停注入
+    if (!dashOtaGuardAllowInjection()) return false;
     return canActive && dashApInjectionAllowed();
 }
 
@@ -876,6 +896,164 @@ static uint8_t dashClampSpeedProfileForHw(uint8_t hw, int profile)
     return static_cast<uint8_t>(profile);
 }
 
+static bool dashArgTruthy(const String &v)
+{
+    return v == "1" || v == "true" || v == "on" || v == "yes";
+}
+
+static const char *dashHwModeName(uint8_t mode)
+{
+    switch (mode)
+    {
+    case 0:
+        return "legacy";
+    case 1:
+        return "HW3";
+    case 2:
+        return "HW4";
+    case 3:
+        return "Auto";
+    default:
+        return "unknown";
+    }
+}
+
+static int dashHwModeFromName(String mode)
+{
+    mode.toLowerCase();
+    if (mode == "auto")
+        return 3;
+    if (mode == "legacy")
+        return 0;
+    if (mode == "hw3" || mode == "hw3.0")
+        return 1;
+    if (mode == "hw4" || mode == "hw4.0")
+        return 2;
+    return -1;
+}
+
+static const char *dashDriveProfileName(uint8_t profile)
+{
+    static const char *const names[] = {"Auto", "Sloth", "Chill", "Normal", "Hurry", "MAX"};
+    return profile < 6 ? names[profile] : "Normal";
+}
+
+static int dashDriveProfileFromName(String profile)
+{
+    profile.toLowerCase();
+    if (profile == "auto")
+        return 0;
+    if (profile == "sloth")
+        return 1;
+    if (profile == "chill")
+        return 2;
+    if (profile == "normal")
+        return 3;
+    if (profile == "hurry")
+        return 4;
+    if (profile == "max")
+        return 5;
+    return -1;
+}
+
+static uint8_t dashSpeedProfileForDrive(uint8_t profile)
+{
+    switch (profile)
+    {
+    case 1: // Sloth
+    case 2: // Chill
+        return 0;
+    case 4: // Hurry
+        return 2;
+    case 5: // MAX
+        return 4;
+    case 3: // Normal
+    default:
+        return 1;
+    }
+}
+
+static const char *dashSpeedStrategyName(uint8_t strategy)
+{
+    switch (strategy)
+    {
+    case 0:
+        return "fixed";
+    case 1:
+        return "auto";
+    case 2:
+        return "custom";
+    default:
+        return "auto";
+    }
+}
+
+static int dashSpeedStrategyFromName(String strategy)
+{
+    strategy.toLowerCase();
+    if (strategy == "fixed")
+        return 0;
+    if (strategy == "auto")
+        return 1;
+    if (strategy == "custom")
+        return 2;
+    return -1;
+}
+
+static const char *dashLightingFrequencyName(uint8_t frequency)
+{
+    switch (frequency)
+    {
+    case 0:
+        return "slow";
+    case 1:
+        return "medium";
+    case 2:
+        return "fast";
+    default:
+        return "medium";
+    }
+}
+
+static int dashLightingFrequencyFromName(String frequency)
+{
+    frequency.toLowerCase();
+    if (frequency == "slow")
+        return 0;
+    if (frequency == "medium")
+        return 1;
+    if (frequency == "fast")
+        return 2;
+    return -1;
+}
+
+static const char *dashRearFogStrategyName(uint8_t strategy)
+{
+    switch (strategy)
+    {
+    case 0:
+        return "off";
+    case 1:
+        return "strobe";
+    case 2:
+        return "continuous";
+    default:
+        return "off";
+    }
+}
+
+static int dashRearFogStrategyFromName(String strategy)
+{
+    strategy.toLowerCase();
+    if (strategy == "off")
+        return 0;
+    if (strategy == "strobe")
+        return 1;
+    if (strategy == "continuous")
+        return 2;
+    return -1;
+}
+
 static void dashApplySpeedProfileState()
 {
     if (!dashHandler)
@@ -926,6 +1104,16 @@ static void dashSavePrefs()
     prefs.putBool("ap_rst", apAutoRestore);
     prefs.putBool("sp_auto", dashSpeedProfileAuto);
     prefs.putUChar("sp_sel", dashManualSpeedProfile);
+    prefs.putUChar("drv_prof", dashDriveProfile);
+    prefs.putUChar("spd_str", dashSpeedStrategy);
+    prefs.putBool("lt_en", dashLightingEnabled);
+    prefs.putUChar("lt_cnt", dashLightingCount);
+    prefs.putUChar("lt_freq", dashLightingFrequency);
+    prefs.putUChar("lt_fog", dashRearFogStrategy);
+    prefs.putBool("def_en", dashDefenseEnabled);
+    prefs.putBool("def_bio", dashBionicSteering);
+    prefs.putBool("def_nd", dashSpeedNoDisturb);
+    prefs.putBool("def_apeap", dashApEapCompatible);
     prefs.putBool("eprn", dashHandler ? (bool)dashHandler->enablePrint : true);
     prefs.putBool("h3_slw", hw3OffsetSlew);
     prefs.putUChar("h3_srt", hw3SlewRate);
@@ -1086,6 +1274,26 @@ static void dashLoadPrefs()
     apAutoRestore = prefs.getBool("ap_rst", false);
     dashSpeedProfileAuto = prefs.getBool("sp_auto", true);
     dashManualSpeedProfile = dashClampSpeedProfileForHw(hwMode, prefs.getUChar("sp_sel", 1));
+    dashDriveProfile = prefs.getUChar("drv_prof", dashSpeedProfileAuto ? 0 : 3);
+    if (dashDriveProfile > 5)
+        dashDriveProfile = 0;
+    dashSpeedStrategy = prefs.getUChar("spd_str", dashSpeedProfileAuto ? 1 : 0);
+    if (dashSpeedStrategy > 2)
+        dashSpeedStrategy = 1;
+    dashLightingEnabled = prefs.getBool("lt_en", false);
+    dashLightingCount = prefs.getUChar("lt_cnt", 3);
+    if (!(dashLightingCount == 3 || dashLightingCount == 5 || dashLightingCount == 7 || dashLightingCount == 10))
+        dashLightingCount = 3;
+    dashLightingFrequency = prefs.getUChar("lt_freq", 1);
+    if (dashLightingFrequency > 2)
+        dashLightingFrequency = 1;
+    dashRearFogStrategy = prefs.getUChar("lt_fog", 0);
+    if (dashRearFogStrategy > 2)
+        dashRearFogStrategy = 0;
+    dashDefenseEnabled = prefs.getBool("def_en", false);
+    dashBionicSteering = prefs.getBool("def_bio", false);
+    dashSpeedNoDisturb = prefs.getBool("def_nd", false);
+    dashApEapCompatible = prefs.getBool("def_apeap", true);
     hw3OffsetSlew = prefs.getBool("h3_slw", false);
     hw3SlewRate = dashLoadHw3SlewRate(prefs.getUChar("h3_srt", kHw3SlewRateDefault));
     // HW3 custom speed-limit boost
@@ -1284,6 +1492,9 @@ static void dashLoadPrefs()
 
     updateBetaChannel = prefs.getBool("update_beta", false);
     autoUpdateEnabled = prefs.getBool("auto_upd", false);
+    // Phase 1: 功耗管理 NVS 加载
+    autoShutdownEnabled = prefs.getBool(NVS_KEY_AUTO_SHUTDOWN, false);
+    wifiAutoOffEnabled  = prefs.getBool(NVS_KEY_WIFI_AUTO_OFF, false);
     prefs.end();
 
     if (migratedHw)
@@ -1415,6 +1626,11 @@ static void handleStatus()
     j += sp;
     j += ",\"spAuto\":";
     j += spAuto ? "true" : "false";
+    j += ",\"driveProfile\":";
+    j += dashDriveProfile;
+    j += ",\"driveProfileName\":\"";
+    j += dashDriveProfileName(dashDriveProfile);
+    j += "\"";
     j += ",\"soff\":";
     j += soff;
     j += ",\"gtwap\":";
@@ -1592,6 +1808,20 @@ static void handleStatus()
              ",\"tx\":" + String(muxTx[i]) +
              ",\"err\":" + String(muxErr[i]) + "}";
     }
+    // ── Phase 1 新增状态字段 ──────────────────────────────────────────
+    j += ",\"vehicleOta\":";
+    j += vehicleOtaActive ? "true" : "false";
+    j += ",\"autoShutdown\":";
+    j += autoShutdownEnabled ? "true" : "false";
+    j += ",\"wifiAutoOff\":";
+    j += wifiAutoOffEnabled ? "true" : "false";
+    j += ",\"fogStrategy\":";
+    j += (int)dashRearFogStrategy;
+    j += ",\"strobeCont\":false";
+    j += ",\"dndVolume\":";
+    j += dashDndVolume ? "true" : "false";
+    j += ",\"dndSpeed\":";
+    j += dashSpeedNoDisturb ? "true" : "false";
     j += "]}";
     server.send(200, "application/json", j);
 }
@@ -1793,6 +2023,442 @@ static void handleLoggingConfig()
     server.send(200, "application/json", "{\"ok\":true}");
 }
 
+static String dashModeHwJson()
+{
+    String j = "{\"ok\":true,\"mode\":\"";
+    j += dashHwModeName(hwMode);
+    j += "\",\"value\":";
+    j += hwMode;
+    j += ",\"options\":[\"Auto\",\"legacy\",\"HW3\",\"HW4\"]}";
+    return j;
+}
+
+static void handleModeHw()
+{
+    if (server.hasArg("mode") || server.hasArg("value") || server.hasArg("hw"))
+    {
+        int next = -1;
+        if (server.hasArg("mode"))
+            next = dashHwModeFromName(server.arg("mode"));
+        else if (server.hasArg("value"))
+            next = server.arg("value").toInt();
+        else if (server.hasArg("hw"))
+            next = server.arg("hw").toInt();
+        if (next < 0 || next > 3)
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"mode must be Auto, legacy, HW3, or HW4\"}");
+            return;
+        }
+        if (static_cast<uint8_t>(next) != hwMode)
+        {
+            hwMode = static_cast<uint8_t>(next);
+            dashSwapHandler(hwMode);
+            dashApplyFilters();
+            if (dashHandler)
+                dashHandler->autoModeEnabled = (hwMode == 3);
+            dashLog(String("[CFG] /mode_hw ") + dashHwModeName(hwMode));
+        }
+        dashApplyRuntimeState();
+        dashSavePrefs();
+    }
+    server.send(200, "application/json", dashModeHwJson());
+}
+
+static String dashDriveProfileJson()
+{
+    uint8_t effective = dashSpeedProfileAuto ? 0 : dashManualSpeedProfile;
+    String j = "{\"ok\":true,\"profile\":\"";
+    j += dashDriveProfileName(dashDriveProfile);
+    j += "\",\"value\":";
+    j += dashDriveProfile;
+    j += ",\"speed_profile_auto\":";
+    j += dashSpeedProfileAuto ? "true" : "false";
+    j += ",\"speed_profile\":";
+    j += dashManualSpeedProfile;
+    j += ",\"effective_speed_profile\":";
+    j += effective;
+    j += ",\"options\":[\"Auto\",\"Sloth\",\"Chill\",\"Normal\",\"Hurry\",\"MAX\"]}";
+    return j;
+}
+
+static void handleDriveProfile()
+{
+    if (server.hasArg("profile") || server.hasArg("mode") || server.hasArg("value"))
+    {
+        int next = -1;
+        if (server.hasArg("profile"))
+            next = dashDriveProfileFromName(server.arg("profile"));
+        else if (server.hasArg("mode"))
+            next = dashDriveProfileFromName(server.arg("mode"));
+        else if (server.hasArg("value"))
+            next = server.arg("value").toInt();
+        if (next < 0 || next > 5)
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"profile must be Auto, Sloth, Chill, Normal, Hurry, or MAX\"}");
+            return;
+        }
+        dashDriveProfile = static_cast<uint8_t>(next);
+        dashSpeedProfileAuto = dashDriveProfile == 0;
+        if (!dashSpeedProfileAuto)
+            dashManualSpeedProfile = dashClampSpeedProfileForHw(hwMode, dashSpeedProfileForDrive(dashDriveProfile));
+        dashApplyRuntimeState();
+        dashSavePrefs();
+        dashLog(String("[CFG] /drive_profile ") + dashDriveProfileName(dashDriveProfile));
+    }
+    server.send(200, "application/json", dashDriveProfileJson());
+}
+
+static String dashSpeedStrategyJson()
+{
+    String j = "{\"ok\":true,\"strategy\":\"";
+    j += dashSpeedStrategyName(dashSpeedStrategy);
+    j += "\",\"value\":";
+    j += dashSpeedStrategy;
+    j += ",\"speed_profile_auto\":";
+    j += dashSpeedProfileAuto ? "true" : "false";
+    j += ",\"hw3_custom_speed\":";
+    j += hw3CustomSpeed ? "true" : "false";
+    j += ",\"legacy_custom_speed\":";
+    j += legacyMppCustomEnable ? "true" : "false";
+    j += ",\"options\":[\"fixed\",\"auto\",\"custom\"]}";
+    return j;
+}
+
+static void handleSpeedStrategy()
+{
+    if (server.hasArg("strategy") || server.hasArg("value"))
+    {
+        int next = -1;
+        if (server.hasArg("strategy"))
+            next = dashSpeedStrategyFromName(server.arg("strategy"));
+        else if (server.hasArg("value"))
+            next = server.arg("value").toInt();
+        if (next < 0 || next > 2)
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"strategy must be fixed, auto, or custom\"}");
+            return;
+        }
+        dashSpeedStrategy = static_cast<uint8_t>(next);
+        if (dashSpeedStrategy == 1)
+            dashSpeedProfileAuto = true;
+        else if (dashSpeedStrategy == 0)
+            dashSpeedProfileAuto = false;
+        else
+        {
+            dashSpeedProfileAuto = false;
+            hw3CustomSpeed = true;
+            legacyMppCustomEnable = true;
+        }
+        dashApplyRuntimeState();
+        dashSavePrefs();
+        dashLog(String("[CFG] /speed_strategy ") + dashSpeedStrategyName(dashSpeedStrategy));
+    }
+    server.send(200, "application/json", dashSpeedStrategyJson());
+}
+
+static String dashLightingConfigJson()
+{
+    String j = "{\"ok\":true,\"enabled\":";
+    j += dashLightingEnabled ? "true" : "false";
+    j += ",\"count\":";
+    j += dashLightingCount;
+    j += ",\"frequency\":\"";
+    j += dashLightingFrequencyName(dashLightingFrequency);
+    j += "\",\"frequency_value\":";
+    j += dashLightingFrequency;
+    j += ",\"rear_fog_strategy\":\"";
+    j += dashRearFogStrategyName(dashRearFogStrategy);
+    j += "\",\"rear_fog_value\":";
+    j += dashRearFogStrategy;
+    j += ",\"bus2_available\":";
+#ifdef DRIVER_T2CAN_DUAL
+    j += "true";
+#else
+    j += "false";
+#endif
+    j += "}";
+    return j;
+}
+
+static void handleLightingConfig()
+{
+    if (server.hasArg("enabled") || server.hasArg("strobe") || server.hasArg("flash") ||
+        server.hasArg("count") || server.hasArg("frequency") || server.hasArg("rear_fog_strategy"))
+    {
+        if (server.hasArg("enabled"))
+            dashLightingEnabled = dashArgTruthy(server.arg("enabled"));
+        if (server.hasArg("strobe") || server.hasArg("flash"))
+            dashLightingEnabled = dashArgTruthy(server.hasArg("strobe") ? server.arg("strobe") : server.arg("flash"));
+        if (server.hasArg("count"))
+        {
+            int count = server.arg("count").toInt();
+            if (count == 3 || count == 5 || count == 7 || count == 10)
+                dashLightingCount = static_cast<uint8_t>(count);
+            else
+            {
+                server.send(400, "application/json", "{\"ok\":false,\"error\":\"count must be 3, 5, 7, or 10\"}");
+                return;
+            }
+        }
+        if (server.hasArg("frequency"))
+        {
+            int f = dashLightingFrequencyFromName(server.arg("frequency"));
+            if (f < 0)
+            {
+                server.send(400, "application/json", "{\"ok\":false,\"error\":\"frequency must be slow, medium, or fast\"}");
+                return;
+            }
+            dashLightingFrequency = static_cast<uint8_t>(f);
+        }
+        if (server.hasArg("rear_fog_strategy"))
+        {
+            int s = dashRearFogStrategyFromName(server.arg("rear_fog_strategy"));
+            if (s < 0)
+            {
+                server.send(400, "application/json", "{\"ok\":false,\"error\":\"rear_fog_strategy must be off, strobe, or continuous\"}");
+                return;
+            }
+            dashRearFogStrategy = static_cast<uint8_t>(s);
+        }
+        dashSavePrefs();
+        dashLog("[CFG] /lighting_config saved");
+    }
+    server.send(200, "application/json", dashLightingConfigJson());
+}
+
+static String dashDefenseConfigJson()
+{
+    String j = "{\"ok\":true,\"enabled\":";
+    j += dashDefenseEnabled ? "true" : "false";
+    j += ",\"bionic_steering\":";
+    j += dashBionicSteering ? "true" : "false";
+    j += ",\"sound_warning_suppression\":";
+    j += dashHandler ? ((bool)dashHandler->isaChimeSuppress ? "true" : "false") : (nvsIsaChimeSuppress ? "true" : "false");
+    j += ",\"speed_no_disturb\":";
+    j += dashSpeedNoDisturb ? "true" : "false";
+    j += ",\"ap_eap_compatible\":";
+    j += dashApEapCompatible ? "true" : "false";
+    j += ",\"slew_rate_enabled\":";
+    j += hw3OffsetSlew ? "true" : "false";
+    j += ",\"ban_shield\":";
+    j += dashHandler ? ((bool)dashHandler->banShieldEnable ? "true" : "false") : (nvsBanShieldEnable ? "true" : "false");
+    j += "}";
+    return j;
+}
+
+static void handleDefenseConfig()
+{
+    if (server.hasArg("enabled") || server.hasArg("bionic_steering") ||
+        server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
+        server.hasArg("ap_eap_compatible"))
+    {
+        if (server.hasArg("enabled"))
+            dashDefenseEnabled = dashArgTruthy(server.arg("enabled"));
+        if (server.hasArg("bionic_steering"))
+            dashBionicSteering = dashArgTruthy(server.arg("bionic_steering"));
+        if (server.hasArg("sound_warning_suppression"))
+        {
+            bool v = dashArgTruthy(server.arg("sound_warning_suppression"));
+            nvsIsaChimeSuppress = v;
+            if (dashHandler)
+                dashHandler->isaChimeSuppress = v;
+        }
+        if (server.hasArg("speed_no_disturb"))
+            dashSpeedNoDisturb = dashArgTruthy(server.arg("speed_no_disturb"));
+        if (server.hasArg("ap_eap_compatible"))
+            dashApEapCompatible = dashArgTruthy(server.arg("ap_eap_compatible"));
+        hw3OffsetSlew = dashDefenseEnabled;
+        nvsBanShieldEnable = dashDefenseEnabled;
+        if (dashHandler)
+            dashHandler->banShieldEnable = dashDefenseEnabled;
+        dashApplyRuntimeState();
+        dashSavePrefs();
+        dashLog("[CFG] /defense_config saved");
+    }
+    server.send(200, "application/json", dashDefenseConfigJson());
+}
+
+// ── Phase 1 新增端点 ──────────────────────────────────────────────
+
+// POST/GET /power_mgmt — 功耗管理配置
+static void handlePowerMgmt() {
+    dashPowerMgmtTouchWeb();
+    if (server.hasArg("autoShutdown") || server.hasArg("wifiAutoOff")) {
+        bool autoShutdown = server.hasArg("autoShutdown") && server.arg("autoShutdown") == "true";
+        bool wifiAutoOff  = server.hasArg("wifiAutoOff")  && server.arg("wifiAutoOff") == "true";
+        autoShutdownEnabled = autoShutdown;
+        wifiAutoOffEnabled  = wifiAutoOff;
+        prefs.begin(PREFS_NS, false);
+        prefs.putBool(NVS_KEY_AUTO_SHUTDOWN, autoShutdown);
+        prefs.putBool(NVS_KEY_WIFI_AUTO_OFF, wifiAutoOff);
+        prefs.end();
+        dashLog(String("[CFG] Power mgmt: shutdown=") + (autoShutdown ? "ON" : "OFF") +
+                " wifi_off=" + (wifiAutoOff ? "ON" : "OFF"));
+    }
+    String json = "{\"autoShutdown\":";
+    json += autoShutdownEnabled ? "true" : "false";
+    json += ",\"wifiAutoOff\":";
+    json += wifiAutoOffEnabled ? "true" : "false";
+    json += "}";
+    server.send(200, "application/json", json);
+}
+
+// GET /vehicle_ota_status — 车辆OTA状态
+static void handleVehicleOtaStatus() {
+    dashPowerMgmtTouchWeb();
+    String json = "{\"vehicleOta\":";
+    json += vehicleOtaActive ? "true" : "false";
+    json += ",\"otaConfirmCount\":";
+    json += String(otaConfirmCount);
+    json += ",\"otaClearCount\":";
+    json += String(otaClearCount);
+    json += "}";
+    server.send(200, "application/json", json);
+}
+
+// POST/GET /fog_light — 后雾灯策略
+static void handleFogLight() {
+    dashPowerMgmtTouchWeb();
+    if (server.hasArg("fogStrategy")) {
+        int strategy = server.arg("fogStrategy").toInt();
+        if (strategy < 0 || strategy > 2) strategy = 0;
+        dashRearFogStrategy = strategy;
+        prefs.begin(PREFS_NS, false);
+        prefs.putUChar("lt_fog", strategy);
+        prefs.end();
+        dashLog(String("[CFG] Fog strategy: ") + dashRearFogStrategyName(strategy));
+    }
+    server.send(200, "application/json", "{\"fogStrategy\":" + String(dashRearFogStrategy) + "}");
+}
+
+// POST /strobe_cont — 连续闪烁（Phase 4 实现完整逻辑）
+static void handleStrobeCont() {
+    dashPowerMgmtTouchWeb();
+    server.send(200, "application/json", "{\"ok\":true,\"note\":\"Phase 4\"}");
+}
+
+static void handleGearAssistStatus()
+{
+    String j = "{\"ok\":true,\"available\":false";
+    j += ",\"reason\":\"gear assist CAN control not implemented in this firmware stage\"";
+    j += ",\"speed_kph\":";
+    j += (dashHandler ? (int)dashHandler->speedOffset : 0);
+    j += ",\"brake\":";
+    j += apRestoreState.brakeSeen ? (apRestoreState.brakePedalRaw > 0 ? "true" : "false") : "false";
+    j += ",\"brake_seen\":";
+    j += apRestoreState.brakeSeen ? "true" : "false";
+    j += ",\"gear\":\"";
+    if (apRestoreState.gearSeen)
+        j += String(apRestoreState.gearRaw);
+    else
+        j += "--";
+    j += "\",\"gear_raw\":";
+    j += apRestoreState.gearSeen ? String(apRestoreState.gearRaw) : String(-1);
+    j += ",\"can_online\":";
+    j += canOnline ? "true" : "false";
+    j += "}";
+    server.send(200, "application/json", j);
+}
+
+static String dashHotspotConfigJson(bool saved = false, bool reboot = false)
+{
+    String j = "{\"ok\":true,\"saved\":";
+    j += saved ? "true" : "false";
+    j += ",\"ssid\":\"";
+    j += jsonEscape(apSSID);
+    j += "\",\"has_password\":";
+    j += strlen(apPass) > 0 ? "true" : "false";
+    j += ",\"hidden\":";
+    j += apHidden ? "true" : "false";
+    j += ",\"ip\":\"";
+    j += WiFi.softAPIP().toString();
+    j += "\",\"clients\":";
+    j += WiFi.softAPgetStationNum();
+    j += ",\"reboot_required\":";
+    j += reboot ? "true" : "false";
+    j += "}";
+    return j;
+}
+
+static void handleHotspotConfig()
+{
+    bool saved = false;
+    bool reboot = false;
+    if (server.hasArg("ssid") || server.hasArg("pass") || server.hasArg("hidden") || server.hasArg("save_reboot"))
+    {
+        String newSsid = server.hasArg("ssid") ? server.arg("ssid") : String(apSSID);
+        String newPass = server.hasArg("pass") ? server.arg("pass") : String("");
+        bool newHidden = server.hasArg("hidden") ? dashArgTruthy(server.arg("hidden")) : apHidden;
+        reboot = server.hasArg("save_reboot") && dashArgTruthy(server.arg("save_reboot"));
+        if (newSsid.length() == 0 || newSsid.length() > kDashMaxSsidLen)
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"SSID must be 1-32 bytes\"}");
+            return;
+        }
+        if (newPass.length() > 0 && !dashApPasswordLengthValid(newPass.length()))
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"Password must be 8-64 characters\"}");
+            return;
+        }
+        strlcpy(apSSID, newSsid.c_str(), sizeof(apSSID));
+        if (newPass.length() > 0)
+            strlcpy(apPass, newPass.c_str(), sizeof(apPass));
+        apHidden = newHidden;
+        prefs.begin(PREFS_NS, false);
+        prefs.putString("ap_ssid", newSsid);
+        if (newPass.length() > 0)
+            prefs.putString("ap_pass", newPass);
+        prefs.putBool("ap_hidden", apHidden);
+        prefs.end();
+        saved = true;
+        dashLog("[WIFI] /hotspot_config saved");
+    }
+    server.send(200, "application/json", dashHotspotConfigJson(saved, reboot));
+    if (saved && reboot)
+    {
+        delay(200);
+        ESP.restart();
+    }
+}
+
+static void handleRelayWifiTest()
+{
+    String ssid = server.hasArg("ssid") ? server.arg("ssid") : String(staSSID);
+    bool valid = ssid.length() > 0 && ssid.length() <= kDashMaxSsidLen && !dashStaSsidLooksCorrupt(ssid);
+    bool connectedSame = WiFi.status() == WL_CONNECTED && ssid == WiFi.SSID();
+    String j = "{\"ok\":";
+    j += valid ? "true" : "false";
+    j += ",\"ssid\":\"";
+    j += jsonEscape(ssid);
+    j += "\",\"connected\":";
+    j += connectedSame ? "true" : "false";
+    j += ",\"wifi_status\":";
+    j += WiFi.status();
+    j += ",\"wifi_status_name\":\"";
+    j += dashWifiStatusName(WiFi.status());
+    j += "\",\"test_started\":false";
+    j += ",\"non_disruptive\":true";
+    if (!valid)
+        j += ",\"error\":\"invalid SSID\"";
+    else if (!connectedSame)
+        j += ",\"message\":\"configuration accepted; use /wifi_config or /wifi_connect for an actual STA association\"";
+    j += "}";
+    server.send(valid ? 200 : 400, "application/json", j);
+}
+
+static void handleDnsRules()
+{
+#if defined(ESP_PLATFORM) && defined(DASH_STA_AP_GATEWAY)
+    if (server.hasArg("enabled") || server.hasArg("blacklist") || server.hasArg("whitelist") ||
+        server.hasArg("upstream_mode") || server.hasArg("upstream_custom"))
+        handleGatewayDnsPost();
+    else
+        handleGatewayDnsGet();
+#else
+    server.send(501, "application/json", "{\"ok\":false,\"error\":\"DNS gateway not enabled\"}");
+#endif
+}
+
 static void handleFrames()
 {
     String j = "{\"frames\":[";
@@ -1960,17 +2626,33 @@ static void handleStalkTest()
         status = 1;
         dur = 400;
     }
+    if (status && server.hasArg("dur"))
+    {
+        int requestedDur = server.arg("dur").toInt();
+        if (requestedDur < 100)
+            requestedDur = 100;
+        if (requestedDur > 3000)
+            requestedDur = 3000;
+        dur = static_cast<uint16_t>(requestedDur);
+    }
     if (status)
         t2canStalkTest(status, dur);
     server.send(200, "application/json",
-                String("{\"ok\":") + (status ? "true" : "false") + ",\"mode\":\"" + m + "\"}");
+                String("{\"ok\":") + (status ? "true" : "false") +
+                    ",\"mode\":\"" + m + "\"" +
+                    ",\"duration_ms\":" + String(dur) +
+                    (status ? "" : ",\"error\":\"invalid mode\"") +
+                    "}");
 }
 
 static void handleBus2Ids()
 {
     uint16_t n = t2canBus2IdCount();
+    uint32_t total = 0;
     String j = "{\"count\":";
     j += n;
+    j += ",\"service_mode\":";
+    j += t2canGetServiceMode() ? "true" : "false";
     j += ",\"ids\":[";
     for (uint16_t i = 0; i < n; i++)
     {
@@ -1980,6 +2662,7 @@ static void handleBus2Ids()
         uint32_t cnt = 0;
         if (!t2canBus2IdAt(i, &id, &dlc, data, &cnt))
             break;
+        total += cnt;
         if (i)
             j += ",";
         char idbuf[8];
@@ -2001,7 +2684,9 @@ static void handleBus2Ids()
         }
         j += "\"}";
     }
-    j += "]}";
+    j += "],\"rx_total\":";
+    j += total;
+    j += "}";
     server.send(200, "application/json", j);
 }
 #endif
@@ -2969,8 +3654,7 @@ static void handleSystemStatus()
         pmMaxMhz = pmConfig.max_freq_mhz;
     }
 #endif
-    wifi_mode_t wifiMode = WIFI_MODE_NULL;
-    esp_wifi_get_mode(&wifiMode);
+    wifi_mode_t wifiMode = WiFi.getMode();
     wifi_ps_type_t wifiPs = WIFI_PS_NONE;
     esp_wifi_get_ps(&wifiPs);
     const char *wifiModeText = "off";
@@ -3275,8 +3959,7 @@ static void dashSerialPrintSystemStatus()
     float tempC = 0.0f;
     bool hasTemp = dashReadTemperature(tempC);
     uint32_t cpuMhz = (static_cast<uint32_t>(esp_clk_cpu_freq()) + 500000UL) / 1000000UL;
-    wifi_mode_t wifiMode = WIFI_MODE_NULL;
-    esp_wifi_get_mode(&wifiMode);
+    wifi_mode_t wifiMode = WiFi.getMode();
 
     const char *wifiModeText = "off";
     switch (wifiMode)
@@ -3929,9 +4612,27 @@ static void handleApStatus()
         stored = p.isKey("ap_ssid") && p.getString("ap_ssid", "").length() > 0;
         p.end();
     }
+    wifi_mode_t wifiMode = WIFI_MODE_NULL;
+    esp_wifi_get_mode(&wifiMode);
+    const char *wifiModeText = "off";
+    switch (wifiMode)
+    {
+    case WIFI_MODE_STA:
+        wifiModeText = "STA";
+        break;
+    case WIFI_MODE_AP:
+        wifiModeText = "AP";
+        break;
+    case WIFI_MODE_APSTA:
+        wifiModeText = "AP+STA";
+        break;
+    default:
+        break;
+    }
     String j = "{\"ssid\":\"" + jsonEscape(apSSID) + "\"";
     j += ",\"ip\":\"" + WiFi.softAPIP().toString() + "\"";
     j += ",\"clients\":" + String(WiFi.softAPgetStationNum());
+    j += ",\"mode\":\"" + String(wifiModeText) + "\"";
     j += ",\"channel\":" + String(dashCurrentApChannel());
     j += ",\"channel_auto\":true";
     j += ",\"last_channel_sync_ms\":" + String(apLastChannelSyncMs);
@@ -4491,6 +5192,8 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     dashApplyNvsRuntimeSwitches();
     dashApplyFilters();
 
+    // Phase 1: 初始化功耗管理
+    dashPowerMgmtInit();
 
     ArduinoOTA.setHostname("ev-open-can-tools");
     ArduinoOTA.setPassword(DASH_OTA_PASS);
@@ -4505,20 +5208,46 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/", HTTP_GET, handleRoot);
     server.on("/status", HTTP_GET, handleStatus);
     server.on("/config", HTTP_POST, handleConfig);
+    server.on("/mode_hw", HTTP_GET, handleModeHw);
+    server.on("/mode_hw", HTTP_POST, handleModeHw);
+    server.on("/drive_profile", HTTP_GET, handleDriveProfile);
+    server.on("/drive_profile", HTTP_POST, handleDriveProfile);
+    server.on("/speed_strategy", HTTP_GET, handleSpeedStrategy);
+    server.on("/speed_strategy", HTTP_POST, handleSpeedStrategy);
+    server.on("/lighting_config", HTTP_GET, handleLightingConfig);
+    server.on("/lighting_config", HTTP_POST, handleLightingConfig);
+    server.on("/defense_config", HTTP_GET, handleDefenseConfig);
+    server.on("/defense_config", HTTP_POST, handleDefenseConfig);
+    server.on("/gear_assist_status", HTTP_GET, handleGearAssistStatus);
+    // Phase 1 新增端点
+    server.on("/power_mgmt",       HTTP_GET,  handlePowerMgmt);
+    server.on("/power_mgmt",       HTTP_POST, handlePowerMgmt);
+    server.on("/vehicle_ota_status", HTTP_GET, handleVehicleOtaStatus);
+    server.on("/fog_light",        HTTP_GET,  handleFogLight);
+    server.on("/fog_light",        HTTP_POST, handleFogLight);
+    server.on("/strobe_cont",      HTTP_POST, handleStrobeCont);
+    server.on("/hotspot_config", HTTP_GET, handleHotspotConfig);
+    server.on("/hotspot_config", HTTP_POST, handleHotspotConfig);
+    server.on("/relay_wifi_test", HTTP_POST, handleRelayWifiTest);
+    server.on("/dns_rules", HTTP_GET, handleDnsRules);
+    server.on("/dns_rules", HTTP_POST, handleDnsRules);
     server.on("/logging", HTTP_POST, handleLoggingConfig);
     server.on("/frames", HTTP_GET, handleFrames);
     server.on("/log", HTTP_GET, handleLog);
+    server.on("/reset_stats", HTTP_GET, handleResetStats);
     server.on("/reset_stats", HTTP_POST, handleResetStats);
     server.on("/rec_start", HTTP_POST, handleRecStart);
     server.on("/rec_stop", HTTP_POST, handleRecStop);
     server.on("/rec_status", HTTP_GET, handleRecStatus);
 #ifdef DRIVER_T2CAN_DUAL
     server.on("/service_mode", HTTP_GET, handleServiceMode);
+    server.on("/service_mode", HTTP_POST, handleServiceMode);
     server.on("/stalk_test", HTTP_GET, handleStalkTest);
     server.on("/bus2_ids", HTTP_GET, handleBus2Ids);
 #endif
     server.on("/rec_download", HTTP_GET, handleRecDownload);
     server.on("/disable", HTTP_POST, handleDisable);
+    server.on("/reboot", HTTP_GET, handleReboot);
     server.on("/reboot", HTTP_POST, handleReboot);
     server.on("/update", HTTP_POST, handleOtaResult, handleOtaUpload);
     server.on("/ota_creds", HTTP_GET, handleOtaCreds);
@@ -4580,6 +5309,14 @@ static void mcpDashboardLoop()
 #if defined(DASH_RGB_STATUS_LED)
     appRefreshStatusLed(false);
 #endif
+    // Phase 1: WiFi自动关闭检查（flag-based，不直接调WiFi.mode）
+    if (dashPowerMgmtShouldDisableWifi()) {
+        WiFi.mode(WIFI_AP);
+        dashPowerMgmtMarkWifiDisabled();
+        dashLog("[PWR] WiFi STA auto-off (idle timeout)");
+    }
+    // Phase 1: 自动关机检查（deep sleep）
+    dashPowerMgmtTick();
 }
 
 #endif

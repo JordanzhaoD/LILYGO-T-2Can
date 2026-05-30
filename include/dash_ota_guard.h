@@ -25,13 +25,13 @@ inline void dashOtaGuardProcessFrame(const CanFrame& frame) {
     bool otaFlag = (frame.data[6] & 0x03) == 0x02;
 
     if (otaFlag) {
-        otaConfirmCount++;
+        otaConfirmCount = otaConfirmCount + 1;
         otaClearCount = 0;
         if (otaConfirmCount >= OTA_CONFIRM_THRESHOLD && !vehicleOtaActive) {
             vehicleOtaActive = true;
         }
     } else {
-        otaClearCount++;
+        otaClearCount = otaClearCount + 1;
         otaConfirmCount = 0;
         if (otaClearCount >= OTA_CLEAR_THRESHOLD && vehicleOtaActive) {
             vehicleOtaActive = false;
