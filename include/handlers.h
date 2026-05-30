@@ -470,34 +470,8 @@ struct HW3Handler : public CarManagerBase
             // ── Mux 2: Speed offset (three-layer + slew limiter) ──────────
             if (index == 2 && (bool)fsdTriggered)
             {
-                uint8_t activeRaw = (uint8_t)std::max(std::min((int)speedOffset, 255), 0);
-
+                uint8_t activeRaw = dashComputeHw3OffsetRaw((int)speedOffset);
                 uint8_t fl = fusedSpeedLimitRaw;
-                if (fl > 0 && fl < 31) {
-                    int fusedLimitKph = (int)fl * 5;
-                    if (fusedLimitKph < kHw3StockOffsetCutoverKph) {
-                        if (hw3CustomSpeed || hw3AutoSpeed) {
-                            uint16_t targetSpeedKph = hw3CustomSpeed
-                                ? dashComputeHw3CustomTargetKph(static_cast<uint8_t>(fusedLimitKph))
-                                : dashComputeHw3AutoTargetKph(static_cast<uint8_t>(fusedLimitKph));
-                            if (targetSpeedKph > 0) {
-                                int desiredOffsetKph = std::max((int)targetSpeedKph - fusedLimitKph, 0);
-                                activeRaw = dashEncodeHw3Offset(desiredOffsetKph, static_cast<uint8_t>(fusedLimitKph));
-                            }
-                        }
-                    } else {
-                        if (hw3HighSpeedEnable) {
-                            int idx = (fusedLimitKph - kHw3HighSpeedBucketBaseKph_verified)
-                                      / kHw3HighSpeedBucketStepKph_verified;
-                            if (idx < 0) idx = 0;
-                            if (idx >= kHw3HighSpeedBucketCount_verified) idx = kHw3HighSpeedBucketCount_verified - 1;
-                            uint8_t pct = hw3HighSpeedTargetPct[idx];
-                            if (pct > 0) {
-                                activeRaw = dashEncodeHw3OffsetFromPct((int)pct, static_cast<uint8_t>(fusedLimitKph));
-                            }
-                        }
-                    }
-                }
 
                 hw3OffsetTargetRaw = activeRaw;
 
