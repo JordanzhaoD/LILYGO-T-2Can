@@ -29,7 +29,7 @@ static const char DASH_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   --tx3: #9ca3af;
   --border: #4b5563;
   --header-bg: #111827;
-  --sidebar-w: 170px;
+  --sidebar-w: 220px;
 }
 /* === Reset & Base === */
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -42,16 +42,16 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .sidebar { width: var(--sidebar-w); background: var(--sidebar-bg);
   display: flex; flex-direction: column; flex-shrink: 0;
   border-right: 1px solid var(--border); overflow-y: auto; }
-.sidebar-hdr { padding: 14px 12px 10px; border-bottom: 1px solid var(--border); }
-.sidebar-hdr h1 { font-size: 18px; font-weight: 700; color: var(--tx1); letter-spacing: 0.5px; }
+.sidebar-hdr { padding: 22px 24px 18px; border-bottom: 1px solid var(--border); }
+.sidebar-hdr h1 { font-size: 24px; font-weight: 800; color: var(--accent); letter-spacing: 0; }
 .sidebar-hdr p { font-size: 11px; color: var(--tx3); margin-top: 2px; }
-.sidebar-nav { flex: 1; padding: 6px 0; }
-.nav-item { display: flex; align-items: center; gap: 8px; padding: 11px 14px; color: var(--tx3);
-  font-size: 13px; cursor: pointer; border-radius: 0;
+.sidebar-nav { flex: 1; padding: 16px 10px; }
+.nav-item { display: flex; align-items: center; gap: 14px; padding: 16px 18px; color: var(--tx3);
+  font-size: 19px; cursor: pointer; border-radius: 12px;
   transition: background .15s, color .15s; user-select: none; font-weight: 600; }
-.nav-item .nav-icon { font-size: 16px; line-height: 1; flex-shrink: 0; }
+.nav-item .nav-icon { font-size: 24px; line-height: 1; flex-shrink: 0; }
 .nav-item:hover { background: var(--main-bg); color: var(--tx2); }
-.nav-item.active { background: var(--accent); color: #fff; font-weight: 700; font-size: 14px; }
+.nav-item.active { background: rgba(124,58,237,0.18); color: var(--accent-light); font-weight: 800; font-size: 20px; }
 .sidebar-ft { padding: 10px 12px; border-top: 1px solid var(--border);
   display: flex; gap: 6px; }
 .sidebar-ft button { flex:1; background: var(--card-bg); border: none;
@@ -64,20 +64,23 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .topbar { background: var(--header-bg); padding: 10px 16px;
   display: flex; align-items: center; gap: 12px; flex-shrink: 0;
   border-bottom: 1px solid var(--border); min-height: 44px; }
-.topbar-badge { padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 700; }
-.badge-ok { background: #166534; color: var(--ok); }
-.badge-err { background: #7f1d1d; color: var(--err); }
+.topbar-badge { padding: 7px 16px; border-radius: 999px; font-size: 13px; font-weight: 800; border: 1px solid var(--border); background: var(--card-bg-alt); }
+.badge-ok { color: var(--tx1); }
+.badge-err { color: var(--err); }
 .toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%);background:#7f1d1d;color:#fff;padding:8px 18px;border-radius:8px;font-size:13px;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.ok{background:#166534}
 .toast.show{opacity:1}
-.badge-warn { background: #78350f; color: var(--warn); }
-.topbar-fps { color: var(--info); font-size: 14px; font-weight: 700; }
+.badge-warn { color: var(--tx1); }
+.topbar-fps { color: var(--tx1); font-size: 14px; font-weight: 800; padding: 7px 16px; border-radius: 999px; background: var(--card-bg-alt); border: 1px solid var(--border); }
 .topbar-time { margin-left: auto; color: var(--tx3); font-size: 12px; }
+.topbar-exp { color: var(--warn); font-size: 12px; font-weight: 800; padding: 7px 12px; border-radius: 999px; background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.35); }
+.mobile-theme-toggle { display: none; border: 1px solid var(--border); background: var(--card-bg-alt); color: var(--tx1); border-radius: 999px; min-width: 76px; height: 32px; padding: 0 10px; font-size: 12px; font-weight: 800; white-space: nowrap; }
 .topbar-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
   flex-shrink: 0; }
 .topbar-dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 .topbar-dot.err { background: var(--err); box-shadow: 0 0 6px var(--err); }
 .topbar-dot.warn { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
-.content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px;
+.content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 22px;
   -webkit-overflow-scrolling: touch; }
 
 /* === Pages === */
@@ -85,9 +88,10 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .page.active { display: block; }
 
 /* === Cards === */
-.card { background: var(--card-bg); border-radius: 10px; padding: 18px;
-  margin-bottom: 16px; }
-.card-title { font-size: 16px; font-weight: 700; color: var(--tx1);
+.card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 22px;
+  margin-bottom: 20px; }
+.page-title { font-size: 26px; font-weight: 800; margin: 4px 0 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); color: var(--tx1); }
+.card-title { font-size: 18px; font-weight: 800; color: var(--tx1);
   margin-bottom: 10px; }
 .card-subtitle { font-size: 12px; color: var(--tx3); margin-top: -6px;
   margin-bottom: 10px; }
@@ -105,6 +109,14 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .qa-icon { font-size: 24px; line-height: 1; }
 .qa-label { font-size: 13px; font-weight: 700; }
 .qa-status { font-size: 10px; color: var(--tx3); font-weight: 500; }
+.exp-badge { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.35); color: var(--warn); font-size: 11px; font-weight: 800; vertical-align: middle; }
+.status-triplet { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0 16px; }
+.status-chip { background: var(--card-bg-alt); border: 1px solid var(--border); border-radius: 10px; padding: 10px; min-height: 54px; }
+.status-chip .lbl { color: var(--tx3); font-size: 11px; margin-bottom: 4px; }
+.status-chip .val { color: var(--tx1); font-size: 14px; font-weight: 800; overflow-wrap: anywhere; }
+.s-ok { color: var(--ok) !important; }
+.s-warn { color: var(--warn) !important; }
+.s-err { color: var(--err) !important; }
 
 /* === Stats Grid === */
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
@@ -143,19 +155,19 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .btn-sm { padding: 8px 14px; font-size: 12px; min-height: 36px; }
 
 /* === Selection Cards (HW, Profile, etc.) === */
-.sel-cards { display: grid; gap: 6px; }
+.sel-cards { display: grid; gap: 16px; }
 .sel-cards.c2 { grid-template-columns: repeat(2, 1fr); }
 .sel-cards.c3 { grid-template-columns: repeat(3, 1fr); }
 .sel-cards.c4 { grid-template-columns: repeat(4, 1fr); }
 .sel-card { background: var(--card-bg-alt); border: 2px solid var(--border);
-  border-radius: 8px; padding: 14px 10px; text-align: center; cursor: pointer;
+  border-radius: 12px; padding: 24px 14px; text-align: center; cursor: pointer;
   transition: border-color .15s, background .15s; }
 .sel-card:hover { border-color: var(--tx3); }
-.sel-card.active { border-color: var(--accent); background: var(--accent); color: #fff; }
-.sel-card.active .sel-lbl { color: rgba(255,255,255,0.7); }
+.sel-card.active { border-color: var(--accent-light); background: rgba(124,58,237,0.18); color: var(--accent-light); }
+.sel-card.active .sel-lbl { color: var(--accent-light); }
 .sel-card .sel-lbl { font-size: 10px; color: var(--tx3); text-transform: uppercase;
   letter-spacing: 0.5px; }
-.sel-card .sel-name { font-size: 15px; font-weight: 600; margin-top: 2px; }
+.sel-card .sel-name { font-size: 20px; font-weight: 800; margin-top: 2px; }
 
 /* === Setting Row === */
 .setting-row { display: flex; justify-content: space-between; align-items: center;
@@ -224,21 +236,30 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .sidebar { display: none !important; }
   .overlay { display: none !important; }
   .mobile-toggle { display: none !important; }
-  .mob-tabs { display: flex; }
-  .main { width: 100%; padding-bottom: 52px; }
-  .topbar { padding: 8px 10px; gap: 6px; min-height: 44px; }
-  .topbar-fps { font-size: 12px; }
-  .topbar-badge { font-size: 11px; padding: 2px 8px; }
-  .topbar-time { font-size: 11px; margin-left: auto; }
-  .content { padding: 10px 10px; }
-  .card { padding: 14px 10px; margin-bottom: 10px; border-radius: 8px; }
+  .mobile-theme-toggle { display: inline-flex; align-items: center; justify-content: center; order: 7; box-shadow: 0 1px 4px rgba(0,0,0,0.18); }
+  .mob-tabs { display: flex; min-height: 68px; padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px)); }
+  .mob-tab { min-height: 58px; padding: 7px 2px; font-size: 12px; gap: 2px; }
+  .mob-tab .mob-icon { font-size: 29px; margin-bottom: 2px; }
+  .mob-more-panel { bottom: 72px; padding: 16px 18px; }
+  .mob-more-item { padding: 14px 0; font-size: 15px; }
+  .mob-more-close { font-size: 22px; }
+  .main { width: 100%; padding-bottom: 74px; }
+  .topbar { padding: 7px 8px; gap: 5px; min-height: 0; flex-wrap: wrap; align-content: center; }
+  .topbar-dot { width: 7px; height: 7px; }
+  .topbar-fps { font-size: 11px; padding: 5px 8px; max-width: 72px; overflow: hidden; white-space: nowrap; }
+  .topbar-badge { font-size: 11px; padding: 5px 8px; white-space: nowrap; }
+  .topbar-exp { order: 9; flex: 1 0 100%; text-align: center; font-size: 11px; padding: 4px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topbar-time { order: 8; font-size: 11px; margin-left: auto; padding-right: 2px; white-space: nowrap; }
+  .content { padding: 8px 10px 12px; }
+  .card { padding: 12px 10px; margin-bottom: 10px; border-radius: 8px; }
   .card-title { font-size: 15px; margin-bottom: 8px; }
-  .stats { grid-template-columns: repeat(2, 1fr); gap: 4px; }
-  .stat { padding: 8px 4px; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .stat { padding: 9px 6px; min-width: 0; }
   .stat-lbl { font-size: 10px; }
-  .stat-val { font-size: 15px; }
-  .sel-cards.c2, .sel-cards.c3, .sel-cards.c4 { grid-template-columns: repeat(2, 1fr); gap: 4px; }
-  .sel-card { padding: 10px 6px; }
+  .stat-val { font-size: 15px; overflow-wrap: anywhere; }
+  .sel-cards.c2, .sel-cards.c3, .sel-cards.c4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .sel-card { padding: 13px 7px; min-width: 0; }
+  .sel-card .sel-name { font-size: 17px; overflow-wrap: anywhere; }
   .setting-row { flex-wrap: wrap; gap: 4px; padding: 10px 0; }
   .setting-name { font-size: 13px; }
   .tbl { font-size: 11px; }
@@ -260,6 +281,15 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .qa-btn { padding: 10px 4px; min-height: 68px; }
   .qa-icon { font-size: 20px; }
   .qa-label { font-size: 12px; }
+  .page-title { font-size: 20px; margin: 2px 0 10px; padding-bottom: 8px; }
+  .status-triplet { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 6px 0 10px; }
+  .status-triplet .status-chip { min-height: 46px; padding: 8px; }
+  .status-triplet .status-chip:nth-child(3) { grid-column: 1 / -1; }
+  .status-chip .lbl { font-size: 10px; margin-bottom: 3px; }
+  .status-chip .val { font-size: 13px; }
+  .diag-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+  .diag-item { min-width: 0; align-items: center; }
+  .diag-item span:last-child { overflow-wrap: anywhere; text-align: right; }
 }
 .mobile-toggle { display: none; background: none; border: none;
   color: var(--tx2); font-size: 20px; cursor: pointer; padding: 4px 8px; }
@@ -315,6 +345,22 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   padding: 4px 8px; display: flex; justify-content: space-between;
   font-size: 11px; }
 .diag-item .lbl { color: var(--tx3); }
+.hero-status { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
+.feature-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.mode-note { margin-top: 10px; color: var(--tx3); font-size: 12px; line-height: 1.45; }
+.mobile-home { display: none; }
+@media (max-width: 768px) {
+  .hero-status, .feature-grid { grid-template-columns: 1fr 1fr; }
+  .nav-item { font-size: 16px; }
+  .nav-item.active { font-size: 17px; }
+  .mobile-home { display: block; }
+  #pg-overview > .hero-status,
+  #pg-overview > .quick-actions,
+  #pg-overview > .card { display: none; }
+  #pg-overview .page-title { margin-bottom: 8px; }
+  #pg-overview > .status-triplet { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #pg-overview > .status-triplet .status-chip:nth-child(3) { grid-column: 1 / -1; }
+}
 </style>
 </head>
 <body>
@@ -330,15 +376,15 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <p>T-2CAN 控制面板</p>
   </div>
   <div class="sidebar-nav">
-    <div class="nav-item active" data-page="pg-overview"><span class="nav-icon">📊</span>概览</div>
-    <div class="nav-item" data-page="pg-hardware"><span class="nav-icon">🔧</span>模块配置</div>
-    <div class="nav-item" data-page="pg-fsd"><span class="nav-icon">⚡</span>FSD 开关</div>
-    <div class="nav-item" data-page="pg-speed"><span class="nav-icon">🚀</span>速度偏移</div>
-    <div class="nav-item" data-page="pg-bus2"><span class="nav-icon">🔌</span>Bus2 控制</div>
-    <div class="nav-item" data-page="pg-defense"><span class="nav-icon">🛡</span>FSD 防御</div>
-    <div class="nav-item" data-page="pg-ota"><span class="nav-icon">📦</span>OTA 升级</div>
-    <div class="nav-item" data-page="pg-network"><span class="nav-icon">📶</span>网络设置</div>
-    <div class="nav-item" data-page="pg-can"><span class="nav-icon">🔬</span>CAN 工具</div>
+    <div class="nav-item active" data-page="pg-overview"><span class="nav-icon">▣</span>模块配置</div>
+    <div class="nav-item" data-page="pg-hardware"><span class="nav-icon">◇</span>激活模式</div>
+    <div class="nav-item" data-page="pg-drive"><span class="nav-icon">◉</span>驾驶模式</div>
+    <div class="nav-item" data-page="pg-speed"><span class="nav-icon">↗</span>速度偏移</div>
+    <div class="nav-item" data-page="pg-bus2"><span class="nav-icon">✦</span>CAN2控制</div>
+    <div class="nav-item" data-page="pg-defense"><span class="nav-icon">◈</span>FSD防御</div>
+    <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA升级</div>
+    <div class="nav-item" data-page="pg-network"><span class="nav-icon">◎</span>网络设置</div>
+    <div class="nav-item" data-page="pg-can"><span class="nav-icon">⌘</span>CAN工具</div>
   </div>
   <div class="sidebar-ft">
     <button onclick="toggleLanguage()" id="lang-btn">EN</button>
@@ -355,7 +401,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <span class="topbar-dot ok" id="tb-dot-status"></span>
     <span class="topbar-badge badge-ok" id="tb-status">已连接</span>
     <span class="topbar-dot warn" id="tb-dot-fsd"></span>
-    <span class="topbar-badge badge-warn" id="tb-fsd">FSD OFF</span>
+    <span class="topbar-badge badge-warn" id="tb-fsd">FSD防封保护</span>
+    <span class="topbar-exp" id="tb-exp">实验项 0</span>
+    <button class="mobile-theme-toggle" onclick="toggleTheme()" id="mobile-theme-btn">☀ 白天</button>
     <span class="topbar-time" id="tb-up">00:00:00</span>
   </div>
 
@@ -364,6 +412,60 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 1: Overview -->
     <div class="page active" id="pg-overview">
+<div class="page-title">模块配置</div>
+<div class="status-triplet">
+  <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-module-ui">待同步</div></div>
+  <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-module-nvs">读取中</div></div>
+  <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-module-run">待检测</div></div>
+</div>
+<div class="hero-status">
+  <div class="stat"><div class="stat-lbl">FSD-V14 <span class="exp-badge">实验</span></div><div class="stat-val v-dim" id="ov-v14">待机</div></div>
+  <div class="stat"><div class="stat-lbl">HW Auto</div><div class="stat-val v-acc" id="ov-hw">Auto</div></div>
+  <div class="stat"><div class="stat-lbl">CAN1 / CAN2</div><div class="stat-val v-dim" id="ov-can">--</div></div>
+  <div class="stat"><div class="stat-lbl">运行时间</div><div class="stat-val v-info" id="ov-up">00:00:00</div></div>
+</div>
+<div class="mobile-home">
+  <div class="card">
+    <div class="card-title">状态</div>
+    <div class="stats">
+      <div class="stat"><div class="stat-lbl">CAN1</div><div class="stat-val v-dim" id="m-can">--</div></div>
+      <div class="stat"><div class="stat-lbl">CAN2</div><div class="stat-val v-dim" id="m-can2">--</div></div>
+      <div class="stat"><div class="stat-lbl">FSD</div><div class="stat-val v-dim" id="m-fsd">OFF</div></div>
+      <div class="stat"><div class="stat-lbl">帧率</div><div class="stat-val v-info" id="m-fps">0.0 Hz</div></div>
+      <div class="stat"><div class="stat-lbl">Rx / Tx</div><div class="stat-val v-info" id="m-rxtx">0 / 0</div></div>
+      <div class="stat"><div class="stat-lbl">运行</div><div class="stat-val v-info" id="m-up">00:00:00</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="setting-row">
+      <div>
+        <div class="setting-name">FSD 总开关</div>
+        <div class="setting-desc">开启前需要二次确认</div>
+      </div>
+      <label class="tgl">
+        <input type="checkbox" id="m-fsd-tgl" onchange="toggleFsd()">
+        <div class="tgl-track"></div>
+      </label>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">当前模式</div>
+    <div class="diag-grid">
+      <div class="diag-item"><span class="lbl">破解</span><span class="v-acc" id="m-hw">--</span></div>
+      <div class="diag-item"><span class="lbl">驾驶</span><span class="v-acc" id="m-drive">--</span></div>
+      <div class="diag-item"><span class="lbl">速度</span><span class="v-dim" id="m-speed">--</span></div>
+      <div class="diag-item"><span class="lbl">防御</span><span class="v-dim" id="m-defense">--</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">异常告警</div>
+    <div class="setting-desc" id="m-alert">暂无异常</div>
+  </div>
+  <div class="card">
+    <div class="card-title">未验证 / 实验功能</div>
+    <div class="setting-desc">自动换挡、灯光连续爆闪、MAX/V14 模式、AP/EAP 免打扰、FSD 注入增强项。建议优先使用 Auto/HW3/Normal/auto 速度策略。</div>
+  </div>
+</div>
 <!-- Quick Actions -->
 <div class="quick-actions">
   <button class="qa-btn qa-fsd" id="qa-fsd" onclick="toggleFsd()">
@@ -371,12 +473,12 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="qa-label">FSD 注入</div>
     <div class="qa-status" id="qa-fsd-st">OFF</div>
   </button>
-  <button class="qa-btn" onclick="fetch('/reset_stats');setTimeout(poll,500)">
+  <button class="qa-btn" onclick="resetStats()">
     <div class="qa-icon">🔄</div>
     <div class="qa-label">重置计数</div>
     <div class="qa-status">RX/TX</div>
   </button>
-  <button class="qa-btn qa-danger" onclick="if(confirm('确认重启设备？'))fetch('/reboot')">
+  <button class="qa-btn qa-danger" onclick="rebootDevice()">
     <div class="qa-icon">🔁</div>
     <div class="qa-label">重启设备</div>
     <div class="qa-status">Reboot</div>
@@ -384,14 +486,24 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 <!-- FSD Quick Toggle -->
 <div class="card">
-  <div class="card-title">FSD 注入</div>
+  <div class="card-title">核心激活程序</div>
   <div class="setting-row">
     <div>
-      <div class="setting-name">FSD 开关</div>
-      <div class="setting-desc" id="ov-fsd-desc">点击切换开关状态</div>
+      <div class="setting-name">FSD-V14 模式</div>
+      <div class="setting-desc" id="ov-fsd-desc">独立切换 MAX/V14 实验 profile，不影响模块总开关</div>
     </div>
     <label class="tgl">
-      <input type="checkbox" id="ov-fsd-tgl" onchange="toggleFsd()">
+      <input type="checkbox" id="ov-fsd-tgl" onchange="toggleV14Mode()">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">模块总开关</div>
+      <div class="setting-desc">控制当前 FSD 注入模块启停</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="ov-master-tgl" onchange="toggleFsd()">
       <div class="tgl-track"></div>
     </label>
   </div>
@@ -401,9 +513,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <div class="card">
 <div class="card-title">系统状态</div>
 <div class="stats">
-  <div class="stat"><div class="stat-lbl">CAN Bus</div><div class="stat-val v-dim" id="s-can">Offline</div></div>
-  <div class="stat"><div class="stat-lbl">RX</div><div class="stat-val v-info" id="s-rx">0</div></div>
-  <div class="stat"><div class="stat-lbl">TX</div><div class="stat-val v-info" id="s-tx">0</div></div>
+  <div class="stat"><div class="stat-lbl">CAN1</div><div class="stat-val v-dim" id="s-can">Offline</div></div>
+  <div class="stat"><div class="stat-lbl">CAN2</div><div class="stat-val v-dim" id="s-can2">Idle</div></div>
+  <div class="stat"><div class="stat-lbl">CAN1 RX/TX</div><div class="stat-val v-info" id="s-rx">0/0</div></div>
   <div class="stat"><div class="stat-lbl">帧率</div><div class="stat-val v-info" id="s-fps">0.0 Hz</div></div>
   <div class="stat"><div class="stat-lbl">硬件版本</div><div class="stat-val v-acc" id="s-hw">--</div></div>
   <div class="stat"><div class="stat-lbl">速度偏移</div><div class="stat-val v-dim" id="s-soff">0</div></div>
@@ -419,16 +531,56 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="stat"><div class="stat-lbl">跟随距离</div><div class="stat-val v-dim" id="s-fd">--</div></div>
 </div>
 </div>
+
+	<!-- Phase 1: 车辆OTA状态 -->
+	<div class="card">
+	<div class="card-title">车辆 OTA 状态</div>
+	<div class="stats">
+	  <div class="stat"><div class="stat-lbl">OTA 状态</div><div class="stat-val v-acc" id="s-vota">正常</div></div>
+	  <div class="stat"><div class="stat-lbl">OTA 确认次数</div><div class="stat-val v-dim" id="s-vota-cnt">0</div></div>
+	</div>
+	</div>
+
+	<!-- Phase 1: 功耗管理 -->
+	<div class="card">
+	<div class="card-title">功耗管理</div>
+	  <div class="setting-row">
+	    <div>
+	      <div class="setting-name">自动关机</div>
+	      <div class="setting-desc">5分钟无CAN数据自动休眠</div>
+	    </div>
+	    <label class="tgl">
+	      <input type="checkbox" id="ov-auto-shutdown" onchange="toggleAutoShutdown(this.checked)">
+	      <div class="tgl-track"></div>
+	    </label>
+	  </div>
+	  <div class="setting-row">
+	    <div>
+	      <div class="setting-name">WiFi 自动关闭</div>
+	      <div class="setting-desc">5分钟无操作关闭网络中转</div>
+	    </div>
+	    <label class="tgl">
+	      <input type="checkbox" id="ov-wifi-auto-off" onchange="toggleWifiAutoOff(this.checked)">
+	      <div class="tgl-track"></div>
+	    </label>
+	  </div>
+	</div>
     </div>
 
     <!-- Page 2: Hardware Config -->
     <div class="page" id="pg-hardware">
+<div class="page-title">破解模式</div>
+<div class="status-triplet">
+  <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-hw-ui">Auto</div></div>
+  <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-hw-nvs">--</div></div>
+  <div class="status-chip"><div class="lbl">实际 CAN 运行状态</div><div class="val" id="st-hw-run">--</div></div>
+</div>
 <!-- HW Version Selection -->
 <div class="card">
-  <div class="card-title">硬件版本</div>
-  <div class="card-subtitle">选择您的自动驾驶硬件版本</div>
-  <div class="sel-cards c2" id="hw-cards">
-    <div class="sel-card active" onclick="setHW(-1)">
+  <div class="card-title">FSD 智能破解模式</div>
+  <div class="card-subtitle">选择车辆自动驾驶硬件版本，Auto 会交给固件现有探测逻辑</div>
+  <div class="sel-cards c4" id="hw-cards">
+    <div class="sel-card active" onclick="setHW(3)">
       <div class="sel-lbl">推荐</div>
       <div class="sel-name">Auto</div>
     </div>
@@ -438,28 +590,11 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <div class="sel-card" onclick="setHW(1)">
       <div class="sel-lbl">第三代</div>
-      <div class="sel-name">HW3</div>
+      <div class="sel-name">HW3.0</div>
     </div>
     <div class="sel-card" onclick="setHW(2)">
       <div class="sel-lbl">第四代</div>
-      <div class="sel-name">HW4</div>
-    </div>
-  </div>
-</div>
-
-<!-- Profile Selection -->
-<div class="card">
-  <div class="card-title">速度配置</div>
-  <div class="card-subtitle">选择速度偏移方案</div>
-  <div class="sel-cards c3" id="profile-cards">
-    <div class="sel-card" onclick="setProfile(0)">
-      <div class="sel-name">Chill</div>
-    </div>
-    <div class="sel-card active" onclick="setProfile(1)">
-      <div class="sel-name">Normal</div>
-    </div>
-    <div class="sel-card" onclick="setProfile(2)">
-      <div class="sel-name">Hurry</div>
+      <div class="sel-name">HW4.0</div>
     </div>
   </div>
 </div>
@@ -479,8 +614,27 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
     </div>
 
-    <!-- Page 3: FSD Switch -->
-    <div class="page" id="pg-fsd">
+    <!-- Page 3: Drive Mode -->
+    <div class="page" id="pg-drive">
+<div class="page-title">驾驶模式</div>
+<div class="status-triplet">
+  <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-drive-ui">Normal</div></div>
+  <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-drive-nvs">--</div></div>
+  <div class="status-chip"><div class="lbl">实际 CAN 运行状态</div><div class="val" id="st-drive-run">--</div></div>
+</div>
+<div class="card">
+  <div class="card-title">驾驶风格</div>
+  <div class="card-subtitle">映射到 /drive_profile，保留 Auto/Sloth/Chill/Normal/Hurry/MAX 六档</div>
+  <div class="sel-cards c3" id="drive-cards">
+    <div class="sel-card" onclick="setDriveMode('auto')"><div class="sel-lbl">推荐</div><div class="sel-name">Auto</div></div>
+    <div class="sel-card" onclick="setDriveMode('sloth')"><div class="sel-lbl">低速</div><div class="sel-name">Sloth</div></div>
+    <div class="sel-card" onclick="setDriveMode('chill')"><div class="sel-lbl">舒适</div><div class="sel-name">Chill</div></div>
+    <div class="sel-card active" onclick="setDriveMode('normal')"><div class="sel-lbl">标准</div><div class="sel-name">Normal</div></div>
+    <div class="sel-card" onclick="setDriveMode('hurry')"><div class="sel-lbl">积极</div><div class="sel-name">Hurry</div></div>
+    <div class="sel-card" onclick="setDriveMode('max')"><div class="sel-lbl">最大</div><div class="sel-name">MAX <span class="exp-badge">实验</span></div></div>
+  </div>
+  <div class="mode-note">当前选择：<span id="drive-current">Normal</span></div>
+</div>
 <div class="card">
   <div class="big-toggle off" id="fsd-toggle" onclick="toggleFsd()">
     <div class="card-title">FSD 注入控制</div>
@@ -506,17 +660,38 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <div class="card">
   <div class="card-title">紧急控制</div>
   <div style="display:flex;gap:8px">
-    <button class="btn btn-danger" onclick="fetch('/reboot')" style="flex:1">重启设备</button>
-    <button class="btn" onclick="fetch('/reset_stats')" style="flex:1">重置计数</button>
+    <button class="btn btn-danger" onclick="rebootDevice()" style="flex:1">重启设备</button>
+    <button class="btn" onclick="resetStats()" style="flex:1">重置计数</button>
   </div>
 </div>
     </div>
 
     <!-- Page 4: Speed Offset -->
     <div class="page" id="pg-speed">
+<div class="page-title">速度偏移</div>
+<div class="status-triplet">
+  <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-speed-ui">待同步</div></div>
+  <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-speed-nvs">读取中</div></div>
+  <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-speed-run">待检测</div></div>
+</div>
+<div class="card">
+  <div class="card-title">速度偏移模式</div>
+  <div class="card-subtitle">固定百分比 / 自动偏移 / 自定义映射沿用现有固件字段</div>
+  <div class="sel-cards c3" id="speed-strategy-cards" style="margin-bottom:10px">
+    <div class="sel-card" onclick="setSpeedStrategy('fixed')"><div class="sel-lbl">策略</div><div class="sel-name">fixed</div></div>
+    <div class="sel-card active" onclick="setSpeedStrategy('auto')"><div class="sel-lbl">策略</div><div class="sel-name">auto</div></div>
+    <div class="sel-card" onclick="setSpeedStrategy('custom')"><div class="sel-lbl">策略</div><div class="sel-name">custom</div></div>
+  </div>
+  <div class="sel-cards c3" id="profile-cards">
+    <div class="sel-card" onclick="setProfile(0)"><div class="sel-lbl">固定</div><div class="sel-name">Chill</div></div>
+    <div class="sel-card active" onclick="setProfile(1)"><div class="sel-lbl">标准</div><div class="sel-name">Normal</div></div>
+    <div class="sel-card" onclick="setProfile(2)"><div class="sel-lbl">较高</div><div class="sel-name">Hurry</div></div>
+  </div>
+  <div class="mode-note">当前生效偏移：<span id="speed-current">--</span></div>
+</div>
 <!-- HW3 Custom Speed -->
 <div class="card">
-  <div class="card-title">HW3 自定义速度</div>
+  <div class="card-title">HW3 自定义速度 <span class="exp-badge">需实车验证</span></div>
   <div class="setting-row">
     <div>
       <div class="setting-name">启用自定义速度</div>
@@ -584,18 +759,24 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
     </div>
 
-    <!-- Page 5: Bus2 Control -->
+    <!-- Page 5: CAN2 Control -->
     <div class="page" id="pg-bus2">
-<!-- Bus2 Status -->
+<div class="page-title">CAN2 控制 <span class="exp-badge">未验证/实验</span></div>
+<div class="status-triplet">
+  <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-light-ui">待同步</div></div>
+  <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-light-nvs">读取中</div></div>
+  <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-light-run">待检测</div></div>
+</div>
+<!-- CAN2 Status -->
 <div class="stats">
-  <div class="stat"><div class="stat-lbl">Bus2 状态</div><div class="stat-val v-dim" id="b2-status">Offline</div></div>
-  <div class="stat"><div class="stat-lbl">Bus2 RX</div><div class="stat-val v-info" id="b2-rx">0</div></div>
+  <div class="stat"><div class="stat-lbl">CAN2 状态</div><div class="stat-val v-dim" id="b2-status">Offline</div></div>
+  <div class="stat"><div class="stat-lbl">CAN2 RX</div><div class="stat-val v-info" id="b2-rx">0</div></div>
   <div class="stat"><div class="stat-lbl">已发现 ID</div><div class="stat-val v-acc" id="b2-ids">0</div></div>
 </div>
 
-<!-- Bus2 ID Table -->
+<!-- CAN2 ID Table -->
 <div class="card">
-  <div class="card-title">Bus2 CAN ID 列表 <span style="color:var(--tx3);font-size:11px;font-weight:400" id="b2-count">(0)</span></div>
+  <div class="card-title">CAN2 ID 列表 <span style="color:var(--tx3);font-size:11px;font-weight:400" id="b2-count">(0)</span></div>
   <div style="max-height:200px;overflow-y:auto">
     <table class="tbl">
       <thead><tr><th>ID</th><th>DLC</th><th>数据</th><th>计数</th></tr></thead>
@@ -606,11 +787,41 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
 <!-- Stalk Test -->
 <div class="card">
-  <div class="card-title">灯光注入测试</div>
-  <div class="card-subtitle">模拟方向盘拨杆操作</div>
+  <div class="card-title">CAN2 控制</div>
+  <div class="card-subtitle">映射到 /lighting_config，并用 CAN2 stalk_test 执行爆闪序列</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">爆闪开关 <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">启用后按配置执行多次拨杆注入</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="light-enabled-tgl" onchange="saveLightingConfig()">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+  <div class="sel-cards c4" id="light-preset" style="margin-bottom:10px">
+    <div class="sel-card active" onclick="setLightPreset(3)"><div class="sel-lbl">次数</div><div class="sel-name">3</div></div>
+    <div class="sel-card" onclick="setLightPreset(5)"><div class="sel-lbl">次数</div><div class="sel-name">5</div></div>
+    <div class="sel-card" onclick="setLightPreset(7)"><div class="sel-lbl">次数</div><div class="sel-name">7</div></div>
+    <div class="sel-card" onclick="setLightPreset(10)"><div class="sel-lbl">次数</div><div class="sel-name">10</div></div>
+  </div>
+  <div class="sel-cards c3" id="light-frequency" style="margin-bottom:10px">
+    <div class="sel-card" onclick="setLightFrequency('slow')"><div class="sel-lbl">频率</div><div class="sel-name">slow</div></div>
+    <div class="sel-card active" onclick="setLightFrequency('medium')"><div class="sel-lbl">频率</div><div class="sel-name">medium</div></div>
+    <div class="sel-card" onclick="setLightFrequency('fast')"><div class="sel-lbl">频率</div><div class="sel-name">fast</div></div>
+  </div>
+  <div class="sel-cards c3" id="rear-fog-strategy" style="margin-bottom:10px">
+    <div class="sel-card active" onclick="setRearFogStrategy('off')"><div class="sel-lbl">后雾灯</div><div class="sel-name">off</div></div>
+    <div class="sel-card" onclick="setRearFogStrategy('strobe')"><div class="sel-lbl">后雾灯</div><div class="sel-name">strobe</div></div>
+    <div class="sel-card" onclick="setRearFogStrategy('continuous')"><div class="sel-lbl">后雾灯</div><div class="sel-name">continuous <span class="exp-badge">实验</span></div></div>
+  </div>
   <div style="display:flex;gap:8px;margin-bottom:10px">
     <button class="btn btn-outline" onclick="stalkTest('PULL')" style="flex:1">PULL (闪光)</button>
     <button class="btn btn-outline" onclick="stalkTest('PUSH')" style="flex:1">PUSH (远光)</button>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:10px">
+    <button class="btn" onclick="strobeTest('PULL')" style="flex:1">执行爆闪</button>
+    <button class="btn btn-outline" onclick="strobeTest('PUSH')" style="flex:1">远光序列</button>
   </div>
   <div class="setting-row">
     <div class="setting-name">持续时间 (ms)</div>
@@ -627,7 +838,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">Service Mode</div>
-      <div class="setting-desc">启用 0x339 持续注入 Bus2</div>
+      <div class="setting-desc">启用 0x339 持续注入 CAN2</div>
     </div>
     <label class="tgl">
       <input type="checkbox" id="svc-mode-tgl" onchange="toggleServiceMode()">
@@ -639,10 +850,16 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 6: FSD Defense -->
     <div class="page" id="pg-defense">
+<div class="page-title">FSD防御 <span class="exp-badge">部分实验</span></div>
+<div class="status-triplet">
+  <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-defense-ui">待同步</div></div>
+  <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-defense-nvs">读取中</div></div>
+  <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-defense-run">待检测</div></div>
+</div>
 <!-- Slew Toggle -->
 <div class="card">
-  <div class="card-title">偏移速率保护</div>
-  <div class="card-subtitle">防止速度偏移突变被检测</div>
+  <div class="card-title">FSD 防封保护</div>
+  <div class="card-subtitle">保留现有 slew rate 保护接口，扩展为截图同款防御页</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">启用 slew rate 限制</div>
@@ -652,6 +869,34 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <input type="checkbox" id="hw3-slew-tgl" onchange="saveHw3Slew()">
       <div class="tgl-track"></div>
     </label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">仿生方向盘 <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">保存到防御配置，后续接入方向盘仿真逻辑</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">声音警告抑制</div>
+      <div class="setting-desc">映射到 handler isaChimeSuppress</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-sound-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">速度免打扰 <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">保存到防御配置，避免速度策略频繁扰动</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-speed-nd-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">AP/EAP 兼容 <span class="exp-badge">未验证</span></div>
+      <div class="setting-desc">保留 AP/EAP 兼容策略位</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-apeap-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
 </div>
 
@@ -679,6 +924,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 7: OTA Update -->
     <div class="page" id="pg-ota">
+<div class="page-title">OTA升级</div>
 <!-- Version Info -->
 <div class="card">
   <div class="card-title">固件信息</div>
@@ -713,6 +959,17 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 8: Network Settings -->
     <div class="page" id="pg-network">
+<div class="page-title">网络设置</div>
+<div class="status-triplet">
+  <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-net-ui">待同步</div></div>
+  <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-net-nvs">读取中</div></div>
+  <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-net-run">待检测</div></div>
+</div>
+<div class="status-triplet">
+  <div class="status-chip"><div class="lbl">DNS UI 显示状态</div><div class="val" id="st-dns-ui">待同步</div></div>
+  <div class="status-chip"><div class="lbl">DNS NVS 持久化状态</div><div class="val" id="st-dns-nvs">读取中</div></div>
+  <div class="status-chip"><div class="lbl">DNS 实际运行状态</div><div class="val" id="st-dns-run">待检测</div></div>
+</div>
 <!-- WiFi Hotspot -->
 <div class="card">
   <div class="card-title">WiFi 热点</div>
@@ -728,6 +985,28 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="setting-name">WiFi Mode</div>
     <div class="v-acc" id="ap-mode">--</div>
   </div>
+  <div class="setting-row">
+    <div class="setting-name">AP SSID</div>
+    <input class="inp" id="ap-ssid-input" style="width:180px" placeholder="热点名称">
+  </div>
+  <div class="setting-row">
+    <div class="setting-name">AP 密码</div>
+    <input class="inp" type="password" id="ap-pass-input" style="width:180px" placeholder="8-64 位">
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">隐藏热点</div>
+      <div class="setting-desc">保存后重启生效</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="ap-hidden-tgl">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+  <div style="display:flex;gap:6px;margin-top:8px">
+    <button class="btn btn-sm" onclick="saveHotspot(false)">保存热点</button>
+    <button class="btn btn-sm btn-outline" onclick="saveHotspot(true)">保存并重启</button>
+  </div>
 </div>
 
 <!-- WiFi Internet -->
@@ -741,6 +1020,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div style="margin-top:8px;display:flex;gap:6px">
     <button class="btn btn-sm" onclick="scanWifi()">扫描网络</button>
     <button class="btn btn-sm btn-outline" onclick="editWifiSlot(-1)">手动添加</button>
+    <button class="btn btn-sm btn-outline" onclick="testRelayWifi()">测试连接</button>
   </div>
   <div id="wifi-form" style="display:none;margin-top:10px">
     <div class="setting-row"><div class="setting-name">SSID</div><input class="inp" id="wf-ssid" style="width:160px"></div>
@@ -803,13 +1083,14 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
 <!-- DNS Filter Rules -->
 <div class="card">
-  <div class="card-title">DNS 过滤规则</div>
+  <div class="card-title">黑名单 / DNS 过滤规则</div>
+  <div class="card-subtitle">保守模式使用完整 12 条规则，激进模式使用最小 9 条规则</div>
   <div style="margin-bottom:8px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
       <span style="color:var(--err);font-weight:500;font-size:11px">黑名单</span>
       <span style="color:var(--tx3);font-size:10px" id="dns-bl-cnt">0 域名</span>
     </div>
-    <textarea class="inp" id="dns-blacklist" rows="3" placeholder="每行一个域名"></textarea>
+    <textarea class="inp" id="dns-blacklist" rows="6" placeholder="每行一个域名"></textarea>
   </div>
   <div style="margin-bottom:8px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
@@ -834,18 +1115,20 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
   </div>
 </div>
+
     </div>
 
-    <!-- Page 9: CAN Tools -->
+    <!-- Page 10: CAN Tools -->
     <div class="page" id="pg-can">
+<div class="page-title">CAN工具</div>
 <!-- CAN Pin Config -->
 <div class="card">
   <div class="card-title">CAN 引脚配置</div>
-  <div class="card-subtitle">Bus1 TWAI + Bus2 MCP2515 SPI</div>
+  <div class="card-subtitle">CAN1 TWAI + CAN2 MCP2515 SPI</div>
   <div class="diag-grid">
-    <div class="diag-item"><span class="lbl">Bus1 TX</span><span class="v-acc">GPIO 7</span></div>
-    <div class="diag-item"><span class="lbl">Bus1 RX</span><span class="v-acc">GPIO 6</span></div>
-    <div class="diag-item"><span class="lbl">Bus2 CS</span><span class="v-acc" id="can-cs">GPIO 10</span></div>
+    <div class="diag-item"><span class="lbl">CAN1 TX</span><span class="v-acc">GPIO 7</span></div>
+    <div class="diag-item"><span class="lbl">CAN1 RX</span><span class="v-acc">GPIO 6</span></div>
+    <div class="diag-item"><span class="lbl">CAN2 CS</span><span class="v-acc" id="can-cs">GPIO 10</span></div>
     <div class="diag-item"><span class="lbl">SPI SCK</span><span class="v-acc" id="can-sck">GPIO 12</span></div>
     <div class="diag-item"><span class="lbl">SPI MISO</span><span class="v-acc" id="can-miso">GPIO 13</span></div>
     <div class="diag-item"><span class="lbl">SPI MOSI</span><span class="v-acc" id="can-mosi">GPIO 11</span></div>
@@ -956,6 +1239,7 @@ var HW_LABELS = {
 };
 var SP_NAMES = ['Chill','Normal','Hurry'];
 var S = {hw:-1,ci:false,sp:1,spa:true,can:false,ia:false,
+         driveProfile:3,
          hw3OffsetSlew:false,hw3SlewRate:0,hw3CustomSpeed:false,
          hw3CustomTarget:[45,60,75,90,105],
          hw3HighSpeedEnable:false,
@@ -968,10 +1252,26 @@ var S = {hw:-1,ci:false,sp:1,spa:true,can:false,ia:false,
 var lang = 'zh';
 var dark = true;
 var pollTimer = null;
+var pollMs = 1000;
+var pollTick = null;
 var sniffPaused = false;
 var sniffFrames = [];
 var recActive = false;
 var canTab = 'sniffer';
+var lightPreset = 3;
+var lightFrequency = 'medium';
+var rearFogStrategy = 'off';
+var DNS_PROFILES = {
+  conservative: {
+    blacklist: 'api-prd.vn.cloud.tesla.cn\nhermes-x2-api.prd.vn.cloud.tesla.cn\nsignaling.vn.cloud.tesla.cn\nhermes-prd.vn.cloud.tesla.cn\nhermes-stream-prd.vn.cloud.tesla.cn\ntelemetry-prd.vn.cloud.tesla.cn\ntelemetry.tesla.cn\napigateway-x2-trigger.tesla.cn\nfleet-api.prd.cn.vn.cloud.tesla.cn\nfirmware.tesla.cn\nlog.tesla.cn\nvehicle-files.prd.cnn1.vn.cloud.tesla.cn',
+    whitelist: 'connman.vn.cloud.tesla.cn\nnav-prd-maps.tesla.cn\nmaps-cn-prd.go.tesla.services\nmedia-server-me.tesla.cn'
+  },
+  aggressive: {
+    blacklist: 'telemetry.tesla.cn\ntelemetry-prd.vn.cloud.tesla.cn\nhermes-prd.vn.cloud.tesla.cn\nfleet-api.prd.cn.vn.cloud.tesla.cn\nfirmware.tesla.cn\nlog.tesla.cn\nvehicle-files.prd.cnn1.vn.cloud.tesla.cn\nhermes-x2-api.prd.vn.cloud.tesla.cn\nsignaling.vn.cloud.tesla.cn',
+    whitelist: 'connman.vn.cloud.tesla.cn\nnav-prd-maps.tesla.cn\nmaps-cn-prd.go.tesla.services\nmedia-server-me.tesla.cn'
+  }
+};
+var OLD_DNS_BLACKLIST = 'tesla.cn\ntesla.com\nteslamotors.com\ntesla.services';
 
 // ── Utilities ──────────────────────────────────────────────
 function $(id){return document.getElementById(id)}
@@ -980,9 +1280,35 @@ function setHtml(id,html){var e=$(id);if(e)e.innerHTML=html}
 function setCls(id,cls){var e=$(id);if(e)e.className=cls}
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function escAttr(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/</g,'\\x3c').replace(/>/g,'\\x3e')}
-function showToast(msg){var t=$('toast');if(t){t.textContent=msg;t.classList.add('show')}}
-function hideToast(){var t=$('toast');if(t)t.classList.remove('show')}
+function showToast(msg,ok){var t=$('toast');if(t){t.textContent=msg;t.classList.toggle('ok',!!ok);t.classList.add('show')}}
+function hideToast(){var t=$('toast');if(t){t.classList.remove('show');t.classList.remove('ok')}}
 function toHex(n){return '0x'+('0000'+n.toString(16).toUpperCase()).slice(-4)}
+function normLines(s){return String(s||'').split(/\r?\n/).map(function(x){return x.trim().toLowerCase()}).filter(Boolean).join('\n')}
+function countLines(s){return normLines(s).split('\n').filter(Boolean).length}
+function setStatusTriplet(prefix,ui,nvs,run,state){
+  setText('st-'+prefix+'-ui',ui||'--');
+  setText('st-'+prefix+'-nvs',nvs||'--');
+  setText('st-'+prefix+'-run',run||'--');
+  var cls=state==='err'?'s-err':(state==='warn'?'s-warn':'s-ok');
+  ['ui','nvs','run'].forEach(function(part){
+    var el=$('st-'+prefix+'-'+part);
+    if(el)el.className='val '+cls;
+  });
+}
+function hwLabel(hw){return hw>=0&&hw<3?HW_NAMES[hw]:'Auto'}
+function driveLabel(sp,spa){return spa?'Auto':(sp===0?'Chill':(sp===2?'Hurry':'Normal'))}
+function experimentSummary(){
+  var flags=[];
+  var drive=$('drive-current');
+  if(drive&&drive.textContent==='MAX')flags.push('MAX/V14');
+  var light=$('light-enabled-tgl');
+  if(light&&light.checked)flags.push('灯光爆闪');
+  var apeap=$('def-apeap-tgl');
+  if(apeap&&apeap.checked)flags.push('AP/EAP');
+  var bionic=$('def-bionic-tgl');
+  if(bionic&&bionic.checked)flags.push('FSD增强');
+  return flags.length?('实验: '+flags.join('/')):'实验项需实车验证';
+}
 function fmtUp(sec){
   var h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;
   return (h<10?'0':'')+h+':'+(m<10?'0':'')+m+':'+(s<10?'0':'')+s;
@@ -991,10 +1317,10 @@ function fmtUp(sec){
 // ── I18N ───────────────────────────────────────────────────
 var I18N={
   // Sidebar
-  '概览':'Overview','模块配置':'Hardware','FSD 开关':'FSD Switch',
-  '速度偏移':'Speed Offset','Bus2 控制':'Bus2 Control',
-  'FSD 防御':'FSD Defense','OTA 升级':'OTA Update',
-  '网络设置':'Network','CAN 工具':'CAN Tools',
+  '模块配置':'Module','激活模式':'Activation Mode','驾驶模式':'Drive Mode',
+  '速度偏移':'Speed Offset','CAN2控制':'CAN2 Control','FSD防御':'FSD Defense',
+  'OTA升级':'OTA Update',
+  '网络设置':'Network','CAN工具':'CAN Tools',
   // Top bar
   '已连接':'Connected','未连接':'Disconnected','连接丢失':'Connection Lost',
   // Overview
@@ -1021,12 +1347,12 @@ var I18N={
   '速度编码方式':'Speed Encoding','选择 CAN 总线速度编码':'Select CAN speed encoding',
   '默认':'Default','编码 A':'Enc A','编码 B':'Enc B',
   '实时数据':'Realtime Data',
-  // Bus2
-  'Bus2 状态':'Bus2 Status','Bus2 RX':'Bus2 RX','已发现 ID':'Found IDs',
-  'Bus2 CAN ID 列表':'Bus2 CAN IDs',
+  // CAN2
+  'CAN2 状态':'CAN2 Status','CAN2 RX':'CAN2 RX','已发现 ID':'Found IDs',
+  'CAN2 ID 列表':'CAN2 CAN IDs',
   '灯光注入测试':'Lighting Test','模拟方向盘拨杆操作':'Simulate stalk operation',
   '持续时间 (ms)':'Duration (ms)','状态':'Status','空闲':'Idle',
-  '启用 0x339 持续注入 Bus2':'Enable 0x339 continuous Bus2 injection',
+  '启用 0x339 持续注入 CAN2':'Enable 0x339 continuous CAN2 injection',
   // Defense
   '偏移速率保护':'Slew Rate Protection','防止速度偏移突变被检测':'Prevent sudden offset detection',
   '启用 slew rate 限制':'Enable slew rate limit','限制偏移值下降速率':'Limit offset drop rate',
@@ -1066,7 +1392,7 @@ var I18N={
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
 function applyI18n(){
   var navs=document.querySelectorAll('.nav-item');
-  var zhTexts=['概览','模块配置','FSD 开关','速度偏移','Bus2 控制','FSD 防御','OTA 升级','网络设置','CAN 工具'];
+  var zhTexts=['模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','FSD防御','OTA升级','网络设置','CAN工具'];
   for(var i=0;i<navs.length;i++){
     var icon=navs[i].querySelector('.nav-icon');
     var iconHtml=icon?icon.outerHTML:'';
@@ -1087,16 +1413,18 @@ function toggleTheme(){
     r.setProperty('--tx1','#f9fafb');r.setProperty('--tx2','#d1d5db');
     r.setProperty('--tx3','#9ca3af');r.setProperty('--border','#4b5563');
     r.setProperty('--header-bg','#111827');
-    $('theme-btn').textContent='☀';
+    if($('theme-btn'))$('theme-btn').textContent='☀';
+    if($('mobile-theme-btn'))$('mobile-theme-btn').textContent='☀ 白天';
   }else{
-    r.setProperty('--sidebar-bg','#f3f4f6');
-    r.setProperty('--main-bg','#e5e7eb');
+    r.setProperty('--sidebar-bg','#ffffff');
+    r.setProperty('--main-bg','#f4f4f8');
     r.setProperty('--card-bg','#ffffff');
-    r.setProperty('--card-bg-alt','#f9fafb');
-    r.setProperty('--tx1','#111827');r.setProperty('--tx2','#374151');
-    r.setProperty('--tx3','#6b7280');r.setProperty('--border','#d1d5db');
-    r.setProperty('--header-bg','#f3f4f6');
-    $('theme-btn').textContent='🌙';
+    r.setProperty('--card-bg-alt','#f3f4f8');
+    r.setProperty('--tx1','#1f2329');r.setProperty('--tx2','#4b5563');
+    r.setProperty('--tx3','#71717a');r.setProperty('--border','#d8dbe2');
+    r.setProperty('--header-bg','#ffffff');
+    if($('theme-btn'))$('theme-btn').textContent='🌙';
+    if($('mobile-theme-btn'))$('mobile-theme-btn').textContent='🌙 夜间';
   }
 }
 
@@ -1119,8 +1447,12 @@ function showPage(pageId){
   closeSidebar();
   if(typeof updateMobTabs==='function')updateMobTabs(pageId);
   if(pageId==='pg-can')pollCanTab();
-  if(pageId==='pg-bus2')pollBus2();
-  if(pageId==='pg-network'){pollWifiStatus();pollGatewayStatus();loadGatewayDns();}
+  if(pageId==='pg-drive')loadDriveProfile();
+  if(pageId==='pg-bus2')pollCAN2();
+  if(pageId==='pg-bus2')loadLightingConfig();
+  if(pageId==='pg-speed')loadSpeedStrategy();
+  if(pageId==='pg-defense')loadDefenseConfig();
+  if(pageId==='pg-network'){pollWifiStatus();pollGatewayStatus();loadGatewayDns();loadGatewayBlocked();}
 }
 function openSidebar(){$('sidebar').classList.add('open');$('overlay').classList.add('active')}
 function closeSidebar(){$('sidebar').classList.remove('open');$('overlay').classList.remove('active')}
@@ -1140,8 +1472,22 @@ async function postForm(url,data){
   try{
     var body=[];
     for(var k in data)body.push(encodeURIComponent(k)+'='+encodeURIComponent(data[k]));
-    await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.join('&')});
-  }catch(e){}
+    var r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.join('&')});
+    var txt=await r.text();
+    var payload=null;
+    if(txt){
+      try{payload=JSON.parse(txt)}catch(e){}
+    }
+    if(!r.ok){
+      var msg=payload&&(payload.error||payload.msg)?(payload.error||payload.msg):('HTTP '+r.status);
+      throw new Error(msg);
+    }
+    hideToast();
+    return payload||{ok:true,text:txt};
+  }catch(e){
+    showToast((e&&e.message)?e.message:T('请求失败'));
+    throw e;
+  }
 }
 
 // ── Polling ────────────────────────────────────────────────
@@ -1152,7 +1498,7 @@ async function poll(){
     setText('tb-status',T('未连接'));
     return;
   }
-  S.hw=d.hw;S.ci=d.ci;S.sp=d.sp;S.spa=d.spAuto;S.can=d.can;S.ia=d.ia;
+  S.hw=d.hw;S.ci=d.ci;S.sp=d.sp;S.spa=d.spAuto;S.can=d.can;S.ia=d.ia;S.driveProfile=d.driveProfile!==undefined?d.driveProfile:S.driveProfile;
   S.hw3OffsetSlew=d.hw3OffsetSlew;S.hw3SlewRate=d.hw3SlewRate;
   S.hw3CustomSpeed=d.hw3CustomSpeed;
   S.hw3CustomTarget=d.hw3CustomTarget||[45,60,75,90,105];
@@ -1173,21 +1519,61 @@ async function poll(){
   setCls('tb-fsd','topbar-badge '+(d.ia?'badge-ok':'badge-warn'));
   setText('tb-fsd',d.ia?'FSD ON':'FSD OFF');
   setCls('tb-dot-fsd','topbar-dot '+(d.ia?'ok':'warn'));
+  setText('tb-exp',experimentSummary());
   setText('tb-up',fmtUp(d.up||0));
 
   // Overview
   var ovTgl=$('ov-fsd-tgl');
-  if(ovTgl)ovTgl.checked=!!d.ci;
+  if(ovTgl)ovTgl.checked=(S.driveProfile===5);
+  var masterTgl=$('ov-master-tgl');
+  if(masterTgl)masterTgl.checked=!!d.ci;
+  var mFsdTgl=$('m-fsd-tgl');
+  if(mFsdTgl)mFsdTgl.checked=!!d.ci;
+  setCls('ov-v14','stat-val '+(S.driveProfile===5?'v-warn':'v-dim'));
+  setText('ov-v14',S.driveProfile===5?'MAX/V14':'待机');
+  setText('ov-hw',hwLabel(d.hw));
+  setCls('ov-can','stat-val '+(d.can?'v-ok':'v-err'));
+  setText('ov-can',(d.can?'CAN1 Online':'CAN1 Offline')+' / '+($('s-can2')&&$('s-can2').textContent?$('s-can2').textContent:'CAN2 --'));
+  setText('ov-up',fmtUp(d.up||0));
+  setCls('m-can','stat-val '+(d.can?'v-ok':'v-err'));
+  setText('m-can',d.can?'Online':'Offline');
+  setCls('m-can2','stat-val '+(($('s-can2')&&$('s-can2').textContent==='Online')?'v-ok':'v-dim'));
+  setText('m-can2',($('s-can2')&&$('s-can2').textContent)?$('s-can2').textContent:'--');
+  setCls('m-fsd','stat-val '+(d.ci?'v-ok':'v-dim'));
+  setText('m-fsd',d.ci?'ON':'OFF');
+  setText('m-fps',d.fps.toFixed(1)+' Hz');
+  setText('m-rxtx',(d.rx||0)+' / '+(d.tx||0));
+  setText('m-up',fmtUp(d.up||0));
+  setText('m-hw',hwLabel(d.hw));
+  setText('m-drive',driveLabel(d.sp,d.spAuto));
+  setText('m-speed',d.soff!==undefined?d.soff:'--');
+  setText('m-defense',d.hw3OffsetSlew?'ON':'OFF');
+  // Phase 1: OTA + 功耗管理状态
+  setCls('s-vota','stat-val '+(d.vehicleOta?'v-err':'v-ok'));
+  setText('s-vota',d.vehicleOta?'OTA 进行中':'正常');
+  var otaCnt=$('s-vota-cnt');
+  if(otaCnt) fetchJson('/vehicle_ota_status').then(function(o){if(o)setText('s-vota-cnt',o.otaConfirmCount||0)}).catch(function(){});
+  var ashut=$('ov-auto-shutdown');if(ashut)ashut.checked=!!d.autoShutdown;
+  var woff=$('ov-wifi-auto-off');if(woff)woff.checked=!!d.wifiAutoOff;
+  var alertText=[];
+  if(!d.can)alertText.push('CAN 离线');
+  if(d.txerr)alertText.push('TX Err '+d.txerr);
+  if(d.apGate)alertText.push('AP Gate 等待');
+  setText('m-alert',alertText.length?alertText.join(' / '):'暂无异常');
   setCls('s-can','stat-val '+(d.can?'v-ok':'v-err'));
   setText('s-can',d.can?'Online':'Offline');
-  setText('s-rx',d.rx||0);
+  setText('s-rx',(d.rx||0)+'/'+(d.tx||0));
   setText('s-tx',d.tx||0);
   setText('s-fps',d.fps.toFixed(1)+' Hz');
-  setText('s-hw',d.hw>=0&&d.hw<3?HW_NAMES[d.hw]:'Auto');
+  setText('s-hw',hwLabel(d.hw));
   setText('s-soff',d.soff||0);
   // Temp from /system_status is separate; use eflg field as proxy
   setText('s-txerr',d.txerr||0);
   setText('s-fd',d.fd||0);
+  setStatusTriplet('module',d.ci?'FSD ON':'FSD OFF','启动保存: '+(d.ci?'ON':'OFF'),d.can?'CAN Online':'CAN Offline',d.can?'ok':'err');
+  setStatusTriplet('hw',hwLabel(d.hw),'mode_hw: '+hwLabel(d.hw),(d.can?'CAN运行 / ':'CAN离线 / ')+hwLabel(d.hw),d.can?'ok':'warn');
+  setStatusTriplet('speed','偏移 '+(d.soff!==undefined?d.soff:'--'),driveLabel(d.sp,d.spAuto),d.fusedSpeedLimitKph?('Fused '+d.fusedSpeedLimitKph+' kph'):'CAN未给出速度',d.can?'ok':'warn');
+  setStatusTriplet('defense',d.hw3OffsetSlew?'防御 ON':'防御 OFF','slew '+(d.hw3OffsetSlew?'ON':'OFF'),'触发 '+(d.hw3SlewCount||0)+' / offset '+(d.hw3OffsetLast!==undefined?d.hw3OffsetLast:'--'),d.hw3OffsetSlew?'ok':'warn');
 
   // FSD page toggle
   updateFsdToggle(d.ci);
@@ -1204,6 +1590,7 @@ async function poll(){
   // HW page
   updateHwCards(d.hw);
   updateProfileCards(d.sp);
+  updateDriveCards(d.sp,d.spAuto);
 
   // AP restore
   var apR=$('hw-ap-restore');
@@ -1228,11 +1615,12 @@ function updateFsdToggle(ci){
 
 function updateHwCards(hw){
   var cards=$('hw-cards');
-  if(!cards)return;
-  var items=cards.querySelectorAll('.sel-card');
-  var map=[-1,0,1,2];
-  for(var i=0;i<items.length;i++){
-    items[i].classList.toggle('active',map[i]===hw);
+  if(cards){
+    var items=cards.querySelectorAll('.sel-card');
+    var map=[3,0,1,2];
+    for(var i=0;i<items.length;i++){
+      items[i].classList.toggle('active',map[i]===hw);
+    }
   }
 }
 
@@ -1243,6 +1631,35 @@ function updateProfileCards(sp){
   for(var i=0;i<items.length;i++){
     items[i].classList.toggle('active',i===sp);
   }
+  setText('speed-current',sp===0?'Chill':(sp===2?'Hurry':'Normal'));
+}
+
+function updateDriveCards(sp,spa){
+  var cards=$('drive-cards');
+  if(!cards)return;
+  var items=cards.querySelectorAll('.sel-card');
+  var active=spa?'auto':(sp===0?'chill':(sp===2?'hurry':'normal'));
+  updateDriveCardsByMode(active);
+}
+
+function updateDriveCardsByMode(active){
+  var cards=$('drive-cards');
+  if(!cards)return;
+  var items=cards.querySelectorAll('.sel-card');
+  var modes=['auto','sloth','chill','normal','hurry','max'];
+  for(var i=0;i<items.length;i++)items[i].classList.toggle('active',modes[i]===active);
+  var label={auto:'Auto',sloth:'Sloth',chill:'Chill',normal:'Normal',hurry:'Hurry',max:'MAX'}[active]||'Normal';
+  setText('drive-current',label);
+}
+
+async function loadDriveProfile(){
+  var d=await fetchJson('/drive_profile');
+  if(!d)return;
+  var mode=String(d.profile||'Normal').toLowerCase();
+  S.driveProfile=d.value!==undefined?d.value:S.driveProfile;
+  updateDriveCardsByMode(mode);
+  var v14=$('ov-fsd-tgl');if(v14)v14.checked=(mode==='max');
+  setStatusTriplet('drive',mode,mode,mode==='max'?'MAX/V14 需实车验证':'配置已同步',mode==='max'?'warn':'ok');
 }
 
 function updateSpeedPage(d){
@@ -1286,28 +1703,121 @@ function updateDefensePage(d){
   }
 }
 
+async function loadDefenseConfig(){
+  var d=await fetchJson('/defense_config');
+  if(!d)return;
+  var tgl=$('hw3-slew-tgl');
+  if(tgl)tgl.checked=!!d.enabled;
+  var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
+  var sound=$('def-sound-tgl');if(sound)sound.checked=!!d.sound_warning_suppression;
+  var nd=$('def-speed-nd-tgl');if(nd)nd.checked=!!d.speed_no_disturb;
+  var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
+  setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
+  var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
+  var exp=(d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible);
+  setStatusTriplet('defense',d.enabled?'防御 ON':'防御 OFF',
+    'NVS '+(d.enabled?'ON':'OFF')+(exp?' / 含实验项':''),
+    exp?'实验项需实车验证':'等待 /status 运行确认',
+    exp?'warn':(d.enabled?'ok':'warn'));
+  setText('tb-exp',experimentSummary());
+}
+
 // ── FSD Toggle ─────────────────────────────────────────────
 async function toggleFsd(){
   var next=S.ci?0:1;
-  await postForm('/config',{can:next?'1':'0',force:next?'1':'0'});
+  if(next&&!confirm('确认开启 FSD 注入？')){poll();return}
+  try{await postForm('/config',{can:next?'1':'0',force:next?'1':'0'});}
+  catch(e){return}
   S.ci=!!next;
-  var ovTgl=$('ov-fsd-tgl');
-  if(ovTgl)ovTgl.checked=S.ci;
+  var masterTgl=$('ov-master-tgl');
+  if(masterTgl)masterTgl.checked=S.ci;
+  var mFsdTgl=$('m-fsd-tgl');
+  if(mFsdTgl)mFsdTgl.checked=S.ci;
   updateFsdToggle(S.ci);
+  poll();
+}
+
+async function toggleV14Mode(){
+  var t=$('ov-fsd-tgl');
+  var enable=!!(t&&t.checked);
+  if(enable&&!confirm('确认开启 MAX/V14 实验模式？')){if(t)t.checked=false;return}
+  try{await postForm('/drive_profile',{profile:enable?'max':'normal'});}
+  catch(e){if(t)t.checked=!enable;return}
+  S.driveProfile=enable?5:3;
+  updateDriveCardsByMode(enable?'max':'normal');
+  setCls('ov-v14','stat-val '+(enable?'v-warn':'v-dim'));
+  setText('ov-v14',enable?'MAX/V14':'待机');
+  setText('tb-exp',experimentSummary());
+}
+
+async function resetStats(){
+  try{
+    await postForm('/reset_stats',{});
+    showToast(T('已保存')||'OK',true);
+    setTimeout(function(){hideToast();poll()},500);
+  }catch(e){}
+}
+
+async function rebootDevice(){
+  if(!confirm(T('确认重启设备？')||'Reboot device?'))return;
+  try{
+    await postForm('/reboot',{});
+    showToast(T('重启设备')||'Rebooting...');
+  }catch(e){}
 }
 
 // ── HW Selection ───────────────────────────────────────────
 async function setHW(hw){
-  await postForm('/config',{hw:String(hw)});
+  try{await postForm('/mode_hw',{value:String(hw)});}
+  catch(e){return}
   S.hw=hw;
   updateHwCards(hw);
+  setStatusTriplet('hw',hwLabel(hw),'mode_hw: '+hwLabel(hw),'等待 /status 确认','warn');
 }
 
 // ── Profile Selection ──────────────────────────────────────
 async function setProfile(sp){
-  await postForm('/config',{sp:String(sp),spa:'0'});
+  var names=['Chill','Normal','Hurry'];
+  try{await postForm('/drive_profile',{profile:names[sp]||'Normal'});}
+  catch(e){return}
   S.sp=sp;S.spa=false;
   updateProfileCards(sp);
+  updateDriveCards(sp,false);
+}
+
+async function setDriveMode(mode){
+  try{await postForm('/drive_profile',{profile:mode});}
+  catch(e){return}
+  S.spa=mode==='auto';
+  S.sp=(mode==='sloth'||mode==='chill')?0:((mode==='hurry'||mode==='max')?2:1);
+  S.driveProfile={auto:0,sloth:1,chill:2,normal:3,hurry:4,max:5}[mode]||3;
+  updateDriveCardsByMode(mode);
+  updateProfileCards(S.sp);
+  var v14=$('ov-fsd-tgl');if(v14)v14.checked=(mode==='max');
+  setStatusTriplet('drive',mode,mode,mode==='max'?'MAX/V14 需实车验证':'等待 /status 确认',mode==='max'?'warn':'ok');
+}
+
+function updateSpeedStrategyCards(strategy){
+  var cards=$('speed-strategy-cards');
+  if(!cards)return;
+  var items=cards.querySelectorAll('.sel-card');
+  var values=['fixed','auto','custom'];
+  for(var i=0;i<items.length;i++)items[i].classList.toggle('active',values[i]===strategy);
+}
+
+async function loadSpeedStrategy(){
+  var d=await fetchJson('/speed_strategy');
+  if(!d)return;
+  var strategy=d.strategy||'auto';
+  updateSpeedStrategyCards(strategy);
+  setStatusTriplet('speed',strategy,strategy,'等待 /status 速度确认',strategy==='custom'?'warn':'ok');
+}
+
+async function setSpeedStrategy(strategy){
+  updateSpeedStrategyCards(strategy);
+  try{await postForm('/speed_strategy',{strategy:strategy});showToast(T('已保存')||'Saved',true)}
+  catch(e){loadSpeedStrategy()}
+  setStatusTriplet('speed',strategy,strategy,'等待 /status 速度确认',strategy==='custom'?'warn':'ok');
 }
 
 // ── Save Config (generic toggle) ───────────────────────────
@@ -1318,7 +1828,7 @@ async function saveConfig(){
   var bt=$('fsd-boot-tgl');
   if(bt&&bt.checked)data.can='1';
   else if(bt)data.can='0';
-  await postForm('/config',data);
+  try{await postForm('/config',data);}catch(e){}
 }
 
 // ── HW3 Speed Save ─────────────────────────────────────────
@@ -1338,23 +1848,64 @@ async function saveHw3Speed(){
   }
   var enc=$('hw3-enc');
   if(enc)data.hw3WireEncoding=enc.value;
-  await postForm('/config',data);
+  try{await postForm('/config',data);}catch(e){}
 }
 
 // ── HW3 Slew Save ──────────────────────────────────────────
 async function saveHw3Slew(){
-  var tgl=$('hw3-slew-tgl');
-  var data={};
-  if(tgl)data.hw3OffsetSlew=tgl.checked?'1':'0';
-  await postForm('/config',data);
+  saveDefenseConfig();
 }
 
-// ── Bus2 ───────────────────────────────────────────────────
-async function pollBus2(){
+async function saveDefenseConfig(){
+  var tgl=$('hw3-slew-tgl');
+  var bio=$('def-bionic-tgl');
+  var sound=$('def-sound-tgl');
+  var nd=$('def-speed-nd-tgl');
+  var apeap=$('def-apeap-tgl');
+  var data={
+    enabled:tgl&&tgl.checked?'1':'0',
+    bionic_steering:bio&&bio.checked?'1':'0',
+    sound_warning_suppression:sound&&sound.checked?'1':'0',
+    speed_no_disturb:nd&&nd.checked?'1':'0',
+    ap_eap_compatible:apeap&&apeap.checked?'1':'0'
+  };
+  try{await postForm('/defense_config',data);}
+  catch(e){loadDefenseConfig()}
+  loadDefenseConfig();
+}
+
+// ── CAN2 ───────────────────────────────────────────────────
+// Phase 1: 功耗管理 toggle
+async function toggleAutoShutdown(on){
+  await postForm('/power_mgmt','autoShutdown='+on);
+  poll();
+}
+async function toggleWifiAutoOff(on){
+  await postForm('/power_mgmt','wifiAutoOff='+on);
+  poll();
+}
+
+async function pollCAN2(){
   var d=await fetchJson('/bus2_ids');
   if(!d)return;
+  setCls('b2-status','stat-val '+(d.count>0?'v-ok':'v-dim'));
+  setText('b2-status',d.count>0?'Online':'Idle');
+  setText('b2-rx',d.rx_total||0);
   setText('b2-ids',d.count||0);
   setText('b2-count','('+d.count+')');
+  setCls('s-can2','stat-val '+(d.count>0?'v-ok':'v-dim'));
+  setText('s-can2',d.count>0?'Online':'Idle');
+  setCls('m-can2','stat-val '+(d.count>0?'v-ok':'v-dim'));
+  setText('m-can2',d.count>0?'Online':'Idle');
+  var sCan=$('s-can');
+  setText('ov-can',(sCan&&sCan.textContent==='Online'?'CAN1 Online':'CAN1 Offline')+' / '+(d.count>0?'CAN2 Online':'CAN2 Idle'));
+  var svc=$('svc-mode-tgl');
+  if(svc)svc.checked=!!d.service_mode;
+  setStatusTriplet('light',
+    ($('light-enabled-tgl')&&$('light-enabled-tgl').checked)?'爆闪 ON':'爆闪 OFF',
+    '规则 '+(lightPreset||3)+'x '+(lightFrequency||'medium'),
+    (d.count>0?'CAN2 Online':'CAN2 Idle')+' / RX '+(d.rx_total||0),
+    d.count>0?'warn':'warn');
   var rows='';
   if(d.ids){
     for(var i=0;i<d.ids.length;i++){
@@ -1366,25 +1917,114 @@ async function pollBus2(){
   setHtml('b2-rows',rows);
 }
 
-async function stalkTest(mode){
+function setLightPreset(count){
+  lightPreset=count;
+  var cards=$('light-preset');
+  if(cards){
+    var items=cards.querySelectorAll('.sel-card');
+    var values=[3,5,7,10];
+    for(var i=0;i<items.length;i++)items[i].classList.toggle('active',values[i]===count);
+  }
   var dur=$('stalk-dur');
-  var durVal=dur?dur.value:'500';
+  if(dur)dur.value=count>=7?'300':(count>=5?'400':'500');
+  saveLightingConfig();
+}
+
+function updateLightPreset(count){
+  var cards=$('light-preset');
+  if(!cards)return;
+  var items=cards.querySelectorAll('.sel-card');
+  var values=[3,5,7,10];
+  for(var i=0;i<items.length;i++)items[i].classList.toggle('active',values[i]===count);
+}
+
+function updateLightOptionCards(id,active,values){
+  var cards=$(id);
+  if(!cards)return;
+  var items=cards.querySelectorAll('.sel-card');
+  for(var i=0;i<items.length;i++)items[i].classList.toggle('active',values[i]===active);
+}
+
+async function loadLightingConfig(){
+  var d=await fetchJson('/lighting_config');
+  if(!d)return;
+  lightPreset=d.count||3;
+  lightFrequency=d.frequency||'medium';
+  rearFogStrategy=d.rear_fog_strategy||'off';
+  updateLightPreset(lightPreset);
+  updateLightOptionCards('light-frequency',lightFrequency,['slow','medium','fast']);
+  updateLightOptionCards('rear-fog-strategy',rearFogStrategy,['off','strobe','continuous']);
+  var t=$('light-enabled-tgl');if(t)t.checked=!!d.enabled;
+  setStatusTriplet('light',d.enabled?'爆闪 ON':'爆闪 OFF',
+    (d.count||3)+'x '+(d.frequency||'medium')+' / fog '+rearFogStrategy,
+    '等待 CAN2 运行确认',
+    d.enabled?'warn':'ok');
+  setText('tb-exp',experimentSummary());
+}
+
+async function saveLightingConfig(){
+  var t=$('light-enabled-tgl');
+  try{await postForm('/lighting_config',{enabled:t&&t.checked?'1':'0',count:String(lightPreset),frequency:lightFrequency,rear_fog_strategy:rearFogStrategy});}
+  catch(e){}
+  loadLightingConfig();
+}
+
+function setLightFrequency(freq){
+  lightFrequency=freq;
+  updateLightOptionCards('light-frequency',freq,['slow','medium','fast']);
+  saveLightingConfig();
+}
+
+function setRearFogStrategy(strategy){
+  rearFogStrategy=strategy;
+  updateLightOptionCards('rear-fog-strategy',strategy,['off','strobe','continuous']);
+  saveLightingConfig();
+}
+
+function lightDelayMs(){
+  return lightFrequency==='fast'?180:(lightFrequency==='slow'?650:350);
+}
+
+async function strobeTest(mode){
+  if(!confirm('确认执行灯光注入序列？'))return;
+  var t=$('light-enabled-tgl');
+  if(t&&!t.checked){t.checked=true;await saveLightingConfig()}
+  var count=Math.max(1,Math.min(10,lightPreset||3));
+  setText('stalk-status','Strobe 0/'+count);
+  for(var i=0;i<count;i++){
+    await stalkTest(mode,true);
+    setText('stalk-status','Strobe '+(i+1)+'/'+count);
+    if(i<count-1)await new Promise(function(resolve){setTimeout(resolve,lightDelayMs())});
+  }
+  setText('stalk-status',T('空闲')+' ('+count+'x)');
+}
+
+async function stalkTest(mode,skipConfirm){
+  if(!skipConfirm&&!confirm('确认执行灯光注入？'))return;
+  var dur=$('stalk-dur');
+  var durVal=dur?Math.max(100,Math.min(3000,parseInt(dur.value||'500',10)||500)):500;
+  if(dur)dur.value=durVal;
   setText('stalk-status',T('测试中...')||'Testing...');
   try{
-    await fetch('/stalk_test?mode='+(mode==='PULL'?'flash':'highbeam')+'&dur='+durVal);
-    setText('stalk-status',T('空闲'));
-  }catch(e){setText('stalk-status','Error')}
+    var r=await fetch('/stalk_test?mode='+(mode==='PULL'?'flash':'highbeam')+'&dur='+durVal);
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    var res=await r.json();
+    if(!res.ok)throw new Error(res.error||'stalk test failed');
+    setText('stalk-status',T('空闲')+' ('+res.duration_ms+'ms)');
+  }catch(e){setText('stalk-status','Error');showToast((e&&e.message)?e.message:T('请求失败'))}
 }
 
 async function toggleServiceMode(){
   var tgl=$('svc-mode-tgl');
-  await postForm('/service_mode',{on:tgl&&tgl.checked?'1':'0'});
+  try{await postForm('/service_mode',{on:tgl&&tgl.checked?'1':'0'});}
+  catch(e){if(tgl)tgl.checked=!tgl.checked}
 }
 
 // ── OTA Upload ─────────────────────────────────────────────
 async function uploadFirmware(){
   var fileInput=$('ota-file');
   if(!fileInput||!fileInput.files||fileInput.files.length===0)return;
+  if(!confirm('确认上传 OTA 固件？上传完成可能会重启设备。'))return;
   var file=fileInput.files[0];
   var prog=$('ota-progress');
   var bar=$('ota-bar');
@@ -1397,6 +2037,8 @@ async function uploadFirmware(){
   xhr.open('POST','/update',true);
   // Fetch OTA credentials from backend (AP-local only) instead of hardcoding.
   try{var c=await(await fetch('/ota_creds')).json();xhr.setRequestHeader('Authorization','Basic '+btoa(c.u+':'+c.p))}catch(e){}
+  xhr.setRequestHeader('Content-Type','application/octet-stream');
+  xhr.setRequestHeader('X-File-Name',encodeURIComponent(file.name||'firmware.bin'));
 
   xhr.upload.onprogress=function(e){
     if(e.lengthComputable){
@@ -1414,9 +2056,7 @@ async function uploadFirmware(){
     if(btn)btn.disabled=false;
     if(pct)setText('ota-pct','Error');
   };
-  var fd=new FormData();
-  fd.append('file',file);
-  xhr.send(fd);
+  xhr.send(file);
 }
 
 // OTA drag-drop setup
@@ -1457,6 +2097,11 @@ async function pollWifiStatus(){
     else if(d.connecting){st.textContent=T('连接中...')||'Connecting...';st.className='v-warn'}
     else{st.textContent=T('未配置');st.className='v-warn'}
   }
+  setStatusTriplet('net',
+    d.connected?('STA '+d.ssid):(d.connecting?'STA 连接中':'STA 未配置'),
+    '等待热点配置读取',
+    d.connected?('STA '+d.ip):'STA Offline',
+    d.connected?'ok':'warn');
   // Load networks
   var net=await fetchJson('/wifi_networks');
   if(net)renderWifiSlots(net);
@@ -1465,7 +2110,20 @@ async function pollWifiStatus(){
   if(ap){
     setText('ap-ssid',ap.ssid||'--');
     setText('ap-clients',ap.clients||0);
-    setText('ap-mode',ap.mode||'--');
+    setText('ap-mode',ap.mode||((ap.channel_auto?'AP+STA':'AP')+' CH'+(ap.channel||'--')));
+    var apSsid=$('ap-ssid-input');if(apSsid&&!apSsid.value)apSsid.value=ap.ssid||'';
+    var apHidden=$('ap-hidden-tgl');if(apHidden)apHidden.checked=!!ap.hidden;
+    setStatusTriplet('net',
+      (d.connected?('STA '+d.ssid):'STA Offline')+' / AP '+(ap.ssid||'--'),
+      'AP '+(ap.ssid||'--')+(ap.hidden?' hidden':''),
+      (d.connected?('STA '+d.ip):'STA Offline')+' / clients '+(ap.clients||0),
+      d.connected||ap.clients>0?'ok':'warn');
+  }
+  var hc=await fetchJson('/hotspot_config');
+  if(hc){
+    var hs=$('ap-ssid-input');if(hs&&!hs.value)hs.value=hc.ssid||'';
+    var ht=$('ap-hidden-tgl');if(ht)ht.checked=!!hc.hidden;
+    setText('st-net-nvs','AP '+(hc.ssid||'--')+(hc.hidden?' hidden':''));
   }
 }
 
@@ -1511,8 +2169,10 @@ async function saveWifi(){
   var ssid=$('wf-ssid');var pass=$('wf-pass');
   if(!ssid||!ssid.value)return;
   var data={ssid:ssid.value,pass:pass?pass.value:'',idx:String(editingSlot>=0?editingSlot:-1)};
-  await postForm('/wifi_config',data);
+  try{await postForm('/wifi_config',data);}
+  catch(e){return}
   clearWifiForm();
+  setText('wifi-status',T('连接中...')||'Connecting...');
   pollWifiStatus();
 }
 
@@ -1532,14 +2192,46 @@ async function scanWifi(){
   container.innerHTML=html;
 }
 
+async function testRelayWifi(){
+  var ssid=$('wf-ssid');var pass=$('wf-pass');
+  if(!ssid||!ssid.value.trim()){
+    showToast('请输入 SSID');
+    setStatusTriplet('net','测试未发送','NVS 未变更','请输入中转 WiFi SSID','warn');
+    return;
+  }
+  var data={ssid:ssid?ssid.value:'',pass:pass?pass.value:''};
+  try{
+    var r=await postForm('/relay_wifi_test',data);
+    showToast((r&&r.connected)?'WiFi OK':'WiFi test ready',true);
+  }catch(e){}
+}
+
+async function saveHotspot(reboot){
+  if(reboot&&!confirm('确认保存网络配置并重启设备？'))return;
+  var ssid=$('ap-ssid-input');var pass=$('ap-pass-input');var hidden=$('ap-hidden-tgl');
+  if(!ssid||!ssid.value)return;
+  var data={ssid:ssid.value,pass:pass?pass.value:'',hidden:hidden&&hidden.checked?'1':'0',save_reboot:reboot?'1':'0'};
+  try{await postForm('/hotspot_config',data);showToast(reboot?T('重启设备'):T('已保存'),true)}
+  catch(e){}
+}
+
 function pickScanResult(ssid){
   var wf=$('wf-ssid');if(wf)wf.value=ssid;
   var form=$('wifi-form');if(form)form.style.display='block';
   editingSlot=-1;
 }
 
-async function connectWifi(idx){await postForm('/wifi_connect',{idx:String(idx)});pollWifiStatus()}
-async function deleteWifi(idx){await postForm('/wifi_delete',{idx:String(idx)});pollWifiStatus()}
+async function connectWifi(idx){
+  try{await postForm('/wifi_connect',{idx:String(idx)});}
+  catch(e){return}
+  setText('wifi-status',T('连接中...')||'Connecting...');
+  setTimeout(pollWifiStatus,300);
+}
+async function deleteWifi(idx){
+  try{await postForm('/wifi_delete',{idx:String(idx)});}
+  catch(e){return}
+  pollWifiStatus();
+}
 
 // ── Gateway Status ─────────────────────────────────────────
 async function pollGatewayStatus(){
@@ -1556,12 +2248,18 @@ async function pollGatewayStatus(){
   // NAT toggle
   var natTgl=$('gw-nat-tgl');
   if(natTgl)natTgl.checked=!!d.nat;
+  setText('st-dns-run',(d.dns_bind_ok?'DNS OK':'DNS --')+' / NAT '+(d.nat?'ON':'OFF')+' / block '+(d.dns_blocked||0));
+  var dnsRun=$('st-dns-run');if(dnsRun)dnsRun.className='val '+(d.dns_bind_ok?'s-ok':'s-warn');
+  setText('st-net-run',(d.sta_connected?('STA '+d.sta_ip):'STA Offline')+' / clients '+(d.ap_clients||0));
 }
 
 async function saveGateway(){
   var natTgl=$('gw-nat-tgl');
   var perfTgl=$('gw-perf-tgl');
-  if(natTgl)await postForm('/gateway_dns',{enabled:natTgl.checked?'1':'0'});
+  if(natTgl){
+    try{await postForm('/gateway_dns',{enabled:natTgl.checked?'1':'0'});}
+    catch(e){natTgl.checked=!natTgl.checked;return}
+  }
   // Perf mode: reduce polling from 1s to 3s when forwarding
   if(typeof restartPoll==='function')restartPoll(perfTgl&&perfTgl.checked?3000:1000);
   pollGatewayStatus();
@@ -1569,7 +2267,7 @@ async function saveGateway(){
 
 // ── DNS Config ─────────────────────────────────────────────
 async function loadGatewayDns(){
-  var d=await fetchJson('/gateway_dns');
+  var d=await fetchJson('/dns_rules');
   if(!d)return;
   var bl=$('dns-blacklist');if(bl)bl.value=d.blacklist||'';
   var wl=$('dns-whitelist');if(wl)wl.value=d.whitelist||'';
@@ -1577,6 +2275,15 @@ async function loadGatewayDns(){
   setText('dns-wl-cnt',(d.white_count||0)+' '+T('域名'));
   // Upstream DNS mode
   updateDnsUpstreamCards(d.upstream_mode||0);
+  var profile=detectDnsProfile(d.blacklist,d.whitelist);
+  updateDnsProfileCards(profile);
+  var counts=(d.black_count||0)+' 黑 / '+(d.white_count||0)+' 白';
+  setStatusTriplet('dns',profile||'自定义规则',counts,'等待 DNS 运行确认','ok');
+  if(!normLines(d.blacklist)||normLines(d.blacklist)===normLines(OLD_DNS_BLACKLIST)){
+    applyDnsProfile('conservative');
+    updateDnsProfileCards('conservative');
+    setStatusTriplet('dns','保守模式','已自动填入 12 条规则','请点击保存规则写入 NVS','warn');
+  }
   // Custom IP
   var customRow=$('dns-custom-row');
   var customIp=$('dns-custom-ip');
@@ -1607,11 +2314,36 @@ async function setDnsUpstream(val){
 }
 
 async function setDnsProfile(profile){
+  applyDnsProfile(profile);
+  updateDnsProfileCards(profile);
+  try{await saveGatewayDns();showToast(T('已保存')||'Saved',true)}catch(e){}
+}
+
+function updateDnsProfileCards(profile){
   var cards=$('dns-profile');
   if(!cards)return;
   var items=cards.querySelectorAll('.sel-card');
   items[0].classList.toggle('active',profile==='conservative');
   items[1].classList.toggle('active',profile==='aggressive');
+}
+
+function detectDnsProfile(blacklist,whitelist){
+  var b=normLines(blacklist),w=normLines(whitelist);
+  if(b===normLines(DNS_PROFILES.conservative.blacklist)&&w===normLines(DNS_PROFILES.conservative.whitelist))return 'conservative';
+  if(b===normLines(DNS_PROFILES.aggressive.blacklist)&&w===normLines(DNS_PROFILES.aggressive.whitelist))return 'aggressive';
+  return '';
+}
+
+function applyDnsProfile(profile){
+  var p=DNS_PROFILES[profile];
+  if(!p)return;
+  var bl=$('dns-blacklist');
+  var wl=$('dns-whitelist');
+  if(bl)bl.value=p.blacklist;
+  if(wl)wl.value=p.whitelist;
+  setText('dns-bl-cnt',countLines(p.blacklist)+' '+T('域名'));
+  setText('dns-wl-cnt',countLines(p.whitelist)+' '+T('域名'));
+  setStatusTriplet('dns',profile,countLines(p.blacklist)+' 黑 / '+countLines(p.whitelist)+' 白','规则已应用，等待保存','warn');
 }
 
 async function saveGatewayDns(){
@@ -1630,7 +2362,8 @@ async function saveGatewayDns(){
   }
   var customIp=$('dns-custom-ip');
   if(customIp)data.upstream_custom=customIp.value;
-  await postForm('/gateway_dns',data);
+  try{await postForm('/dns_rules',data);}catch(e){return}
+  setStatusTriplet('dns','规则已保存','已写入 NVS','等待 DNS 运行确认','ok');
   loadGatewayDns();
 }
 
@@ -1650,7 +2383,7 @@ async function loadGatewayBlocked(){
 }
 
 async function clearGatewayBlocked(){
-  await postForm('/gateway_blocked_clear',{});
+  try{await postForm('/gateway_blocked_clear',{});}catch(e){return}
   setText('dns-blocked-cnt','0');
 }
 
@@ -1708,13 +2441,13 @@ function toggleSniffPause(){
 
 // Recorder
 async function startRec(){
-  await postForm('/rec_start',{});
+  try{await postForm('/rec_start',{});}catch(e){return}
   recActive=true;
   $('rec-start').disabled=true;$('rec-stop').disabled=false;$('rec-dl').disabled=true;
   setText('rec-status',T('录制中')||'Recording...');
 }
 async function stopRec(){
-  await postForm('/rec_stop',{});
+  try{await postForm('/rec_stop',{});}catch(e){return}
   recActive=false;
   $('rec-start').disabled=false;$('rec-stop').disabled=true;$('rec-dl').disabled=false;
   setText('rec-status',T('已保存')||'Saved');
@@ -1749,7 +2482,10 @@ function updateCanController(d){
 // Debug
 async function toggleCanDebug(){
   var tgl=$('debug-tgl');
-  if(tgl)await postForm('/logging',{eprn:tgl.checked?'1':'0'});
+  if(tgl){
+    try{await postForm('/logging',{eprn:tgl.checked?'1':'0'});}
+    catch(e){tgl.checked=!tgl.checked}
+  }
 }
 
 async function pollLastWrite(){
@@ -1767,7 +2503,7 @@ async function pollLastWrite(){
 async function loadCanPins(){
   var d=await fetchJson('/can_pins');
   if(!d)return;
-  // Bus2 MCP2515 pins from API response, fallback to compile-time defaults
+  // CAN2 MCP2515 pins from API response, fallback to compile-time defaults
   setText('can-cs',d.cs!=null?'GPIO '+d.cs:'GPIO 10');
   setText('can-sck',d.sck!=null?'GPIO '+d.sck:'GPIO 12');
   setText('can-miso',d.miso!=null?'GPIO '+d.miso:'GPIO 13');
@@ -1790,7 +2526,7 @@ async function saveApConfig(){
   var data={};
   if(ssid)data.ssid=ssid.value;
   if(pass)data.pass=pass.value;
-  await postForm('/ap_config',data);
+  try{await postForm('/ap_config',data);}catch(e){}
 }
 
 // ── Init ───────────────────────────────────────────────────
@@ -1851,49 +2587,55 @@ document.addEventListener('DOMContentLoaded',function(){
 
   // Start polling
   poll();
-  var pollMs=1000;
-  function restartPoll(ms){pollMs=ms;if(pollTimer){clearInterval(pollTimer);pollTimer=setInterval(tick,pollMs)}}
-  function tick(){
+  pollTick=function(){
     poll();loadTemp();
     var activePage=document.querySelector('.page.active');
     if(activePage){
       var pid=activePage.id;
       if(pid==='pg-can'){if(canTab==='sniffer'&&!sniffPaused)pollSniffer();else if(canTab==='debug')pollLastWrite()}
-      if(pid==='pg-bus2')pollBus2();
+      if(pid==='pg-bus2')pollCAN2();
     }
-  }
-  pollTimer=setInterval(tick,pollMs);
+  };
+  pollTimer=setInterval(pollTick,pollMs);
 
   // Visibility handling
   document.addEventListener('visibilitychange',function(){
     if(document.hidden){
       if(pollTimer){clearInterval(pollTimer);pollTimer=null}
     }else{
-      if(!pollTimer){poll();pollTimer=setInterval(tick,pollMs)}
+      if(!pollTimer){poll();pollTimer=setInterval(pollTick,pollMs)}
     }
   });
 });
+
+function restartPoll(ms){
+  pollMs=ms;
+  if(pollTimer&&pollTick){
+    clearInterval(pollTimer);
+    pollTimer=setInterval(pollTick,pollMs);
+  }
+}
 </script>
 <!-- Mobile Bottom Tab Bar -->
 <div class="mob-tabs" id="mob-tabs">
-  <div class="mob-tab active" data-page="pg-overview"><div class="mob-icon">📊</div><div>概览</div></div>
-  <div class="mob-tab" data-page="pg-fsd"><div class="mob-icon">⚡</div><div>FSD</div></div>
-  <div class="mob-tab" data-page="pg-bus2"><div class="mob-icon">🔌</div><div>Bus2</div></div>
-  <div class="mob-tab" data-page="pg-network"><div class="mob-icon">📶</div><div>网络</div></div>
+  <div class="mob-tab active" data-page="pg-overview"><div class="mob-icon">▣</div><div>状态</div></div>
+  <div class="mob-tab" data-page="pg-drive"><div class="mob-icon">◉</div><div>模式</div></div>
+  <div class="mob-tab" data-page="pg-speed"><div class="mob-icon">↗</div><div>速度</div></div>
+  <div class="mob-tab" data-page="pg-network"><div class="mob-icon">◎</div><div>网络</div></div>
   <div class="mob-tab" onclick="toggleMobMore()"><div class="mob-icon">···</div><div>更多</div></div>
 </div>
 <!-- Mobile More Menu -->
 <div class="mob-more-panel" id="mob-more">
   <div class="mob-more-close" onclick="toggleMobMore()">✕</div>
-  <div class="mob-more-item" data-page="pg-overview">📊 概览</div>
-  <div class="mob-more-item" data-page="pg-hardware">🔧 模块配置</div>
-  <div class="mob-more-item" data-page="pg-fsd">⚡ FSD 开关</div>
-  <div class="mob-more-item" data-page="pg-speed">🚀 速度偏移</div>
-  <div class="mob-more-item" data-page="pg-bus2">🔌 Bus2 控制</div>
-  <div class="mob-more-item" data-page="pg-defense">🛡 FSD 防御</div>
-  <div class="mob-more-item" data-page="pg-ota">📦 OTA 升级</div>
-  <div class="mob-more-item" data-page="pg-network">📶 网络设置</div>
-  <div class="mob-more-item" data-page="pg-can">🔧 CAN 工具</div>
+  <div class="mob-more-item" data-page="pg-overview">▣ 状态</div>
+  <div class="mob-more-item" data-page="pg-hardware">◇ 激活模式</div>
+  <div class="mob-more-item" data-page="pg-drive">◉ 驾驶模式</div>
+  <div class="mob-more-item" data-page="pg-speed">↗ 速度偏移</div>
+  <div class="mob-more-item" data-page="pg-ota">⇧ OTA升级</div>
+  <div class="mob-more-item" data-page="pg-bus2">✦ CAN2控制</div>
+  <div class="mob-more-item" data-page="pg-network">◎ 网络设置</div>
+  <div class="mob-more-item" data-page="pg-defense">◈ FSD防御</div>
+  <div class="mob-more-item" data-page="pg-can">⌘ CAN工具</div>
 </div>
 </body>
 </html>)HTML";
