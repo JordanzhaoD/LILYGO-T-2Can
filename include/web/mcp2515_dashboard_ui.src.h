@@ -169,6 +169,23 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   letter-spacing: 0.5px; }
 .sel-card .sel-name { font-size: 20px; font-weight: 800; margin-top: 2px; }
 
+/* === Drive Mode Cards (Phase 5A) === */
+.drive-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 8px 0; }
+.drive-card { background: var(--card-bg-alt); border: 2px solid var(--border); border-radius: 12px;
+  padding: 16px 10px; text-align: center; cursor: pointer; transition: all 0.2s; }
+.drive-card:hover { border-color: var(--tx3); transform: translateY(-2px); }
+.drive-card.active { border-color: var(--accent-light); background: rgba(124,58,237,0.18); }
+.drive-card .drive-icon { font-size: 28px; margin-bottom: 6px; }
+.drive-card .drive-name { font-size: 16px; font-weight: 700; color: var(--tx1); }
+.drive-card .drive-desc { font-size: 11px; color: var(--tx3); margin-top: 4px; line-height: 1.3; }
+@media(max-width:768px) {
+  .drive-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .drive-card { padding: 12px 6px; }
+  .drive-card .drive-icon { font-size: 22px; }
+  .drive-card .drive-name { font-size: 14px; }
+  .drive-card .drive-desc { font-size: 10px; }
+}
+
 /* === Setting Row === */
 .setting-row { display: flex; justify-content: space-between; align-items: center;
   padding: 12px 0; border-bottom: 1px solid rgba(75,85,99,0.3); }
@@ -386,6 +403,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA升级</div>
     <div class="nav-item" data-page="pg-network"><span class="nav-icon">◎</span>网络设置</div>
     <div class="nav-item" data-page="pg-can"><span class="nav-icon">⌘</span>CAN工具</div>
+    <div class="nav-item" data-page="pg-shift"><span class="nav-icon">⚙</span>自动换挡</div>
   </div>
   <div class="sidebar-ft">
     <button onclick="toggleLanguage()" id="lang-btn">EN</button>
@@ -527,7 +545,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <div class="card">
 <div class="card-title">设备信息</div>
 <div class="stats">
-  <div class="stat"><div class="stat-lbl">芯片温度</div><div class="stat-val v-dim" id="s-temp">--</div></div>
+  <div class="stat"><div class="stat-lbl">芯片温度</div><div class="stat-val" id="s-temp">--</div></div>
+  <div class="stat"><div class="stat-lbl">固件版本</div><div class="stat-val v-info" id="s-ver">--</div></div>
   <div class="stat"><div class="stat-lbl">TX Errors</div><div class="stat-val v-dim" id="s-txerr">0</div></div>
   <div class="stat"><div class="stat-lbl">跟随距离</div><div class="stat-val v-dim" id="s-fd">--</div></div>
 </div>
@@ -625,14 +644,38 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 <div class="card">
   <div class="card-title">驾驶风格</div>
-  <div class="card-subtitle">映射到 /drive_profile，保留 Auto/Sloth/Chill/Normal/Hurry/MAX 六档</div>
-  <div class="sel-cards c3" id="drive-cards">
-    <div class="sel-card" onclick="setDriveMode('auto')"><div class="sel-lbl">推荐</div><div class="sel-name">Auto</div></div>
-    <div class="sel-card" onclick="setDriveMode('sloth')"><div class="sel-lbl">低速</div><div class="sel-name">Sloth</div></div>
-    <div class="sel-card" onclick="setDriveMode('chill')"><div class="sel-lbl">舒适</div><div class="sel-name">Chill</div></div>
-    <div class="sel-card active" onclick="setDriveMode('normal')"><div class="sel-lbl">标准</div><div class="sel-name">Normal</div></div>
-    <div class="sel-card" onclick="setDriveMode('hurry')"><div class="sel-lbl">积极</div><div class="sel-name">Hurry</div></div>
-    <div class="sel-card" onclick="setDriveMode('max')"><div class="sel-lbl">最大</div><div class="sel-name">MAX <span class="exp-badge">实验</span></div></div>
+  <div class="card-subtitle">选择速度策略映射到 /drive_profile</div>
+  <div class="drive-grid" id="drive-cards">
+    <div class="drive-card" onclick="setDriveMode('auto')">
+      <div class="drive-icon">🤖</div>
+      <div class="drive-name">Auto</div>
+      <div class="drive-desc">系统自动选择最佳模式</div>
+    </div>
+    <div class="drive-card" onclick="setDriveMode('sloth')">
+      <div class="drive-icon">🦥</div>
+      <div class="drive-name">Sloth</div>
+      <div class="drive-desc">最低速档，适合拥堵跟车</div>
+    </div>
+    <div class="drive-card" onclick="setDriveMode('chill')">
+      <div class="drive-icon">😌</div>
+      <div class="drive-name">Chill</div>
+      <div class="drive-desc">舒适驾驶，温和加速</div>
+    </div>
+    <div class="drive-card active" onclick="setDriveMode('normal')">
+      <div class="drive-icon">🎯</div>
+      <div class="drive-name">Normal</div>
+      <div class="drive-desc">标准模式，均衡性能</div>
+    </div>
+    <div class="drive-card" onclick="setDriveMode('hurry')">
+      <div class="drive-icon">🚀</div>
+      <div class="drive-name">Hurry</div>
+      <div class="drive-desc">积极提速，更快响应</div>
+    </div>
+    <div class="drive-card" onclick="setDriveMode('max')">
+      <div class="drive-icon">⚡</div>
+      <div class="drive-name">MAX</div>
+      <div class="drive-desc">最大性能 <span class="exp-badge">实验</span></div>
+    </div>
   </div>
   <div class="mode-note">当前选择：<span id="drive-current">Normal</span></div>
 </div>
@@ -1292,6 +1335,43 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
     </div>
 
+    <!-- Page 10: Auto Shift (Phase 5A placeholder) -->
+    <div class="page" id="pg-shift">
+<div class="page-title">自动换挡 <span class="exp-badge">储备功能</span></div>
+<div class="card" style="border-color:#f59e0b;background:rgba(245,158,11,0.06)">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+    <span style="font-size:24px">⚠️</span>
+    <div>
+      <div style="font-weight:700;color:#f59e0b">储备功能未开放</div>
+      <div class="setting-desc">此页面为只读遥测展示，自动换挡功能将在后续版本中实装</div>
+    </div>
+  </div>
+</div>
+<div class="card">
+  <div class="card-title">车辆遥测（只读）</div>
+  <div class="card-subtitle">从 CAN 总线实时读取的车辆状态数据</div>
+  <div class="diag-grid">
+    <div class="diag-item"><span class="lbl">当前车速</span><span class="v-acc" id="shift-speed">-- km/h</span></div>
+    <div class="diag-item"><span class="lbl">当前挡位</span><span class="v-info" id="shift-gear">--</span></div>
+    <div class="diag-item"><span class="lbl">刹车状态</span><span class="v-dim" id="shift-brake">--</span></div>
+    <div class="diag-item"><span class="lbl">FSD 状态</span><span class="v-dim" id="shift-fsd">--</span></div>
+  </div>
+</div>
+<div class="card">
+  <div class="card-title">换挡策略预览</div>
+  <div class="setting-desc" style="margin-bottom:8px">基于车速和驾驶模式的自动换挡策略（示意图）</div>
+  <table class="tbl">
+    <thead><tr><th>车速区间</th><th>Auto</th><th>Chill</th><th>Hurry</th></tr></thead>
+    <tbody>
+      <tr><td>0-30 km/h</td><td>标准</td><td>舒适</td><td>积极</td></tr>
+      <tr><td>30-60 km/h</td><td>标准</td><td>舒适</td><td>积极</td></tr>
+      <tr><td>60-90 km/h</td><td>标准</td><td>标准</td><td>积极</td></tr>
+      <tr><td>90+ km/h</td><td>经济</td><td>标准</td><td>最大</td></tr>
+    </tbody>
+  </table>
+</div>
+    </div>
+
   </div>
 </div>
 
@@ -1707,7 +1787,6 @@ function updateProfileCards(sp){
 function updateDriveCards(sp,spa){
   var cards=$('drive-cards');
   if(!cards)return;
-  var items=cards.querySelectorAll('.sel-card');
   var active=spa?'auto':(sp===0?'chill':(sp===2?'hurry':'normal'));
   updateDriveCardsByMode(active);
 }
@@ -1715,7 +1794,7 @@ function updateDriveCards(sp,spa){
 function updateDriveCardsByMode(active){
   var cards=$('drive-cards');
   if(!cards)return;
-  var items=cards.querySelectorAll('.sel-card');
+  var items=cards.querySelectorAll('.drive-card');
   var modes=['auto','sloth','chill','normal','hurry','max'];
   for(var i=0;i<items.length;i++)items[i].classList.toggle('active',modes[i]===active);
   var label={auto:'Auto',sloth:'Sloth',chill:'Chill',normal:'Normal',hurry:'Hurry',max:'MAX'}[active]||'Normal';
@@ -2685,7 +2764,17 @@ async function loadCanPins(){
 async function loadTemp(){
   var d=await fetchJson('/system_status');
   if(d&&d.temp_c!==undefined&&d.temp_c!==null){
-    setText('s-temp',d.temp_c+'°C');
+    var t=parseFloat(d.temp_c);
+    var el=document.getElementById('s-temp');
+    if(el){
+      el.textContent=t+'°C';
+      // Color coding: >60°C red, >45°C orange, else green
+      el.className='stat-val '+(t>60?'v-warn':(t>45?'v-info':'v-acc'));
+    }
+  }
+  // Firmware version display
+  if(d&&d.version){
+    setText('s-ver',d.version);
   }
 }
 
@@ -2807,6 +2896,7 @@ function restartPoll(ms){
   <div class="mob-more-item" data-page="pg-network">◎ 网络设置</div>
   <div class="mob-more-item" data-page="pg-defense">◈ FSD防御</div>
   <div class="mob-more-item" data-page="pg-can">⌘ CAN工具</div>
+  <div class="mob-more-item" data-page="pg-shift">⚙ 自动换挡</div>
 </div>
 </body>
 </html>)HTML";

@@ -5389,6 +5389,10 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     dashApplyNvsRuntimeSwitches();
     dashApplyFilters();
 
+    // Phase 3: Bionic PRNG uses default seed 0xDEADBEEF.
+    // For better entropy, re-seed from millis() at boot via appActiveHandler.
+    // NagHandler::bionic.init() is called on first handleMessage via needsNewPhase.
+
     // Phase 1: 初始化功耗管理
     dashPowerMgmtInit();
 

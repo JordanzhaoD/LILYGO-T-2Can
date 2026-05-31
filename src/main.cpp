@@ -291,6 +291,33 @@ static void t2canStalkInjectTick()
     dashRecordCanFrame(f, 'T');
 #endif
 }
+
+// ── Fog light tick (Phase 4: 0x273 on bus B) ──────────────────
+static uint32_t g_fogLastMs = 0;
+
+static void t2canFogLightTick()
+{
+    if (!appDriverSecondary || !dashFogCtrl.isActive())
+        return;
+    uint32_t now = millis();
+    uint32_t elapsed = g_fogLastMs ? (now - g_fogLastMs) : 0;
+    g_fogLastMs = now;
+    uint8_t data[8];
+    if (dashFogCtrl.tick((int)elapsed, apRestoreState.gearRaw, data))
+    {
+        CanFrame f = {};
+        f.id = 0x273;
+        f.dlc = 8;
+        memcpy(f.data, data, 8);
+        f.bus = T2CAN_SECONDARY_BUS;
+        appDriverSecondary->send(f);
+#ifdef ESP32_DASHBOARD
+        dashRecordCanFrame(f, 'T');
+#endif
+    }
+    if (!dashFogCtrl.isActive())
+        g_fogLastMs = 0;
+}
 #endif
 
 static void app_main_setup()
@@ -391,6 +418,7 @@ static void app_can_task(void *)
         t2canDrainSecondary();
         t2canServiceModeTick();
         t2canStalkInjectTick();
+        t2canFogLightTick();
 #endif
         appCanTaskLoops = appCanTaskLoops + 1;
         if (!processed)
