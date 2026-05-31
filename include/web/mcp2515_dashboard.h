@@ -45,6 +45,7 @@
 #include "dash_ota_guard.h"
 #include "dash_power_mgmt.h"
 #include "dash_fog_light.h"
+#include "dash_wheel_dnd.h"
 
 #ifndef DASH_SSID
 #error "Define -DDASH_SSID in build_flags (e.g. -DDASH_SSID=\\\"ADUnlock-1234\\\")"
@@ -138,6 +139,7 @@ static uint8_t dashLightingCount = 3;
 static uint8_t dashLightingFrequency = 1; // 0=slow, 1=medium, 2=fast
 static uint8_t dashRearFogStrategy = 0;   // 0=off, 1=strobe, 2=continuous
 static DashFogLight dashFogCtrl;           // Phase 4 fog light controller instance
+static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
 static bool dashSpeedNoDisturb = false;
@@ -2402,6 +2404,9 @@ static void handleDefenseConfig()
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
         server.hasArg("dnd_speed"))
     {
+        bool prevDefenseEnabled = dashDefenseEnabled;
+        bool prevDndVolume = dashDndVolume;
+        bool prevDndSpeed = dashDndSpeed;
         if (server.hasArg("enabled"))
             dashDefenseEnabled = dashArgTruthy(server.arg("enabled"));
         if (server.hasArg("bionic_steering"))
@@ -2427,6 +2432,10 @@ static void handleDefenseConfig()
             dashSpeedNoDisturb = dashArgTruthy(server.arg("speed_no_disturb"));
         if (server.hasArg("dnd_speed"))
             dashDndSpeed = dashArgTruthy(server.arg("dnd_speed"));
+        if (dashDefenseEnabled && dashDndVolume && (!prevDefenseEnabled || !prevDndVolume))
+            dashWheelDndCtrl.startVolume();
+        if (dashDefenseEnabled && dashDndSpeed && (!prevDefenseEnabled || !prevDndSpeed))
+            dashWheelDndCtrl.startSpeed();
         if (server.hasArg("ap_eap_compatible"))
             dashApEapCompatible = dashArgTruthy(server.arg("ap_eap_compatible"));
         hw3OffsetSlew = dashDefenseEnabled;

@@ -318,6 +318,26 @@ static void t2canFogLightTick()
     if (!dashFogCtrl.isActive())
         g_fogLastMs = 0;
 }
+
+// ── Wheel DND tick (Phase 3: 0x3C2 on bus B) ──────────────────
+static void t2canWheelDndTick()
+{
+    if (!appDriverSecondary || !dashWheelDndCtrl.isRunning())
+        return;
+    uint8_t data[8];
+    if (dashWheelDndCtrl.tick((int)millis(), data))
+    {
+        CanFrame f = {};
+        f.id = 0x3C2;
+        f.dlc = 8;
+        memcpy(f.data, data, 8);
+        f.bus = T2CAN_SECONDARY_BUS;
+        appDriverSecondary->send(f);
+#ifdef ESP32_DASHBOARD
+        dashRecordCanFrame(f, 'T');
+#endif
+    }
+}
 #endif
 
 static void app_main_setup()
@@ -419,6 +439,7 @@ static void app_can_task(void *)
         t2canServiceModeTick();
         t2canStalkInjectTick();
         t2canFogLightTick();
+        t2canWheelDndTick();
 #endif
         appCanTaskLoops = appCanTaskLoops + 1;
         if (!processed)

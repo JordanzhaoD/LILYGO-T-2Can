@@ -8,6 +8,7 @@ UI_SRC = ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h"
 UI_GEN = ROOT / "include" / "web" / "mcp2515_dashboard_ui.h"
 DASH = ROOT / "include" / "web" / "mcp2515_dashboard.h"
 HANDLERS = ROOT / "include" / "handlers.h"
+MAIN = ROOT / "src" / "main.cpp"
 
 
 class DashboardApiContractTests(unittest.TestCase):
@@ -17,6 +18,7 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.ui_gen = UI_GEN.read_text(encoding="utf-8")
         cls.dash = DASH.read_text(encoding="utf-8")
         cls.handlers = HANDLERS.read_text(encoding="utf-8")
+        cls.main = MAIN.read_text(encoding="utf-8")
 
     def test_destructive_buttons_use_post_helpers(self) -> None:
         self.assertIn('onclick="resetStats()"', self.ui)
@@ -431,6 +433,30 @@ class DashboardApiContractTests(unittest.TestCase):
         dnd = (ROOT / "include" / "dash_wheel_dnd.h").read_text(encoding="utf-8")
         self.assertIn("0xC2u + 0x03u", dnd)  # CAN ID 0x3C2 bytes
         self.assertIn("outData[7]", dnd)
+
+    def test_phase3_wheel_dnd_is_runtime_wired(self) -> None:
+        """Wheel DND must be instantiated, started by API, and ticked from CAN task."""
+        self.assertIn('#include "dash_wheel_dnd.h"', self.dash)
+        self.assertIn("static DashWheelDND dashWheelDndCtrl;", self.dash)
+        defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(defense)
+        body = defense.group(0)
+        self.assertIn("dashWheelDndCtrl.startVolume()", body)
+        self.assertIn("dashWheelDndCtrl.startSpeed()", body)
+        self.assertIn("static void t2canWheelDndTick()", self.main)
+        self.assertIn("dashWheelDndCtrl.tick((int)millis(), data)", self.main)
+        self.assertIn("f.id = 0x3C2;", self.main)
+        can_task = re.search(r"static void app_can_task\(void \*\).*?appCanTaskLoops", self.main, re.S)
+        self.assertIsNotNone(can_task)
+        self.assertIn("t2canWheelDndTick();", can_task.group(0))
+
+    def test_phase3_wheel_dnd_only_starts_when_defense_enabled(self) -> None:
+        """DND switches should not inject frames unless the defense system is enabled."""
+        defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(defense)
+        body = defense.group(0)
+        self.assertIn("dashDefenseEnabled && dashDndVolume && (!prevDefenseEnabled || !prevDndVolume)", body)
+        self.assertIn("dashDefenseEnabled && dashDndSpeed && (!prevDefenseEnabled || !prevDndSpeed)", body)
 
     def test_phase3_naghandler_bionic_branch(self) -> None:
         """NagHandler must branch on bionicSteering with fallback."""
