@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [4.0.2] - 2026-05-31
+
+### Added
+- LILYGO T-2CAN dual-bus firmware is now included in CI/release workflows as `firmware-lilygo-t2can-dual.bin`.
+- Auto-shift placeholder page now displays read-only gear-assist telemetry from `/gear_assist_status`.
+
+### Changed
+- FSD/CAN injection safety now gates handler-level injection through the OTA guard and keeps LILYGO release builds injection-off on boot.
+- HW3 speed-offset SNA/NONE handling now preserves incoming mux-2 payload and clears offset telemetry.
+- Fog/strobe control now sends a final OFF frame from the CAN task when stopped or when gear is unsafe/stale.
+- Wheel DND settings are persisted and re-arm once when the defense gate opens.
+
+### Fixed
+- Power-management partial updates preserve omitted settings and use configurable wake pin selection.
+- Bionic steering status/re-enable path now reads and resets the active handler state.
+- Dashboard drive cards preserve Auto/Sloth/MAX state instead of collapsing to legacy speed profiles.
+- Chip temperature display uses the red error style above 60°C.
+
 ## [3.0.4-beta.1] - 2026-05-28
 
 ### Changed (Breaking)

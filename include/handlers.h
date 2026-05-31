@@ -98,6 +98,7 @@ struct CarManagerBase
         }
         if (!changed) return false;
 
+        if (checkAD && !checkAD()) return true;
         CanFrame out = frame;
         for (int i = 0; i < 8; i++) out.data[i] = banShieldSnapshot[mux][i];
         banShieldBlocks++;
@@ -235,6 +236,8 @@ struct CarManagerBase
     virtual void handleMessage(CanFrame &frame, CanDriver &driver) = 0;
     virtual const uint32_t *filterIds() const = 0;
     virtual uint8_t filterIdCount() const = 0;
+    virtual bool bionicDisabled() const { return false; }
+    virtual void resetBionic(uint32_t seed) { (void)seed; }
     virtual ~CarManagerBase() = default;
 };
 
@@ -244,10 +247,10 @@ struct LegacyHandler : public CarManagerBase
     {
         // 1080 added for UI_driverAssistAnonDebugParams visionSpeedSlider override.
         // 920 added for auto hardware detection (GTW_carConfig).
-        static constexpr uint32_t ids[] = {69, 280, 390, 760, 920, 921, 1006, 1080};
+        static constexpr uint32_t ids[] = {69, 280, 390, 760, 920, 921, 1006, 1080, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 8; }
+    uint8_t filterIdCount() const override { return 9; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -278,6 +281,7 @@ struct LegacyHandler : public CarManagerBase
         if (frame.id == 760)
         {
             if ((int)legacyOffset == 0) return;
+            if (checkAD && !checkAD()) return;
             if (frame.dlc < 6) return;
             uint8_t raw = (uint8_t)((int)legacyOffset + 30);
             frame.data[5] = (frame.data[5] & 0xC0) | (raw & 0x3F);
@@ -291,6 +295,7 @@ struct LegacyHandler : public CarManagerBase
         {
             if (frame.dlc < 8) return;
             if (!overrideSpeedLimit) return;
+            if (checkAD && !checkAD()) return;
             frame.data[7] = (frame.data[7] & 0x80) | 100;
             framesSent++;
             driver.send(frame);
@@ -358,10 +363,10 @@ struct HW3Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {280, 390, 920, 921, 1016, 1021, 2047};
+        static constexpr uint32_t ids[] = {280, 390, 920, 921, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 7; }
+    uint8_t filterIdCount() const override { return 8; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -462,7 +467,7 @@ struct HW3Handler : public CarManagerBase
             }
 
             // ── Mux 1: Nag suppression ─────────────────────────────────────
-            if (index == 1 && (bool)fsdTriggered)
+            if (index == 1 && (bool)fsdTriggered && (!checkAD || checkAD()))
             {
                 setBit(frame, 19, false);
                 driver.send(frame);
@@ -470,11 +475,19 @@ struct HW3Handler : public CarManagerBase
             }
 
             // ── Mux 2: Speed offset (three-layer + slew limiter) ──────────
-            if (index == 2 && (bool)fsdTriggered)
+            if (index == 2 && (bool)fsdTriggered && (!checkAD || checkAD()))
             {
-                uint8_t activeRaw = dashComputeHw3OffsetRaw((int)speedOffset);
+                uint8_t stockRaw = static_cast<uint8_t>(((frame.data[0] >> 6) & 0x03) |
+                                                        ((frame.data[1] & 0x3F) << 2));
                 uint8_t fl = fusedSpeedLimitRaw;
+                int computeInput = (fl == 0 || fl == 31) ? (int)stockRaw : (int)speedOffset;
+                uint8_t activeRaw = dashComputeHw3OffsetRaw(computeInput);
 
+                if (fl == 0 || fl == 31)
+                {
+                    hw3OffsetTargetRaw = 0;
+                    return;
+                }
                 hw3OffsetTargetRaw = activeRaw;
 
                 // Slew limiter: damps downward drops only
@@ -560,15 +573,24 @@ struct NagHandler : public CarManagerBase
     Shared<uint32_t> nagEchoCount{0};
     DashBionicSteer bionic;  // bionic steering state
 
+    bool bionicDisabled() const override { return bionic.isDisabled(); }
+    void resetBionic(uint32_t seed) override
+    {
+        bionic.reset();
+        bionic.init(seed ? seed : 0xDEADBEEF);
+    }
+
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {880, 920};
+        static constexpr uint32_t ids[] = {880, 920, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 2; }
+    uint8_t filterIdCount() const override { return 3; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
+        if (onFrame)
+            onFrame(frame);
         updateHwDetectedFrom920(frame);
         if (frame.id != 880 || frame.dlc < 8)
             return;
@@ -576,6 +598,8 @@ struct NagHandler : public CarManagerBase
         uint8_t handsOn = (frame.data[4] >> 6) & 0x03;
 
         if (!nagKillerActive || !nagKillerRuntime || handsOn != 0)
+            return;
+        if (checkAD && !checkAD())
             return;
 
         // Read bionic steering mode from handler member (set by dashboard)
@@ -673,10 +697,10 @@ struct HW4Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {280, 390, 920, 921, 1016, 1021, 2047};
+        static constexpr uint32_t ids[] = {280, 390, 920, 921, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 7; }
+    uint8_t filterIdCount() const override { return 8; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -693,7 +717,7 @@ struct HW4Handler : public CarManagerBase
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
             // ISA chime suppress — runtime gate (all build modes)
-            if ((bool)isaChimeSuppress && frame.dlc >= 8)
+            if ((bool)isaChimeSuppress && frame.dlc >= 8 && (!checkAD || checkAD()))
             {
                 frame.data[1] |= 0x20;
                 frame.data[7] = computeVehicleChecksum(frame);
@@ -787,7 +811,7 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 1: Nag suppression + FSD ready signal
-            if (index == 1 && (bool)fsdTriggered)
+            if (index == 1 && (bool)fsdTriggered && (!checkAD || checkAD()))
             {
                 setBit(frame, 19, false);
                 setBit(frame, 47, true);
@@ -797,7 +821,7 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 2: Speed profile + offset
-            if (index == 2 && (bool)fsdTriggered)
+            if (index == 2 && (bool)fsdTriggered && (!checkAD || checkAD()))
             {
                 // Speed profile
                 frame.data[7] &= static_cast<uint8_t>(~(0x07 << 4));

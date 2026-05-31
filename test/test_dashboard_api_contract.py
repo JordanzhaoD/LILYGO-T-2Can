@@ -9,6 +9,10 @@ UI_GEN = ROOT / "include" / "web" / "mcp2515_dashboard_ui.h"
 DASH = ROOT / "include" / "web" / "mcp2515_dashboard.h"
 HANDLERS = ROOT / "include" / "handlers.h"
 MAIN = ROOT / "src" / "main.cpp"
+VERSION = ROOT / "VERSION"
+CHANGELOG = ROOT / "CHANGELOG.md"
+TESTS_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
+RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 
 
 class DashboardApiContractTests(unittest.TestCase):
@@ -19,6 +23,10 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.dash = DASH.read_text(encoding="utf-8")
         cls.handlers = HANDLERS.read_text(encoding="utf-8")
         cls.main = MAIN.read_text(encoding="utf-8")
+        cls.version = VERSION.read_text(encoding="utf-8")
+        cls.changelog = CHANGELOG.read_text(encoding="utf-8")
+        cls.tests_workflow = TESTS_WORKFLOW.read_text(encoding="utf-8")
+        cls.release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
 
     def test_destructive_buttons_use_post_helpers(self) -> None:
         self.assertIn('onclick="resetStats()"', self.ui)
@@ -101,6 +109,12 @@ class DashboardApiContractTests(unittest.TestCase):
             ("POST", "/logging"),
             ("POST", "/ap_config"),
             ("POST", "/update"),
+            ("GET", "/update_check"),
+            ("POST", "/update_install"),
+            ("GET", "/update_beta"),
+            ("POST", "/update_beta"),
+            ("GET", "/auto_update"),
+            ("POST", "/auto_update"),
             # Phase 1 新增端点
             ("GET", "/power_mgmt"),
             ("POST", "/power_mgmt"),
@@ -178,6 +192,35 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(field=field):
                 # In C++ source, JSON keys appear as \"fieldName\":
                 self.assertIn(f',\\"{field}\\"', self.dash)
+
+    def test_phase1_ota_guard_gates_handler_injection(self) -> None:
+        """Handler-level AD checks must include OTA guard, not only dashboard post-processing."""
+        check_ad = re.search(r"static bool dashCheckADEnabled\(\).*?\n\}", self.dash, re.S)
+        self.assertIsNotNone(check_ad)
+        self.assertIn("canActive", check_ad.group(0))
+        self.assertIn("dashOtaGuardAllowInjection()", check_ad.group(0))
+        self.assertIn("CAN_ID_OTA_STATUS", self.handlers)
+
+    def test_phase1_power_mgmt_partial_update_and_wake_pin(self) -> None:
+        """Power management updates should preserve omitted fields and use configurable wake pin."""
+        power = re.search(r"static void handlePowerMgmt\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(power)
+        body = power.group(0)
+        self.assertIn('if (server.hasArg("autoShutdown"))', body)
+        self.assertIn('if (server.hasArg("wifiAutoOff"))', body)
+        self.assertIn("dashArgTruthy(server.arg(\"autoShutdown\"))", body)
+        self.assertIn("dashArgTruthy(server.arg(\"wifiAutoOff\"))", body)
+        power_header = (ROOT / "include" / "dash_power_mgmt.h").read_text(encoding="utf-8")
+        self.assertIn("DASH_WAKE_PIN", power_header)
+        self.assertIn("TWAI_RX_PIN", power_header)
+        self.assertIn("dashPowerMgmtConfigureWake()", power_header)
+
+    def test_phase1_lilygo_release_defaults_injection_off(self) -> None:
+        """LILYGO release profile should require explicit dashboard arming after boot."""
+        platformio = (ROOT / "platformio.ini").read_text(encoding="utf-8")
+        lilygo = re.search(r"\[env:lilygo_t2can_dual\].*?(?=\n\[env:|\Z)", platformio, re.S)
+        self.assertIsNotNone(lilygo)
+        self.assertNotIn("DASH_INJECTION_ON_BOOT", lilygo.group(0))
 
 
     def test_phase2_speed_strategy_syncs_new_offset_mode(self) -> None:
@@ -446,6 +489,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("static void t2canWheelDndTick()", self.main)
         self.assertIn("dashWheelDndCtrl.tick((int)millis(), data)", self.main)
         self.assertIn("f.id = 0x3C2;", self.main)
+        self.assertIn("gateOpen = canActive && dashDefenseEnabled", self.main)
+        self.assertIn("g_wheelDndGateWasOpen", self.main)
+        self.assertIn("dashWheelDndCtrl.reset()", self.main)
         can_task = re.search(r"static void app_can_task\(void \*\).*?appCanTaskLoops", self.main, re.S)
         self.assertIsNotNone(can_task)
         self.assertIn("t2canWheelDndTick();", can_task.group(0))
@@ -495,6 +541,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('\\"bionic_disabled\\"', body)
         self.assertIn('\\"dnd_volume\\"', body)
         self.assertIn('\\"dnd_speed\\"', body)
+        self.assertIn("bionicDisabled()", body)
         self.assertIn("dashBionicDisabled", body)
 
     def test_phase3_defense_ui_has_7_toggles(self) -> None:
@@ -546,6 +593,20 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(base)
         body = base.group(0)
         self.assertIn("Shared<bool> bionicSteering{false}", body)
+        self.assertIn("bionicDisabled()", body)
+        self.assertIn("resetBionic", body)
+
+    def test_phase3_defense_runtime_and_persistence_are_wired(self) -> None:
+        """Defense config should drive Nag/Bionic runtime and persist DND switches."""
+        self.assertIn("nagKillerRuntime = canActive && dashDefenseEnabled", self.dash)
+        self.assertIn("dashHandler->resetBionic((uint32_t)millis())", self.dash)
+        self.assertIn('prefs.putBool("def_dv", dashDndVolume);', self.dash)
+        self.assertIn('prefs.putBool("def_ds", dashDndSpeed);', self.dash)
+        self.assertIn('dashDndVolume = prefs.getBool("def_dv", false);', self.dash)
+        self.assertIn('dashDndSpeed = prefs.getBool("def_ds", false);', self.dash)
+        status = re.search(r"static void handleStatus\(\).*?server\.send", self.dash, re.S)
+        self.assertIsNotNone(status)
+        self.assertIn("dashDndSpeed ? \"true\" : \"false\"", status.group(0))
 
     def test_phase3_handlers_includes_bionic_header(self) -> None:
         """handlers.h must include dash_bionic_steer.h."""
@@ -599,7 +660,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("dashFogCtrl.startStrobe(", body)
         self.assertIn("dashFogCtrl.startF1Pilot(", body)
         self.assertIn("dashFogCtrl.startContinuous(", body)
-        self.assertIn("dashFogCtrl.stop()", body)
+        self.assertIn("dashFogOffRequested = true", body)
         self.assertIn("dashFogCtrl.isActive()", body)
 
     def test_phase4_strobe_cont_is_functional(self) -> None:
@@ -609,7 +670,7 @@ class DashboardApiContractTests(unittest.TestCase):
         body = strobe_handler.group(0)
         self.assertNotIn('"Phase 4"', body)
         self.assertIn("dashFogCtrl.startStrobe(0", body)  # 0 = infinite
-        self.assertIn("dashFogCtrl.stop()", body)
+        self.assertIn("dashFogOffRequested = true", body)
 
     def test_phase4_status_strobeCont_is_dynamic(self) -> None:
         """/status strobeCont must reflect actual state, not hardcoded."""
@@ -625,6 +686,16 @@ class DashboardApiContractTests(unittest.TestCase):
     def test_phase4_dashboard_has_fog_ctrl_instance(self) -> None:
         """Dashboard must have a DashFogLight instance."""
         self.assertIn("DashFogLight dashFogCtrl", self.dash)
+        self.assertIn("dashFogOffRequested", self.dash)
+
+    def test_phase4_fog_fail_off_is_owned_by_can_task(self) -> None:
+        """CAN task should send a final OFF frame on stop or unsafe/stale gear."""
+        self.assertIn("gearMs", self.dash)
+        self.assertIn("t2canGearIsFreshDrive", self.main)
+        self.assertIn("kT2canGearFreshMs", self.main)
+        self.assertIn("dashFogCtrl.buildFrame(offData, false)", self.main)
+        self.assertIn("CAN_ID_REAR_FOG_LIGHT", self.main)
+        self.assertIn("dashFogOffRequested || (active && !safeGear)", self.main)
 
     def test_phase4_ui_has_strobe_page(self) -> None:
         """UI must have pg-strobe page with all controls."""
@@ -658,6 +729,83 @@ class DashboardApiContractTests(unittest.TestCase):
     def test_phase4_js_navigates_to_strobe_page(self) -> None:
         """Page navigation must load strobe page data."""
         self.assertIn("pageId==='pg-strobe')loadStrobePage()", self.ui)
+
+    def test_phase5a_shift_page_loads_read_only_telemetry(self) -> None:
+        """Auto-shift placeholder page must populate its read-only telemetry fields."""
+        self.assertIn("/gear_assist_status", self.ui)
+        self.assertIn("async function pollGearAssist()", self.ui)
+        self.assertIn("pageId==='pg-shift')pollGearAssist()", self.ui)
+        self.assertIn("pid==='pg-shift')pollGearAssist()", self.ui)
+        for token in ["shift-speed", "shift-gear", "shift-brake", "shift-fsd"]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_phase5a_drive_profile_preserves_six_modes(self) -> None:
+        """Drive UI should use driveProfile/driveProfileName so Auto/Sloth/MAX survive polling."""
+        self.assertIn("function driveModeFromProfile(profile,name)", self.ui)
+        self.assertIn("driveModeFromProfile(d.driveProfile,d.driveProfileName)", self.ui)
+        self.assertIn("driveMap[mode]!==undefined?driveMap[mode]:3", self.ui)
+        self.assertNotIn("[mode]||3", self.ui)
+
+    def test_phase5a_temperature_uses_error_style_above_60c(self) -> None:
+        """Temperature >60°C should be red/error, not warning/yellow."""
+        self.assertIn("t>60?'v-err'", self.ui)
+        self.assertNotIn("t>60?'v-warn'", self.ui)
+
+    def test_batch_c_release_ota_ui_is_wired(self) -> None:
+        """OTA page must expose the GitHub release update flow already provided by backend APIs."""
+        for token in [
+            "Release 在线更新",
+            "id=\"rel-check-btn\"",
+            "id=\"rel-install-btn\"",
+            "async function loadOtaReleaseState()",
+            "async function checkReleaseUpdate()",
+            "async function installReleaseUpdate()",
+            "async function toggleUpdateBeta()",
+            "async function toggleAutoUpdate()",
+            "fetch('/update_check')",
+            "postForm('/update_install'",
+            "postForm('/update_beta'",
+            "postForm('/auto_update'",
+            "pageId==='pg-ota'",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_batch_c_release_ota_backend_matches_lilygo_asset(self) -> None:
+        """LILYGO builds must check the fork release and look for the LILYGO-specific artifact."""
+        self.assertIn('#define DASH_GITHUB_REPO "JordanzhaoD/LILYGO-T-2Can"', self.dash)
+        self.assertIn("static const char *GITHUB_REPO = DASH_GITHUB_REPO;", self.dash)
+        self.assertIn("#if defined(DRIVER_T2CAN_DUAL)", self.dash)
+        self.assertIn('return "firmware-lilygo-t2can-dual.bin";', self.dash)
+        self.assertIn('server.on("/update_beta", HTTP_GET, handleUpdateBeta);', self.dash)
+
+    def test_batch_c_sidebar_i18n_and_version_display_are_stable(self) -> None:
+        """New UI pages must not break nav translations, and overview version should use /system_status firmware."""
+        self.assertIn("'灯光特技':'Light Show'", self.ui)
+        self.assertIn("'自动换挡':'Auto Shift'", self.ui)
+        self.assertIn("'模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','灯光特技','FSD防御','OTA升级','网络设置','CAN工具','自动换挡'", self.ui)
+        self.assertIn("d&&(d.firmware||d.version)", self.ui)
+        self.assertIn("setText('s-ver',d.firmware||d.version);", self.ui)
+
+    def test_batch_c_profile_helper_supports_lilygo_dual_driver(self) -> None:
+        """CI profile generation must understand the LILYGO dual-CAN driver."""
+        helper = (ROOT / "scripts" / "platformio_set_profile.py").read_text(encoding="utf-8")
+        profile_example = (ROOT / "platformio_profile.example.h").read_text(encoding="utf-8")
+        self.assertIn('"DRIVER_T2CAN_DUAL"', helper)
+        self.assertIn("#define DRIVER_T2CAN_DUAL", profile_example)
+        self.assertIn("#define HW4", profile_example)
+        self.assertIn("--driver DRIVER_T2CAN_DUAL", self.tests_workflow)
+        self.assertIn("--driver DRIVER_T2CAN_DUAL", self.release_workflow)
+
+    def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
+        """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
+        self.assertEqual("4.0.2", self.version.strip())
+        self.assertIn("## [4.0.2] - 2026-05-31", self.changelog)
+        self.assertIn("lilygo_t2can_dual", self.tests_workflow)
+        self.assertIn("lilygo_t2can_dual", self.release_workflow)
+        self.assertIn("firmware-lilygo-t2can-dual", self.release_workflow)
+        self.assertIn("release-assets/firmware-lilygo-t2can-dual.bin", self.release_workflow)
 
 
 if __name__ == "__main__":

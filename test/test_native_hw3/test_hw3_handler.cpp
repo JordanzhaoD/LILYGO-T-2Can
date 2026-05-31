@@ -97,6 +97,7 @@ void test_hw3_AD_enabled_only_set_on_mux0()
     TEST_ASSERT_TRUE(handler.ADEnabled);
 
     mock.reset();
+    fusedSpeedLimitRaw = 8;
     CanFrame f2 = {.id = 1021};
     f2.data[0] = 0x02; // mux 2
     f2.data[4] = 0x00; // AD bit not set in this frame
@@ -306,7 +307,7 @@ void test_hw3_fsdTriggered_set_on_mux0()
 
 void test_hw3_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(7, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(8, handler.filterIdCount());
 }
 
 void test_hw3_filter_ids_values()
@@ -319,6 +320,7 @@ void test_hw3_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(1016, ids[4]);
     TEST_ASSERT_EQUAL_UINT32(1021, ids[5]);
     TEST_ASSERT_EQUAL_UINT32(2047, ids[6]);
+    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[7]);
 }
 
 // --- Ban Shield ---
@@ -389,20 +391,27 @@ static void resetSpeedGlobals()
     hw3OffsetLastRaw = 0;
     hw3OffsetLastSentMs = 0;
     hw3OffsetSlewCount = 0;
+    offsetMode = 1;
+    manualOffsetPct = 0;
+    customPct[0] = 30; customPct[1] = 20;
+    customPct[2] = 10; customPct[3] = 10;
+    smoothedOffset = 0.0f;
+    actualOffset = 0.0f;
 }
 
 // Test: custom target lookup at 30 kph bucket (first bucket)
 void test_hw3_mux2_custom_target_lookup()
 {
     resetSpeedGlobals();
-    hw3CustomSpeed = true;
-    // fusedLimitRaw = 8 → 40 kph, which falls in bucket [40,50), index 1 → 60 kph
+    offsetMode = 2;
+    dashSyncLegacyShims();
+    // fusedLimitRaw = 8 → 40 kph, zone <=50 uses +30% → 52 kph
     uint16_t target = dashComputeHw3CustomTargetKph(40);
-    TEST_ASSERT_EQUAL_UINT16(60, target);
+    TEST_ASSERT_EQUAL_UINT16(52, target);
 
-    // 70 kph → bucket [70,80), index 4 → 105 kph target
+    // 70 kph → zone <=70 uses +20% → 84 kph
     target = dashComputeHw3CustomTargetKph(70);
-    TEST_ASSERT_EQUAL_UINT16(105, target);
+    TEST_ASSERT_EQUAL_UINT16(84, target);
 
     // Below 30 kph → 0 (no override)
     target = dashComputeHw3CustomTargetKph(25);
@@ -418,7 +427,7 @@ void test_hw3_mux2_auto_target_below_60()
 {
     resetSpeedGlobals();
     uint8_t t = dashComputeHw3AutoTargetKph(30);
-    TEST_ASSERT_EQUAL_UINT8(64, t); // kHw3AutoTargetBelow60Kph
+    TEST_ASSERT_EQUAL_UINT8(45, t); // +50%, 30 → 45
 }
 
 // Test: auto speed target exactly 60 kph
@@ -426,7 +435,7 @@ void test_hw3_mux2_auto_target_at_60()
 {
     resetSpeedGlobals();
     uint8_t t = dashComputeHw3AutoTargetKph(60);
-    TEST_ASSERT_EQUAL_UINT8(100, t); // kHw3AutoTargetAt60Kph
+    TEST_ASSERT_EQUAL_UINT8(90, t); // +50%, cap 90
 }
 
 // Test: auto speed target between 64 and 80 (visible < 80)
@@ -434,7 +443,7 @@ void test_hw3_mux2_auto_target_visible_80()
 {
     resetSpeedGlobals();
     uint8_t t = dashComputeHw3AutoTargetKph(70);
-    TEST_ASSERT_EQUAL_UINT8(85, t); // kHw3AutoTargetForVisible80Kph
+    TEST_ASSERT_EQUAL_UINT8(91, t); // +30%, 70 → 91
 }
 
 // Test: high-speed percent encoding via PCT4 (default encoding)
@@ -487,6 +496,35 @@ void test_hw3_mux2_wire_format_encoding()
     uint8_t rawOut = (uint8_t)(((mock.sent[0].data[1] & 0x3F) << 2) | ((mock.sent[0].data[0] >> 6) & 0x03));
     // Should be non-zero (custom speed active with a valid offset)
     TEST_ASSERT_TRUE(rawOut > 0);
+}
+
+// Test: SNA/NONE speed-limit values preserve incoming mux-2 raw and do not inject
+void test_hw3_mux2_sna_none_pass_through_without_send()
+{
+    for (uint8_t invalidLimit : {static_cast<uint8_t>(0), static_cast<uint8_t>(31)})
+    {
+        resetSpeedGlobals();
+        fusedSpeedLimitRaw = invalidLimit;
+        actualOffset = 12.0f;
+        smoothedOffset = 12.0f;
+
+        CanFrame f0 = {.id = 1021};
+        f0.data[0] = 0x00;
+        f0.data[4] = 0x40;
+        handler.handleMessage(f0, mock);
+        mock.reset();
+
+        uint8_t stockRaw = 0xA5;
+        CanFrame f2 = {.id = 1021};
+        f2.data[0] = static_cast<uint8_t>(0x02 | ((stockRaw & 0x03) << 6));
+        f2.data[1] = static_cast<uint8_t>((stockRaw >> 2) & 0x3F);
+        handler.handleMessage(f2, mock);
+
+        TEST_ASSERT_EQUAL(0, mock.sent.size());
+        TEST_ASSERT_EQUAL_UINT8(0, hw3OffsetTargetRaw);
+        TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, actualOffset);
+        TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, smoothedOffset);
+    }
 }
 
 // Test: mux 2 sends nothing when fsdTriggered is false
@@ -594,6 +632,7 @@ int main()
     RUN_TEST(test_hw3_mux2_auto_target_visible_80);
     RUN_TEST(test_hw3_mux2_high_speed_pct_encode);
     RUN_TEST(test_hw3_mux2_wire_format_encoding);
+    RUN_TEST(test_hw3_mux2_sna_none_pass_through_without_send);
     RUN_TEST(test_hw3_mux2_no_offset_when_fsd_not_triggered);
     RUN_TEST(test_hw3_mux2_slew_limiter_clamps_drop);
     RUN_TEST(test_hw3_mux2_clamp_functions);

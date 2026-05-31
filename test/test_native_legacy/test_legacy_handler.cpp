@@ -212,7 +212,7 @@ void test_legacy_ignores_unrelated_can_id()
 
 void test_legacy_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(8, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(9, handler.filterIdCount());
 }
 
 void test_legacy_filter_ids_values()
@@ -226,6 +226,7 @@ void test_legacy_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(921, ids[5]);
     TEST_ASSERT_EQUAL_UINT32(1006, ids[6]);
     TEST_ASSERT_EQUAL_UINT32(1080, ids[7]);
+    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[8]);
 }
 
 int main()

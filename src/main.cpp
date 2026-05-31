@@ -294,35 +294,81 @@ static void t2canStalkInjectTick()
 
 // ── Fog light tick (Phase 4: 0x273 on bus B) ──────────────────
 static uint32_t g_fogLastMs = 0;
+static constexpr uint32_t kT2canGearFreshMs = 500;
+
+static void t2canSendFogFrame(const uint8_t data[8])
+{
+    CanFrame f = {};
+    f.id = CAN_ID_REAR_FOG_LIGHT;
+    f.dlc = 8;
+    memcpy(f.data, data, 8);
+    f.bus = T2CAN_SECONDARY_BUS;
+    appDriverSecondary->send(f);
+#ifdef ESP32_DASHBOARD
+    dashRecordCanFrame(f, 'T');
+#endif
+}
+
+static bool t2canGearIsFreshDrive(uint32_t now)
+{
+    return apRestoreState.gearSeen && apRestoreState.gearRaw == 4 &&
+           (now - apRestoreState.gearMs) <= kT2canGearFreshMs;
+}
 
 static void t2canFogLightTick()
 {
-    if (!appDriverSecondary || !dashFogCtrl.isActive())
+    if (!appDriverSecondary)
         return;
     uint32_t now = millis();
+    bool active = dashFogCtrl.isActive();
+    bool safeGear = t2canGearIsFreshDrive(now);
+
+    if (dashFogOffRequested || (active && !safeGear))
+    {
+        uint8_t offData[8];
+        dashFogCtrl.buildFrame(offData, false);
+        t2canSendFogFrame(offData);
+        dashFogCtrl.stop();
+        dashFogOffRequested = false;
+        g_fogLastMs = 0;
+        return;
+    }
+
+    if (!active)
+        return;
+
     uint32_t elapsed = g_fogLastMs ? (now - g_fogLastMs) : 0;
     g_fogLastMs = now;
     uint8_t data[8];
     if (dashFogCtrl.tick((int)elapsed, apRestoreState.gearRaw, data))
-    {
-        CanFrame f = {};
-        f.id = 0x273;
-        f.dlc = 8;
-        memcpy(f.data, data, 8);
-        f.bus = T2CAN_SECONDARY_BUS;
-        appDriverSecondary->send(f);
-#ifdef ESP32_DASHBOARD
-        dashRecordCanFrame(f, 'T');
-#endif
-    }
+        t2canSendFogFrame(data);
     if (!dashFogCtrl.isActive())
         g_fogLastMs = 0;
 }
 
 // ── Wheel DND tick (Phase 3: 0x3C2 on bus B) ──────────────────
+static bool g_wheelDndGateWasOpen = false;
+
 static void t2canWheelDndTick()
 {
-    if (!appDriverSecondary || !dashWheelDndCtrl.isRunning())
+    if (!appDriverSecondary)
+        return;
+    bool gateOpen = canActive && dashDefenseEnabled && (dashDndVolume || dashDndSpeed);
+    if (!gateOpen)
+    {
+        dashWheelDndCtrl.reset();
+        g_wheelDndGateWasOpen = false;
+        return;
+    }
+    if (!g_wheelDndGateWasOpen)
+    {
+        if (dashDndVolume)
+            dashWheelDndCtrl.startVolume();
+        if (dashDndSpeed)
+            dashWheelDndCtrl.startSpeed();
+        g_wheelDndGateWasOpen = true;
+    }
+    if (!dashWheelDndCtrl.isRunning())
         return;
     uint8_t data[8];
     if (dashWheelDndCtrl.tick((int)millis(), data))

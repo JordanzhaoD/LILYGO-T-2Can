@@ -183,8 +183,11 @@ inline uint8_t dashEncodeHw3OffsetFromPct(int pct, uint8_t flKph) {
 inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
 {
     uint8_t fl = fusedSpeedLimitRaw;
-    if (fl == 0 || fl == 31) // SNA / NONE: pass through stock raw.
+    if (fl == 0 || fl == 31) { // SNA / NONE: pass through current mux-2 raw and clear telemetry.
+        actualOffset = 0.0f;
+        smoothedOffset = 0.0f;
         return static_cast<uint8_t>(std::max(std::min(stockOffsetRaw, 255), 0));
+    }
     float flKph = static_cast<float>(fl) * 5.0f;
 
     // Compute offset with 50ms timestep (main loop ~20Hz)
@@ -391,8 +394,10 @@ inline uint16_t dashComputeHw3CustomTargetKph(uint8_t flKph)
 inline uint8_t dashComputeHw3OffsetRaw(int stockOffsetRaw)
 {
     uint8_t fl = fusedSpeedLimitRaw;
-    if (fl == 0 || fl == 31) // SNA / NONE: pass through stock raw.
+    if (fl == 0 || fl == 31) { // SNA / NONE: pass through current mux-2 raw and clear telemetry.
+        actualOffset = 0.0f;
         return static_cast<uint8_t>(std::max(std::min(stockOffsetRaw, 255), 0));
+    }
     uint16_t flKph = static_cast<uint16_t>(fl) * 5;
 
     int desiredOffsetKph = stockOffsetRaw;

@@ -631,6 +631,16 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="tgl-track"></div>
     </label>
   </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">AP 注入门控</div>
+      <div class="setting-desc">要求 Parked/AP/Summon 状态后才允许注入</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="ap-gate-tgl" onchange="saveApGate()">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
 </div>
     </div>
 
@@ -1049,6 +1059,37 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 
+<!-- Release Update -->
+<div class="card">
+  <div class="card-title">Release 在线更新 <span class="exp-badge">Batch C</span></div>
+  <div class="card-subtitle">从 GitHub Release 检查与安装匹配当前硬件的 OTA 固件</div>
+  <div class="diag-grid">
+    <div class="diag-item"><span class="lbl">当前版本</span><span class="v-acc" id="rel-current">--</span></div>
+    <div class="diag-item"><span class="lbl">最新版本</span><span class="v-info" id="rel-latest">--</span></div>
+    <div class="diag-item"><span class="lbl">固件文件</span><span class="v-dim" id="rel-artifact">--</span></div>
+    <div class="diag-item"><span class="lbl">更新状态</span><span class="v-dim" id="rel-status">未检查</span></div>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">Beta 通道</div>
+      <div class="setting-desc">检查最新 prerelease，默认关闭</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="rel-beta-tgl" onchange="toggleUpdateBeta()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">开机自动更新</div>
+      <div class="setting-desc">联网后自动检查并安装新版本，建议测试稳定后再启用</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="rel-auto-tgl" onchange="toggleAutoUpdate()"><div class="tgl-track"></div></label>
+  </div>
+  <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+    <button class="btn btn-sm" id="rel-check-btn" onclick="checkReleaseUpdate()">检查更新</button>
+    <button class="btn btn-sm btn-outline" id="rel-install-btn" onclick="installReleaseUpdate()" disabled>安装更新</button>
+  </div>
+  <div class="setting-desc" id="rel-msg" style="margin-top:8px">请先连接 WiFi 后检查 GitHub Release。</div>
+</div>
+
 <!-- Upload Area -->
 <div class="card">
   <div class="card-title">固件上传</div>
@@ -1058,8 +1099,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div style="color:var(--tx3);font-size:11px">支持 .bin 格式，拖放或点击选择</div>
   </div>
   <input type="file" id="ota-file" accept=".bin" style="display:none" onchange="uploadFirmware()">
-  <div style="margin-top:10px">
-    <button class="btn" id="ota-btn" onclick="uploadFirmware()" style="width:100%">开始上传</button>
+  <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+    <button class="btn" id="ota-btn" onclick="uploadFirmware()" style="flex:1">开始上传</button>
+    <button class="btn btn-outline" id="ota-reset-btn" onclick="resetOtaCredentials()" style="flex:1">重置凭据缓存</button>
   </div>
   <div id="ota-progress" style="display:none;margin-top:8px">
     <div style="background:var(--card-bg-alt);border-radius:4px;height:8px;overflow:hidden">
@@ -1468,9 +1510,9 @@ function fmtUp(sec){
 var I18N={
   // Sidebar
   '模块配置':'Module','激活模式':'Activation Mode','驾驶模式':'Drive Mode',
-  '速度偏移':'Speed Offset','CAN2控制':'CAN2 Control','FSD防御':'FSD Defense',
-  'OTA升级':'OTA Update',
-  '网络设置':'Network','CAN工具':'CAN Tools',
+  '速度偏移':'Speed Offset','CAN2控制':'CAN2 Control','灯光特技':'Light Show',
+  'FSD防御':'FSD Defense','OTA升级':'OTA Update',
+  '网络设置':'Network','CAN工具':'CAN Tools','自动换挡':'Auto Shift',
   // Top bar
   '已连接':'Connected','未连接':'Disconnected','连接丢失':'Connection Lost',
   // Overview
@@ -1512,7 +1554,9 @@ var I18N={
   '保护未启用':'Protection OFF','保护已启用':'Protection ON',
   // OTA
   '固件信息':'Firmware Info','版本':'Version','构建时间':'Build Time',
-  'Flash 占用':'Flash Used',
+  'Flash 占用':'Flash Used','Release 在线更新':'Release Online Update',
+  '当前版本':'Current','最新版本':'Latest','固件文件':'Artifact','更新状态':'Update Status',
+  'Beta 通道':'Beta Channel','开机自动更新':'Auto-update on boot','检查更新':'Check Update','安装更新':'Install Update',
   '固件上传':'Firmware Upload','选择固件文件':'Select firmware',
   '支持 .bin 格式，拖放或点击选择':'.bin files, drag-drop or click',
   '开始上传':'Start Upload','上传中...':'Uploading...',
@@ -1542,7 +1586,7 @@ var I18N={
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
 function applyI18n(){
   var navs=document.querySelectorAll('.nav-item');
-  var zhTexts=['模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','FSD防御','OTA升级','网络设置','CAN工具'];
+  var zhTexts=['模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','灯光特技','FSD防御','OTA升级','网络设置','CAN工具','自动换挡'];
   for(var i=0;i<navs.length;i++){
     var icon=navs[i].querySelector('.nav-icon');
     var iconHtml=icon?icon.outerHTML:'';
@@ -1603,6 +1647,8 @@ function showPage(pageId){
   if(pageId==='pg-strobe')loadStrobePage();
   if(pageId==='pg-speed')loadSpeedStrategy();
   if(pageId==='pg-defense')loadDefenseConfig();
+  if(pageId==='pg-shift')pollGearAssist();
+  if(pageId==='pg-ota'){loadFirmwareInfo();loadOtaReleaseState();}
   if(pageId==='pg-network'){pollWifiStatus();pollGatewayStatus();loadGatewayDns();loadGatewayBlocked();}
 }
 function openSidebar(){$('sidebar').classList.add('open');$('overlay').classList.add('active')}
@@ -1696,7 +1742,7 @@ async function poll(){
   setText('m-rxtx',(d.rx||0)+' / '+(d.tx||0));
   setText('m-up',fmtUp(d.up||0));
   setText('m-hw',hwLabel(d.hw));
-  setText('m-drive',driveLabel(d.sp,d.spAuto));
+  setText('m-drive',driveModeLabel(driveModeFromProfile(d.driveProfile,d.driveProfileName)));
   setText('m-speed',d.soff!==undefined?d.soff:'--');
   setText('m-defense',d.hw3OffsetSlew?'ON':'OFF');
   // Phase 1: OTA + 功耗管理状态
@@ -1741,11 +1787,12 @@ async function poll(){
   // HW page
   updateHwCards(d.hw);
   updateProfileCards(d.sp);
-  updateDriveCards(d.sp,d.spAuto);
+  updateDriveCards(d.sp,d.spAuto,d.driveProfile,d.driveProfileName);
 
-  // AP restore
+  // AP restore / injection gate
   var apR=$('hw-ap-restore');
   if(apR)apR.checked=!!d.apAutoRestore;
+  updateApGateControl(d);
 
   // Speed page
   updateSpeedPage(d);
@@ -1784,10 +1831,19 @@ function updateProfileCards(sp){
   }
 }
 
-function updateDriveCards(sp,spa){
+function driveModeFromProfile(profile,name){
+  var modes=['auto','sloth','chill','normal','hurry','max'];
+  if(profile!==undefined&&profile!==null&&profile>=0&&profile<modes.length)return modes[profile];
+  var n=String(name||'').toLowerCase();
+  return modes.indexOf(n)>=0?n:'normal';
+}
+function driveModeLabel(mode){
+  return {auto:'Auto',sloth:'Sloth',chill:'Chill',normal:'Normal',hurry:'Hurry',max:'MAX'}[mode]||'Normal';
+}
+function updateDriveCards(sp,spa,profile,profileName){
   var cards=$('drive-cards');
   if(!cards)return;
-  var active=spa?'auto':(sp===0?'chill':(sp===2?'hurry':'normal'));
+  var active=(profile!==undefined&&profile!==null)?driveModeFromProfile(profile,profileName):(spa?'auto':(sp===0?'chill':(sp===2?'hurry':'normal')));
   updateDriveCardsByMode(active);
 }
 
@@ -1797,8 +1853,7 @@ function updateDriveCardsByMode(active){
   var items=cards.querySelectorAll('.drive-card');
   var modes=['auto','sloth','chill','normal','hurry','max'];
   for(var i=0;i<items.length;i++)items[i].classList.toggle('active',modes[i]===active);
-  var label={auto:'Auto',sloth:'Sloth',chill:'Chill',normal:'Normal',hurry:'Hurry',max:'MAX'}[active]||'Normal';
-  setText('drive-current',label);
+  setText('drive-current',driveModeLabel(active));
 }
 
 async function loadDriveProfile(){
@@ -1969,7 +2024,8 @@ async function setDriveMode(mode){
   catch(e){return}
   S.spa=mode==='auto';
   S.sp=(mode==='sloth'||mode==='chill')?0:((mode==='hurry'||mode==='max')?2:1);
-  S.driveProfile={auto:0,sloth:1,chill:2,normal:3,hurry:4,max:5}[mode]||3;
+  var driveMap={auto:0,sloth:1,chill:2,normal:3,hurry:4,max:5};
+  S.driveProfile=driveMap[mode]!==undefined?driveMap[mode]:3;
   updateDriveCardsByMode(mode);
   updateProfileCards(S.sp);
   var v14=$('ov-fsd-tgl');if(v14)v14.checked=(mode==='max');
@@ -2045,6 +2101,15 @@ async function saveConfig(){
   if(bt&&bt.checked)data.can='1';
   else if(bt)data.can='0';
   try{await postForm('/config',data);}catch(e){}
+}
+function updateApGateControl(d){
+  var gate=$('ap-gate-tgl');
+  if(gate&&d)gate.checked=!!d.apGateEnabled;
+}
+async function saveApGate(){
+  var gate=$('ap-gate-tgl');
+  try{await postForm('/config',{apg:gate&&gate.checked?'1':'0'});}
+  catch(e){if(gate)gate.checked=!gate.checked}
 }
 
 // ── HW3 Speed Save ─────────────────────────────────────────
@@ -2309,6 +2374,11 @@ async function uploadFirmware(){
 }
 
 // OTA drag-drop setup
+function resetOtaCredentials(){
+  localStorage.removeItem('otaU');
+  localStorage.removeItem('otaP');
+  showToast('OTA 凭据缓存已清除',true);
+}
 function setupOtaDrop(){
   var drop=$('ota-drop');
   if(!drop)return;
@@ -2329,11 +2399,105 @@ async function loadFirmwareInfo(){
   var d=await fetchJson('/system_status');
   if(!d)return;
   setText('ota-ver',d.firmware||'--');
+  setText('rel-current',d.firmware||'--');
   setText('ota-build',d.idf||'--');
   var appUsed=d.app_used?Math.round(d.app_used/1024)+'KB':'--';
   var appTotal=d.app_size?Math.round(d.app_size/1024)+'KB':'--';
   setText('ota-flash',appUsed+' / '+appTotal);
   setText('ota-sdk',d.target||'--');
+}
+
+var releaseUpdateUrl='';
+async function loadOtaReleaseState(){
+  var beta=await fetchJson('/update_beta');
+  if(beta){
+    var bt=$('rel-beta-tgl');
+    if(bt)bt.checked=!!beta.beta;
+    if(beta.version)setText('rel-current',beta.version);
+  }
+  var auto=await fetchJson('/auto_update');
+  if(auto){
+    var at=$('rel-auto-tgl');
+    if(at)at.checked=!!auto.enabled;
+  }
+}
+async function checkReleaseUpdate(){
+  var btn=$('rel-check-btn');
+  var install=$('rel-install-btn');
+  if(btn)btn.disabled=true;
+  if(install)install.disabled=true;
+  releaseUpdateUrl='';
+  setText('rel-status','检查中...');
+  setText('rel-msg','正在连接 GitHub Release，请稍候。');
+  try{
+    var r=await fetch('/update_check');
+    var txt=await r.text();
+    var d={};
+    if(txt){try{d=JSON.parse(txt)}catch(e){}}
+    if(!r.ok)throw new Error((d&&d.error)?d.error:('HTTP '+r.status));
+    setText('rel-current',d.current||'--');
+    setText('rel-latest',d.latest||d.tag||'--');
+    setText('rel-artifact',d.artifact||'--');
+    var msg='已是最新版本';
+    var cls='v-ok';
+    if(d.update&&d.url){
+      releaseUpdateUrl=d.url;
+      msg='发现新版本';
+      cls='v-warn';
+      if(install)install.disabled=false;
+      setText('rel-msg','发现 '+(d.tag||d.latest)+'，点击“安装更新”后设备会下载并重启。');
+    }else if(!d.url){
+      msg='未找到匹配固件';
+      cls='v-err';
+      setText('rel-msg','Release 中没有 '+(d.artifact||'当前硬件')+' 对应的固件文件。');
+    }else{
+      setText('rel-msg','当前版本 '+(d.current||'--')+' 已不低于 '+(d.latest||'--')+'。');
+    }
+    setText('rel-status',msg);
+    setCls('rel-status',cls);
+  }catch(e){
+    setText('rel-status','检查失败');
+    setCls('rel-status','v-err');
+    setText('rel-msg',(e&&e.message)?e.message:'检查失败');
+    showToast((e&&e.message)?e.message:'检查失败');
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+async function installReleaseUpdate(){
+  if(!releaseUpdateUrl){showToast('请先检查更新');return}
+  if(!confirm('确认安装 GitHub Release OTA 固件？设备会下载固件并自动重启。'))return;
+  var btn=$('rel-install-btn');
+  if(btn)btn.disabled=true;
+  setText('rel-status','安装中...');
+  setCls('rel-status','v-warn');
+  setText('rel-msg','设备正在下载并写入 OTA 固件，完成后会自动重启。');
+  try{
+    await postForm('/update_install',{url:releaseUpdateUrl});
+    setText('rel-status','已开始安装');
+    setText('rel-msg','OTA 已开始，设备将自动重启。');
+    showToast('OTA 已开始，设备将重启',true);
+  }catch(e){
+    if(btn)btn.disabled=false;
+    setText('rel-status','安装失败');
+    setCls('rel-status','v-err');
+  }
+}
+async function toggleUpdateBeta(){
+  var t=$('rel-beta-tgl');
+  try{
+    var d=await postForm('/update_beta',{beta:t&&t.checked?'1':'0'});
+    if(d&&d.version)setText('rel-current',d.version);
+    releaseUpdateUrl='';
+    var install=$('rel-install-btn');
+    if(install)install.disabled=true;
+    setText('rel-status','未检查');
+  }catch(e){if(t)t.checked=!t.checked}
+}
+async function toggleAutoUpdate(){
+  var t=$('rel-auto-tgl');
+  try{await postForm('/auto_update',{enabled:t&&t.checked?'1':'0'});}
+  catch(e){if(t)t.checked=!t.checked}
 }
 
 // ── WiFi ───────────────────────────────────────────────────
@@ -2760,6 +2924,17 @@ async function loadCanPins(){
   setText('can-rst',d.rst!=null?'GPIO '+d.rst:'GPIO 9');
 }
 
+// ── Gear assist placeholder telemetry ──────────────────────
+async function pollGearAssist(){
+  var d=await fetchJson('/gear_assist_status');
+  if(!d)return;
+  setText('shift-speed',(d.speed_kph!==undefined?d.speed_kph:'--')+' km/h');
+  setText('shift-gear',d.gear||'--');
+  setText('shift-brake',d.brake?(T('踩下')||'ON'):(d.brake_seen?(T('未踩')||'OFF'):'--'));
+  setText('shift-fsd',d.can_online?'CAN Online':'CAN Offline');
+  setCls('shift-fsd','v-dim '+(d.can_online?'v-ok':'v-err'));
+}
+
 // ── Temp from system_status ────────────────────────────────
 async function loadTemp(){
   var d=await fetchJson('/system_status');
@@ -2769,12 +2944,12 @@ async function loadTemp(){
     if(el){
       el.textContent=t+'°C';
       // Color coding: >60°C red, >45°C orange, else green
-      el.className='stat-val '+(t>60?'v-warn':(t>45?'v-info':'v-acc'));
+      el.className='stat-val '+(t>60?'v-err':(t>45?'v-info':'v-acc'));
     }
   }
   // Firmware version display
-  if(d&&d.version){
-    setText('s-ver',d.version);
+  if(d&&(d.firmware||d.version)){
+    setText('s-ver',d.firmware||d.version);
   }
 }
 
@@ -2853,6 +3028,7 @@ document.addEventListener('DOMContentLoaded',function(){
       var pid=activePage.id;
       if(pid==='pg-can'){if(canTab==='sniffer'&&!sniffPaused)pollSniffer();else if(canTab==='debug')pollLastWrite()}
       if(pid==='pg-bus2')pollCAN2();
+      if(pid==='pg-shift')pollGearAssist();
     }
   };
   pollTimer=setInterval(pollTick,pollMs);

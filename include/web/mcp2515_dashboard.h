@@ -122,10 +122,18 @@ static const uint8_t mcpEflg = 0;
 static uint8_t hwMode = DASH_DEFAULT_HW;
 static bool canActive = kDashInjectionDefaultEnabled;
 static bool forceActivate = false;
+#ifndef DASH_AP_GATE_DEFAULT
+#if defined(INJECTION_AFTER_AP) || defined(DASH_INJECTION_AFTER_AP)
+#define DASH_AP_GATE_DEFAULT true
+#else
+#define DASH_AP_GATE_DEFAULT false
+#endif
+#endif
+
 // AP Injection Gate — when false (default), 1021 mux0 bit46 注入与车辆状态解耦，
-// 复刻 2.5.2 真车固件默认行为（kDashApGateDefaultEnabled=false）。
+// 复刻 2.5.2 真车固件默认行为（DASH_AP_GATE_DEFAULT=false）。
 // 当 true 时回到 3.0 早期行为：必须 Parked||APActive||Summoning 才允许注入。
-static bool apInjectionGate = false;
+static bool apInjectionGate = DASH_AP_GATE_DEFAULT;
 static bool apAutoRestore = false;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
@@ -139,6 +147,7 @@ static uint8_t dashLightingCount = 3;
 static uint8_t dashLightingFrequency = 1; // 0=slow, 1=medium, 2=fast
 static uint8_t dashRearFogStrategy = 0;   // 0=off, 1=strobe, 2=continuous
 static DashFogLight dashFogCtrl;           // Phase 4 fog light controller instance
+static bool dashFogOffRequested = false;   // one-shot fail-off/stop command owned by CAN task
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
@@ -324,6 +333,7 @@ struct DashApRestoreState
 {
     bool gearSeen = false;
     uint8_t gearRaw = 0xFF;
+    unsigned long gearMs = 0;
     bool brakeSeen = false;
     uint8_t brakePedalRaw = 0xFF;
     bool chassisSeen = false;
@@ -534,6 +544,7 @@ static void dashRecordApRestoreFrame(const CanFrame &frame, unsigned long now)
     {
         apRestoreState.gearSeen = true;
         apRestoreState.gearRaw = readDIGear(frame);
+        apRestoreState.gearMs = now;
         apRestoreState.brakeSeen = true;
         apRestoreState.brakePedalRaw = static_cast<uint8_t>(dashReadBitsLE(frame, 19, 2));
         return;
@@ -776,7 +787,7 @@ static String jsonEscape(const String &s)
 
 static bool dashCheckADEnabled()
 {
-    return canActive;
+    return canActive && dashOtaGuardAllowInjection();
 }
 
 static bool dashApInjectionAllowed()
@@ -1088,7 +1099,7 @@ static void dashApplyRuntimeState()
     emergencyVehicleDetectionRuntime = false;
     isaSpeedChimeSuppressRuntime = false;
     enhancedAutopilotRuntime = false;
-    nagKillerRuntime = false;
+    nagKillerRuntime = canActive && dashDefenseEnabled;
 
     if (dashHandler)
     {
@@ -1134,6 +1145,8 @@ static void dashSavePrefs()
     prefs.putBool("def_en", dashDefenseEnabled);
     prefs.putBool("def_bio", dashBionicSteering);
     prefs.putBool("def_nd", dashSpeedNoDisturb);
+    prefs.putBool("def_dv", dashDndVolume);
+    prefs.putBool("def_ds", dashDndSpeed);
     prefs.putBool("def_apeap", dashApEapCompatible);
     prefs.putBool("eprn", dashHandler ? (bool)dashHandler->enablePrint : true);
     prefs.putBool("h3_slw", hw3OffsetSlew);
@@ -1291,7 +1304,7 @@ static void dashLoadPrefs()
     if (prefs.getBool("force_act", canActive) != forceActivate)
         prefs.putBool("force_act", forceActivate);
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
-    apInjectionGate = prefs.getBool("ap_gate", false);
+    apInjectionGate = prefs.getBool("ap_gate", DASH_AP_GATE_DEFAULT);
     apAutoRestore = prefs.getBool("ap_rst", false);
     dashSpeedProfileAuto = prefs.getBool("sp_auto", true);
     dashManualSpeedProfile = dashClampSpeedProfileForHw(hwMode, prefs.getUChar("sp_sel", 1));
@@ -1324,6 +1337,8 @@ static void dashLoadPrefs()
     dashDefenseEnabled = prefs.getBool("def_en", false);
     dashBionicSteering = prefs.getBool("def_bio", false);
     dashSpeedNoDisturb = prefs.getBool("def_nd", false);
+    dashDndVolume = prefs.getBool("def_dv", false);
+    dashDndSpeed = prefs.getBool("def_ds", false);
     dashApEapCompatible = prefs.getBool("def_apeap", true);
     hw3OffsetSlew = prefs.getBool("h3_slw", false);
     hw3SlewRate = dashLoadHw3SlewRate(prefs.getUChar("h3_srt", kHw3SlewRateDefault));
@@ -1546,14 +1561,16 @@ static void dashApplyFilters()
     dashMcp->setConfigMode();
     if (hwMode == 0)
     {
-        dashMcp->setFilterMask(MCP2515::MASK0, false, 0x7FF);
-        dashMcp->setFilter(MCP2515::RXF0, false, 69);
-        dashMcp->setFilter(MCP2515::RXF1, false, 280);
+        // Legacy needs more than six observer IDs (69/280/390/OTA plus injection IDs).
+        // Use RXB0 as a broad observer bucket; LegacyHandler ignores unrelated frames.
+        dashMcp->setFilterMask(MCP2515::MASK0, false, 0x000);
+        dashMcp->setFilter(MCP2515::RXF0, false, 0);
+        dashMcp->setFilter(MCP2515::RXF1, false, 0);
         dashMcp->setFilterMask(MCP2515::MASK1, false, 0x7FF);
-        dashMcp->setFilter(MCP2515::RXF2, false, 390);
-        dashMcp->setFilter(MCP2515::RXF3, false, 760);
-        dashMcp->setFilter(MCP2515::RXF4, false, 921);
-        dashMcp->setFilter(MCP2515::RXF5, false, 1006);
+        dashMcp->setFilter(MCP2515::RXF2, false, 760);
+        dashMcp->setFilter(MCP2515::RXF3, false, 921);
+        dashMcp->setFilter(MCP2515::RXF4, false, 1006);
+        dashMcp->setFilter(MCP2515::RXF5, false, 1080);
     }
     else if (hwMode == 2)
     {
@@ -1563,7 +1580,7 @@ static void dashApplyFilters()
         dashMcp->setFilterMask(MCP2515::MASK1, false, 0x7FF);
         dashMcp->setFilter(MCP2515::RXF2, false, 1016);
         dashMcp->setFilter(MCP2515::RXF3, false, 280);
-        dashMcp->setFilter(MCP2515::RXF4, false, 1016);
+        dashMcp->setFilter(MCP2515::RXF4, false, CAN_ID_OTA_STATUS);
         dashMcp->setFilter(MCP2515::RXF5, false, 921);
     }
     else
@@ -1574,7 +1591,7 @@ static void dashApplyFilters()
         dashMcp->setFilterMask(MCP2515::MASK1, false, 0x7FF);
         dashMcp->setFilter(MCP2515::RXF2, false, 1016);
         dashMcp->setFilter(MCP2515::RXF3, false, 280);
-        dashMcp->setFilter(MCP2515::RXF4, false, 1016);
+        dashMcp->setFilter(MCP2515::RXF4, false, CAN_ID_OTA_STATUS);
         dashMcp->setFilter(MCP2515::RXF5, false, 1021);
     }
     dashMcp->setNormalMode();
@@ -1883,7 +1900,7 @@ static void handleStatus()
     j += ",\"dndVolume\":";
     j += dashDndVolume ? "true" : "false";
     j += ",\"dndSpeed\":";
-    j += dashSpeedNoDisturb ? "true" : "false";
+    j += dashDndSpeed ? "true" : "false";
     j += "]}";
     server.send(200, "application/json", j);
 }
@@ -1950,6 +1967,15 @@ static void handleConfig()
         {
             apAutoRestore = v;
             dashLog("[CFG] AP/EAP auto-restore " + String(v ? "ON" : "OFF"));
+        }
+    }
+    if (server.hasArg("apg"))
+    {
+        bool v = server.arg("apg") == "1";
+        if (v != apInjectionGate)
+        {
+            apInjectionGate = v;
+            dashLog("[CFG] AP injection gate " + String(v ? "ON" : "OFF"));
         }
     }
     if (server.hasArg("hw3OffsetSlew"))
@@ -2377,8 +2403,9 @@ static String dashDefenseConfigJson()
     j += ",\"bionic_steering\":";
     j += dashBionicSteering ? "true" : "false";
     // Bionic disabled warning (3 consecutive failures)
+    bool bionicDisabled = dashHandler ? dashHandler->bionicDisabled() : dashBionicDisabled;
     j += ",\"bionic_disabled\":";
-    j += dashBionicDisabled ? "true" : "false";
+    j += bionicDisabled ? "true" : "false";
     j += ",\"sound_warning_suppression\":";
     j += dashHandler ? ((bool)dashHandler->isaChimeSuppress ? "true" : "false") : (nvsIsaChimeSuppress ? "true" : "false");
     j += ",\"dnd_volume\":";
@@ -2417,7 +2444,11 @@ static void handleDefenseConfig()
             if (v) dashBionicDisabled = false;
             // Sync to NagHandler if available
             if (dashHandler)
+            {
                 dashHandler->bionicSteering = v;
+                if (v)
+                    dashHandler->resetBionic((uint32_t)millis());
+            }
         }
         if (server.hasArg("sound_warning_suppression"))
         {
@@ -2432,6 +2463,8 @@ static void handleDefenseConfig()
             dashSpeedNoDisturb = dashArgTruthy(server.arg("speed_no_disturb"));
         if (server.hasArg("dnd_speed"))
             dashDndSpeed = dashArgTruthy(server.arg("dnd_speed"));
+        if (!dashDefenseEnabled)
+            dashWheelDndCtrl.reset();
         if (dashDefenseEnabled && dashDndVolume && (!prevDefenseEnabled || !prevDndVolume))
             dashWheelDndCtrl.startVolume();
         if (dashDefenseEnabled && dashDndSpeed && (!prevDefenseEnabled || !prevDndSpeed))
@@ -2455,16 +2488,19 @@ static void handleDefenseConfig()
 static void handlePowerMgmt() {
     dashPowerMgmtTouchWeb();
     if (server.hasArg("autoShutdown") || server.hasArg("wifiAutoOff")) {
-        bool autoShutdown = server.hasArg("autoShutdown") && server.arg("autoShutdown") == "true";
-        bool wifiAutoOff  = server.hasArg("wifiAutoOff")  && server.arg("wifiAutoOff") == "true";
-        autoShutdownEnabled = autoShutdown;
-        wifiAutoOffEnabled  = wifiAutoOff;
+        if (server.hasArg("autoShutdown")) {
+            autoShutdownEnabled = dashArgTruthy(server.arg("autoShutdown"));
+            if (autoShutdownEnabled)
+                dashPowerMgmtConfigureWake();
+        }
+        if (server.hasArg("wifiAutoOff"))
+            wifiAutoOffEnabled = dashArgTruthy(server.arg("wifiAutoOff"));
         prefs.begin(PREFS_NS, false);
-        prefs.putBool(NVS_KEY_AUTO_SHUTDOWN, autoShutdown);
-        prefs.putBool(NVS_KEY_WIFI_AUTO_OFF, wifiAutoOff);
+        prefs.putBool(NVS_KEY_AUTO_SHUTDOWN, autoShutdownEnabled);
+        prefs.putBool(NVS_KEY_WIFI_AUTO_OFF, wifiAutoOffEnabled);
         prefs.end();
-        dashLog(String("[CFG] Power mgmt: shutdown=") + (autoShutdown ? "ON" : "OFF") +
-                " wifi_off=" + (wifiAutoOff ? "ON" : "OFF"));
+        dashLog(String("[CFG] Power mgmt: shutdown=") + (autoShutdownEnabled ? "ON" : "OFF") +
+                " wifi_off=" + (wifiAutoOffEnabled ? "ON" : "OFF"));
     }
     String json = "{\"autoShutdown\":";
     json += autoShutdownEnabled ? "true" : "false";
@@ -2497,8 +2533,8 @@ static void handleFogLight() {
         prefs.begin(PREFS_NS, false);
         prefs.putUChar("lt_fog", strategy);
         prefs.end();
-        // Stop active fog when strategy changes to off
-        if (strategy == 0) dashFogCtrl.stop();
+        // Stop active fog when strategy changes to off; CAN task sends final OFF frame.
+        if (strategy == 0) dashFogOffRequested = true;
         dashLog(String("[CFG] Fog strategy: ") + dashRearFogStrategyName(strategy));
     }
     // Phase 4: trigger fog light execution
@@ -2514,7 +2550,7 @@ static void handleFogLight() {
             dashFogCtrl.startContinuous();
             dashLog("[FOG] Continuous ON");
         } else if (t == "stop") {
-            dashFogCtrl.stop();
+            dashFogOffRequested = true;
             dashLog("[FOG] Stopped");
         }
     }
@@ -2534,7 +2570,7 @@ static void handleStrobeCont() {
         dashFogCtrl.startStrobe(0, dashLightingFrequency);  // 0 = infinite
         dashLog("[STROBE] Continuous strobe started");
     } else {
-        dashFogCtrl.stop();
+        dashFogOffRequested = true;
         dashLog("[STROBE] Stopped");
     }
     String j = "{\"ok\":true,\"strobeCont\":";
@@ -4856,12 +4892,18 @@ static void handleApStatus()
 #define FIRMWARE_VERSION "unknown"
 #endif
 
-static const char *GITHUB_REPO = "ev-open-can-tools/ev-open-can-tools";
+#ifndef DASH_GITHUB_REPO
+#define DASH_GITHUB_REPO "JordanzhaoD/LILYGO-T-2Can"
+#endif
+
+static const char *GITHUB_REPO = DASH_GITHUB_REPO;
 
 // Map driver type to release artifact filename
 static const char *getFirmwareArtifact()
 {
-#if defined(DRIVER_ESP32_EXT_MCP2515)
+#if defined(DRIVER_T2CAN_DUAL)
+    return "firmware-lilygo-t2can-dual.bin";
+#elif defined(DRIVER_ESP32_EXT_MCP2515)
     return "firmware-esp32-ext-mcp2515.bin";
 #else
     return "firmware-esp32.bin";
@@ -5479,6 +5521,7 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/wifi_delete", HTTP_POST, handleWifiDelete);
     server.on("/update_check", HTTP_GET, handleUpdateCheck);
     server.on("/update_install", HTTP_POST, handleUpdateInstall);
+    server.on("/update_beta", HTTP_GET, handleUpdateBeta);
     server.on("/update_beta", HTTP_POST, handleUpdateBeta);
     server.on("/auto_update", HTTP_GET, handleAutoUpdate);
     server.on("/auto_update", HTTP_POST, handleAutoUpdate);
