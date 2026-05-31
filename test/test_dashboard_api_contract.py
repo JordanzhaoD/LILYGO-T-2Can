@@ -91,6 +91,29 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("d.hwName||hwLabel(d.hw)", self.ui)
         self.assertIn("d.uiBuildUtc||d.uiBuildId||d.buildEnv", self.ui)
 
+    def test_uptime_and_fsd_boot_persistence_are_wired(self) -> None:
+        """Running time and FSD boot/default state must round-trip through /status and /config."""
+        self.assertIn('uptime', self.dash)
+        self.assertIn('bootCan', self.dash)
+        self.assertIn('prefs.putBool("boot_can", bootCanActive)', self.dash)
+        self.assertIn('bootCanActive = prefs.getBool("boot_can"', self.dash)
+        self.assertIn('server.hasArg("bootCan")', self.dash)
+        self.assertIn("var uptime=(d.uptime!==undefined)?d.uptime:(d.up||0);", self.ui)
+        self.assertIn("fmtUp(uptime)", self.ui)
+        self.assertIn("bootCan:next?'1':'0'", self.ui)
+        self.assertIn("data.bootCan=bt.checked?'1':'0'", self.ui)
+
+    def test_fsd_injection_control_lives_in_module_page(self) -> None:
+        """FSD injection controls belong to Module Config, not Driving Mode."""
+        module = re.search(r'id="pg-overview".*?<!-- Page 2: Hardware Config -->', self.ui, re.S)
+        drive = re.search(r'id="pg-drive".*?<!-- Page 4: Speed Offset -->', self.ui, re.S)
+        self.assertIsNotNone(module)
+        self.assertIsNotNone(drive)
+        self.assertIn('id="fsd-toggle"', module.group(0))
+        self.assertIn('id="fsd-boot-tgl"', module.group(0))
+        self.assertNotIn('id="fsd-toggle"', drive.group(0))
+        self.assertNotIn('id="fsd-boot-tgl"', drive.group(0))
+
     def test_backend_accepts_panel_control_methods(self) -> None:
         expected_routes = [
             'server.on("/reset_stats", HTTP_POST, handleResetStats);',

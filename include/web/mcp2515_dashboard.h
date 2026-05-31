@@ -131,6 +131,7 @@ static const uint8_t mcpEflg = 0;
 static uint8_t hwMode = DASH_DEFAULT_HW;
 static bool canActive = kDashInjectionDefaultEnabled;
 static bool forceActivate = false;
+static bool bootCanActive = kDashInjectionDefaultEnabled;
 #ifndef DASH_AP_GATE_DEFAULT
 #if defined(INJECTION_AFTER_AP) || defined(DASH_INJECTION_AFTER_AP)
 #define DASH_AP_GATE_DEFAULT true
@@ -1145,6 +1146,7 @@ static void dashSavePrefs()
     prefs.putUChar("hw_def", DASH_DEFAULT_HW);
     prefs.putBool("can", canActive);
     prefs.putBool("force_act", forceActivate);
+    prefs.putBool("boot_can", bootCanActive);
     prefs.putBool("ap_gate", apInjectionGate);
     prefs.putBool("ap_rst", apAutoRestore);
     prefs.putBool("sp_auto", dashSpeedProfileAuto);
@@ -1318,10 +1320,15 @@ static void dashLoadPrefs()
         prefs.putUChar("hw", hwMode);
     if (storedDefaultHw != DASH_DEFAULT_HW)
         prefs.putUChar("hw_def", DASH_DEFAULT_HW);
-    canActive = prefs.getBool("can", kDashInjectionDefaultEnabled);
+    bootCanActive = prefs.getBool("boot_can", prefs.getBool("can", kDashInjectionDefaultEnabled));
+    canActive = bootCanActive;
     forceActivate = canActive;
+    if (prefs.getBool("can", canActive) != canActive)
+        prefs.putBool("can", canActive);
     if (prefs.getBool("force_act", canActive) != forceActivate)
         prefs.putBool("force_act", forceActivate);
+    if (prefs.getBool("boot_can", bootCanActive) != bootCanActive)
+        prefs.putBool("boot_can", bootCanActive);
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
     apInjectionGate = prefs.getBool("ap_gate", DASH_AP_GATE_DEFAULT);
     apAutoRestore = prefs.getBool("ap_rst", false);
@@ -1861,6 +1868,16 @@ static void handleStatus()
     j += canOnline ? "true" : "false";
     j += ",\"ci\":";
     j += canActive ? "true" : "false";
+    j += ",\"bootCan\":";
+    j += bootCanActive ? "true" : "false";
+    j += ",\"storedCan\":";
+    j += prefs.getBool("can", canActive) ? "true" : "false";
+    j += ",\"storedForce\":";
+    j += prefs.getBool("force_act", forceActivate) ? "true" : "false";
+    j += ",\"storedHw\":";
+    j += prefs.getUChar("hw", hwMode);
+    j += ",\"uptime\":";
+    j += (millis() - startMs) / 1000;
     j += ",\"rx\":";
     j += rxCount;
     j += ",\"tx\":";
@@ -1972,10 +1989,20 @@ static void handleConfig()
         requestedFsdSwitch = server.arg("force") == "1";
         hasFsdSwitchArg = true;
     }
-    if (hasFsdSwitchArg && ((requestedFsdSwitch != canActive) || (requestedFsdSwitch != forceActivate)))
+    if (server.hasArg("bootCan"))
+    {
+        bool v = server.arg("bootCan") == "1";
+        if (v != bootCanActive)
+        {
+            bootCanActive = v;
+            dashLog("[CFG] FSD boot auto-enable " + String(v ? "ON" : "OFF"));
+        }
+    }
+    if (hasFsdSwitchArg && ((requestedFsdSwitch != canActive) || (requestedFsdSwitch != forceActivate) || (requestedFsdSwitch != bootCanActive)))
     {
         canActive = requestedFsdSwitch;
         forceActivate = requestedFsdSwitch;
+        bootCanActive = requestedFsdSwitch;
         dashLog("[CFG] FSD master switch " + String(requestedFsdSwitch ? "ON" : "OFF"));
     }
     bool profileAutoRequested = server.hasArg("spa") && server.arg("spa") == "1";

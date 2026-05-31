@@ -528,6 +528,28 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 
+<div class="card">
+  <div class="big-toggle off" id="fsd-toggle" onclick="toggleFsd()">
+    <div class="card-title">FSD 注入控制</div>
+    <div class="setting-desc" style="margin-bottom:12px">启用后设备将注入 CAN 帧到车辆总线；状态会保存到 NVS 并作为开机默认值</div>
+    <div class="toggle-visual"><div class="thumb"></div></div>
+    <div class="toggle-label" id="fsd-label">已关闭</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">开机自动启用</div>
+      <div class="setting-desc">设备重启后按此保存值恢复 FSD 注入</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="fsd-boot-tgl" onchange="saveConfig()">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+</div>
+
 <!-- Stats Grid -->
 <div class="card">
 <div class="card-title">系统状态</div>
@@ -689,28 +711,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="mode-note">当前选择：<span id="drive-current">Normal</span></div>
 </div>
-<div class="card">
-  <div class="big-toggle off" id="fsd-toggle" onclick="toggleFsd()">
-    <div class="card-title">FSD 注入控制</div>
-    <div class="setting-desc" style="margin-bottom:12px">启用后设备将注入 CAN 帧到车辆总线</div>
-    <div class="toggle-visual"><div class="thumb"></div></div>
-    <div class="toggle-label" id="fsd-label">已关闭</div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">开机自动启用</div>
-      <div class="setting-desc">设备重启后自动开启 FSD 注入</div>
-    </div>
-    <label class="tgl">
-      <input type="checkbox" id="fsd-boot-tgl" onchange="saveConfig()">
-      <div class="tgl-track"></div>
-    </label>
-  </div>
-</div>
-
 <div class="card">
   <div class="card-title">紧急控制</div>
   <div style="display:flex;gap:8px">
@@ -1695,6 +1695,7 @@ async function poll(){
     setText('tb-status',T('未连接'));
     return;
   }
+  var uptime=(d.uptime!==undefined)?d.uptime:(d.up||0);
   S.hw=d.hw;S.ci=d.ci;S.sp=d.sp;S.spa=d.spAuto;S.can=d.can;S.ia=d.ia;S.driveProfile=d.driveProfile!==undefined?d.driveProfile:S.driveProfile;
   S.hw3OffsetSlew=d.hw3OffsetSlew;S.hw3SlewRate=d.hw3SlewRate;
   S.hw3CustomSpeed=d.hw3CustomSpeed;
@@ -1717,13 +1718,15 @@ async function poll(){
   setText('tb-fsd',d.ia?'FSD ON':'FSD OFF');
   setCls('tb-dot-fsd','topbar-dot '+(d.ia?'ok':'warn'));
   setText('tb-exp',experimentSummary());
-  setText('tb-up',fmtUp(d.up||0));
+  setText('tb-up',fmtUp(uptime));
 
   // Overview
   var ovTgl=$('ov-fsd-tgl');
   if(ovTgl)ovTgl.checked=(S.driveProfile===5);
   var masterTgl=$('ov-master-tgl');
   if(masterTgl)masterTgl.checked=!!d.ci;
+  var bootTgl=$('fsd-boot-tgl');
+  if(bootTgl)bootTgl.checked=!!(d.bootCan!==undefined?d.bootCan:d.ci);
   var mFsdTgl=$('m-fsd-tgl');
   if(mFsdTgl)mFsdTgl.checked=!!d.ci;
   setCls('ov-v14','stat-val '+(S.driveProfile===5?'v-warn':'v-dim'));
@@ -1732,7 +1735,7 @@ async function poll(){
   setText('ov-hw',hwText);
   setCls('ov-can','stat-val '+(d.can?'v-ok':'v-err'));
   setText('ov-can',(d.can?'CAN1 Online':'CAN1 Offline')+' / '+($('s-can2')&&$('s-can2').textContent?$('s-can2').textContent:'CAN2 --'));
-  setText('ov-up',fmtUp(d.up||0));
+  setText('ov-up',fmtUp(uptime));
   setCls('m-can','stat-val '+(d.can?'v-ok':'v-err'));
   setText('m-can',d.can?'Online':'Offline');
   setCls('m-can2','stat-val '+(($('s-can2')&&$('s-can2').textContent==='Online')?'v-ok':'v-dim'));
@@ -1741,7 +1744,7 @@ async function poll(){
   setText('m-fsd',d.ci?'ON':'OFF');
   setText('m-fps',d.fps.toFixed(1)+' Hz');
   setText('m-rxtx',(d.rx||0)+' / '+(d.tx||0));
-  setText('m-up',fmtUp(d.up||0));
+  setText('m-up',fmtUp(uptime));
   setText('m-hw',(d.hwName||hwLabel(d.hw)));
   setText('m-drive',driveModeLabel(driveModeFromProfile(d.driveProfile,d.driveProfileName)));
   setText('m-speed',d.soff!==undefined?d.soff:'--');
@@ -1768,7 +1771,7 @@ async function poll(){
   // Temp from /system_status is separate; use eflg field as proxy
   setText('s-txerr',d.txerr||0);
   setText('s-fd',d.fd||0);
-  setStatusTriplet('module',d.ci?'FSD ON':'FSD OFF','启动保存: '+(d.ci?'ON':'OFF'),d.can?'CAN Online':'CAN Offline',d.can?'ok':'err');
+  setStatusTriplet('module',d.ci?'FSD ON':'FSD OFF','启动保存: '+((d.bootCan!==undefined?d.bootCan:d.ci)?'ON':'OFF'),d.can?'CAN Online':'CAN Offline',d.can?'ok':'err');
   setStatusTriplet('hw',(d.hwName||hwLabel(d.hw)),'mode_hw: '+(d.hwName||hwLabel(d.hw)),(d.can?'CAN运行 / ':'CAN离线 / ')+(d.hwName||hwLabel(d.hw)),d.can?'ok':'warn');
   setStatusTriplet('speed','偏移 '+(d.soff!==undefined?d.soff:'--'),driveLabel(d.sp,d.spAuto),d.fusedSpeedLimitKph?('Fused '+d.fusedSpeedLimitKph+' kph'):'CAN未给出速度',d.can?'ok':'warn');
   setStatusTriplet('defense',d.hw3OffsetSlew?'防御 ON':'防御 OFF','slew '+(d.hw3OffsetSlew?'ON':'OFF'),'触发 '+(d.hw3SlewCount||0)+' / offset '+(d.hw3OffsetLast!==undefined?d.hw3OffsetLast:'--'),d.hw3OffsetSlew?'ok':'warn');
@@ -1961,7 +1964,7 @@ async function loadDefenseConfig(){
 async function toggleFsd(){
   var next=S.ci?0:1;
   if(next&&!confirm('确认开启 FSD 注入？')){poll();return}
-  try{await postForm('/config',{can:next?'1':'0',force:next?'1':'0'});}
+  try{await postForm('/config',{can:next?'1':'0',force:next?'1':'0',bootCan:next?'1':'0'});}
   catch(e){return}
   S.ci=!!next;
   var masterTgl=$('ov-master-tgl');
@@ -2099,8 +2102,7 @@ async function saveConfig(){
   var apR=$('hw-ap-restore');
   if(apR)data.apRestore=apR.checked?'1':'0';
   var bt=$('fsd-boot-tgl');
-  if(bt&&bt.checked)data.can='1';
-  else if(bt)data.can='0';
+  if(bt)data.bootCan=bt.checked?'1':'0';
   try{await postForm('/config',data);}catch(e){}
 }
 function updateApGateControl(d){
