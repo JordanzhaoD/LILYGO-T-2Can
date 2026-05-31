@@ -66,6 +66,15 @@ static_assert(sizeof(DASH_PASS) >= 9 && sizeof(DASH_PASS) <= 65, "DASH_PASS must
 #ifndef DASH_DEFAULT_HW
 #define DASH_DEFAULT_HW 1
 #endif
+#ifndef DASH_BUILD_ENV
+#define DASH_BUILD_ENV "unknown"
+#endif
+#ifndef DASH_UI_BUILD_ID
+#define DASH_UI_BUILD_ID "unknown"
+#endif
+#ifndef DASH_UI_BUILD_UTC
+#define DASH_UI_BUILD_UTC "unknown"
+#endif
 
 #if defined(DASH_INJECTION_ON_BOOT)
 static constexpr bool kDashInjectionDefaultEnabled = true;
@@ -1105,6 +1114,16 @@ static void dashApplyRuntimeState()
     {
         dashHandler->checkAD = dashCheckADEnabled;
         dashHandler->checkNag = dashCheckNagDisabled;
+        dashHandler->bionicSteering = dashBionicSteering;
+        dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
+        dashHandler->banShieldEnable = nvsBanShieldEnable;
+        dashHandler->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
+        dashHandler->overrideSpeedLimit = nvsOverrideSpeedLimit;
+        dashHandler->legacyOffset = nvsLegacyOffset;
+        dashHandler->tlsscBypass = nvsTlsscBypass;
+        dashHandler->emergencyVehicleDetection = nvsEmergencyVehicleDetection;
+        dashHandler->hw4OffsetRaw = nvsHw4OffsetRaw;
+        dashHandler->autoModeEnabled = nvsAutoModeEnabled;
         dashApplySpeedProfileState();
         if (!canActive)
         {
@@ -1132,12 +1151,12 @@ static void dashSavePrefs()
     prefs.putUChar("sp_sel", dashManualSpeedProfile);
     prefs.putUChar("drv_prof", dashDriveProfile);
     prefs.putUChar("spd_str", dashSpeedStrategy);
-    prefs.putUChar("offsetMode", offsetMode);
-    prefs.putUChar("manualPct", manualOffsetPct);
-    prefs.putUChar("cp0", customPct[0]);
-    prefs.putUChar("cp1", customPct[1]);
-    prefs.putUChar("cp2", customPct[2]);
-    prefs.putUChar("cp3", customPct[3]);
+    prefs.putUChar("offsetMode", offsetMode);       // 0=fixed, 1=auto, 2=custom
+    prefs.putUChar("manualPct", manualOffsetPct);   // 0-50% for fixed mode
+    prefs.putUChar("cp0", customPct[0]);             // Zone ≤50 km/h  (HTTP: cp1)
+    prefs.putUChar("cp1", customPct[1]);             // Zone ≤70 km/h  (HTTP: cp2)
+    prefs.putUChar("cp2", customPct[2]);             // Zone ≤100 km/h (HTTP: cp3)
+    prefs.putUChar("cp3", customPct[3]);             // Zone >100 km/h (HTTP: cp4)
     prefs.putBool("lt_en", dashLightingEnabled);
     prefs.putUChar("lt_cnt", dashLightingCount);
     prefs.putUChar("lt_freq", dashLightingFrequency);
@@ -1314,15 +1333,15 @@ static void dashLoadPrefs()
     dashSpeedStrategy = prefs.getUChar("spd_str", dashSpeedProfileAuto ? 1 : 0);
     if (dashSpeedStrategy > 2)
         dashSpeedStrategy = 1;
-    offsetMode = prefs.getUChar("offsetMode", dashSpeedStrategy);
+    offsetMode = prefs.getUChar("offsetMode", dashSpeedStrategy);  // see dash_hw3_speed.h mapping
     if (offsetMode > 2)
         offsetMode = 1;
     dashSpeedStrategy = offsetMode;
     manualOffsetPct = dashClampSpeedCustomPct(prefs.getUChar("manualPct", manualOffsetPct));
-    customPct[0] = dashClampSpeedCustomPct(prefs.getUChar("cp0", customPct[0]));
-    customPct[1] = dashClampSpeedCustomPct(prefs.getUChar("cp1", customPct[1]));
-    customPct[2] = dashClampSpeedCustomPct(prefs.getUChar("cp2", customPct[2]));
-    customPct[3] = dashClampSpeedCustomPct(prefs.getUChar("cp3", customPct[3]));
+    customPct[0] = dashClampSpeedCustomPct(prefs.getUChar("cp0", customPct[0])); // Zone ≤50  (HTTP: cp1)
+    customPct[1] = dashClampSpeedCustomPct(prefs.getUChar("cp1", customPct[1])); // Zone ≤70  (HTTP: cp2)
+    customPct[2] = dashClampSpeedCustomPct(prefs.getUChar("cp2", customPct[2])); // Zone ≤100 (HTTP: cp3)
+    customPct[3] = dashClampSpeedCustomPct(prefs.getUChar("cp3", customPct[3])); // Zone >100 (HTTP: cp4)
     dashSyncLegacyShims();
     dashLightingEnabled = prefs.getBool("lt_en", false);
     dashLightingCount = prefs.getUChar("lt_cnt", 3);
@@ -1691,9 +1710,25 @@ static void handleStatus()
     int gtwAp = dashHandler ? (int)dashHandler->gatewayAutopilot : -1;
     bool ep = dashHandler ? (bool)dashHandler->enablePrint : true;
     bool apGateOpen = dashApInjectionAllowed();
+    uint8_t effectiveHw = (hwMode == 3) ? DASH_DEFAULT_HW : hwMode;
+    const char *hwName = "LEGACY";
+    if (effectiveHw == 1)
+        hwName = "HW3";
+    else if (effectiveHw == 2)
+        hwName = "HW4";
 
     String j = "{\"hw\":";
     j += hwMode;
+    j += ",\"dashDefaultHw\":";
+    j += DASH_DEFAULT_HW;
+    j += ",\"effectiveHw\":";
+    j += effectiveHw;
+    j += ",\"hwName\":\"";
+    j += hwName;
+    j += "\"";
+    j += ",\"buildEnv\":\"" DASH_BUILD_ENV "\"";
+    j += ",\"uiBuildId\":\"" DASH_UI_BUILD_ID "\"";
+    j += ",\"uiBuildUtc\":\"" DASH_UI_BUILD_UTC "\"";
     j += ",\"sp\":";
     j += sp;
     j += ",\"spAuto\":";
@@ -2265,6 +2300,9 @@ static void handleSpeedCustomGet()
     server.send(200, "application/json", dashSpeedCustomJson());
 }
 
+// POST /speed_custom — update custom zone percentages.
+// HTTP params cp1..cp4 are 1-indexed → map to customPct[0..3] / NVS cp0..cp3.
+// See dash_hw3_speed.h header for full mapping table.
 static void handleSpeedCustom()
 {
     bool changed = false;
@@ -2526,6 +2564,12 @@ static void handleVehicleOtaStatus() {
 // POST/GET /fog_light — 后雾灯策略 + 执行控制
 static void handleFogLight() {
     dashPowerMgmtTouchWeb();
+    const char *reason = "idle";
+#if defined(DRIVER_T2CAN_DUAL)
+    bool driverSupported = true;
+#else
+    bool driverSupported = false;
+#endif
     if (server.hasArg("fogStrategy")) {
         int strategy = server.arg("fogStrategy").toInt();
         if (strategy < 0 || strategy > 2) strategy = 0;
@@ -2535,47 +2579,80 @@ static void handleFogLight() {
         prefs.end();
         // Stop active fog when strategy changes to off; CAN task sends final OFF frame.
         if (strategy == 0) dashFogOffRequested = true;
+        reason = "strategy_saved";
         dashLog(String("[CFG] Fog strategy: ") + dashRearFogStrategyName(strategy));
     }
-    // Phase 4: trigger fog light execution
+    // Phase 4: trigger fog light execution. /lighting_config only saves the
+    // preferred strategy; actual CAN-B execution must enter here.
     if (server.hasArg("trigger")) {
         String t = server.arg("trigger");
-        if (t == "strobe") {
+        if (!driverSupported) {
+            reason = "driver_not_supported";
+        } else if (t == "strobe") {
             dashFogCtrl.startStrobe(dashLightingCount, dashLightingFrequency);
+            reason = "strobe_started";
             dashLog("[FOG] Strobe started");
         } else if (t == "f1") {
             dashFogCtrl.startF1Pilot();
+            reason = "f1_started";
             dashLog("[FOG] F1 pilot started");
         } else if (t == "continuous") {
             dashFogCtrl.startContinuous();
+            reason = "continuous_started";
             dashLog("[FOG] Continuous ON");
         } else if (t == "stop") {
             dashFogOffRequested = true;
+            reason = "stop_requested";
             dashLog("[FOG] Stopped");
+        } else {
+            reason = "unknown_trigger";
         }
     }
-    String j = "{\"fogStrategy\":";
+    String j = "{\"ok\":true,\"fogStrategy\":";
     j += String(dashRearFogStrategy);
     j += ",\"active\":";
     j += dashFogCtrl.isActive() ? "true" : "false";
-    j += "}";
+    j += ",\"canActive\":";
+    j += canActive ? "true" : "false";
+    j += ",\"driverSupported\":";
+    j += driverSupported ? "true" : "false";
+    j += ",\"reason\":\"";
+    j += reason;
+    j += "\"}";
     server.send(200, "application/json", j);
 }
 
 // POST /strobe_cont — 连续闪烁（Phase 4: now functional）
 static void handleStrobeCont() {
     dashPowerMgmtTouchWeb();
+#if defined(DRIVER_T2CAN_DUAL)
+    bool driverSupported = true;
+#else
+    bool driverSupported = false;
+#endif
     bool enable = server.hasArg("enable") && server.arg("enable") == "1";
-    if (enable) {
+    const char *reason = "stop_requested";
+    if (enable && driverSupported) {
         dashFogCtrl.startStrobe(0, dashLightingFrequency);  // 0 = infinite
+        reason = "continuous_started";
         dashLog("[STROBE] Continuous strobe started");
+    } else if (enable) {
+        reason = "driver_not_supported";
     } else {
         dashFogOffRequested = true;
         dashLog("[STROBE] Stopped");
     }
     String j = "{\"ok\":true,\"strobeCont\":";
     j += dashFogCtrl.isActive() ? "true" : "false";
-    j += "}";
+    j += ",\"active\":";
+    j += dashFogCtrl.isActive() ? "true" : "false";
+    j += ",\"canActive\":";
+    j += canActive ? "true" : "false";
+    j += ",\"driverSupported\":";
+    j += driverSupported ? "true" : "false";
+    j += ",\"reason\":\"";
+    j += reason;
+    j += "\"}";
     server.send(200, "application/json", j);
 }
 
@@ -3944,6 +4021,11 @@ static void handleSystemStatus()
     j += ",\"rom_bytes\":393216";
     j += ",\"idf\":\"" IDF_VER "\"";
     j += ",\"firmware\":\"" FIRMWARE_VERSION "\"";
+    j += ",\"buildEnv\":\"" DASH_BUILD_ENV "\"";
+    j += ",\"dashDefaultHw\":";
+    j += DASH_DEFAULT_HW;
+    j += ",\"uiBuildId\":\"" DASH_UI_BUILD_ID "\"";
+    j += ",\"uiBuildUtc\":\"" DASH_UI_BUILD_UTC "\"";
     j += ",\"mac\":\"" + String(macText) + "\"";
     j += ",\"reset\":\"" + String(dashResetReasonName(esp_reset_reason())) + "\"";
     j += ",\"uptime\":" + String((millis() - startMs) / 1000);
@@ -5399,6 +5481,7 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->isaChimeSuppress = nvsIsaChimeSuppress;
         handlerPool[i]->hw4OffsetRaw = nvsHw4OffsetRaw;
         handlerPool[i]->banShieldEnable = nvsBanShieldEnable;
+        handlerPool[i]->bionicSteering = dashBionicSteering;
         handlerPool[i]->legacyOffset = nvsLegacyOffset;
         handlerPool[i]->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         handlerPool[i]->overrideSpeedLimit = nvsOverrideSpeedLimit;
@@ -5436,8 +5519,9 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     Serial.printf("[WIFI] AP: %s  IP: %s\n", apSSID, WiFi.softAPIP().toString().c_str());
 
     dashInitHandlers();
-    dashSwapHandler(hwMode);
     dashApplyNvsRuntimeSwitches();
+    dashSwapHandler(hwMode);
+    dashApplyRuntimeState();
     dashApplyFilters();
 
     // Phase 3: Bionic PRNG uses default seed 0xDEADBEEF.

@@ -19,6 +19,27 @@
 //   DouyinFSD v3.68. Replaces bucket-based mapping with percentage-based
 //   zones + smooth deceleration engine.
 // USE_NEW_SPEED_ALGO=0: Original bucket-based mapping (rollback path).
+//
+// ── NVS / HTTP Parameter Index Mapping ────────────────────────────────
+// The custom speed zone percentages use different indexing conventions
+// across NVS storage, HTTP API, and C++ arrays. The mapping is:
+//
+//   Zone (speed range)   C++ array index   NVS key    HTTP param
+//   ───────────────────  ────────────────  ─────────  ──────────
+//   Zone 0  (≤50 km/h)   customPct[0]      "cp0"      cp1
+//   Zone 1  (≤70 km/h)   customPct[1]      "cp1"      cp2
+//   Zone 2  (≤100 km/h)  customPct[2]      "cp2"      cp3
+//   Zone 3  (>100 km/h)  customPct[3]      "cp3"      cp4
+//
+//   Rule: NVS key = "cp" + arrayIndex     (0-indexed)
+//         HTTP param = "cp" + (arrayIndex + 1)  (1-indexed, user-facing)
+//
+//   Other speed-related NVS keys:
+//     "offsetMode"  → offsetMode       (0=fixed, 1=auto, 2=custom)
+//     "manualPct"   → manualOffsetPct  (0-50%, fixed mode)
+//     "spd_str"     → dashSpeedStrategy (legacy compat, maps to offsetMode)
+//
+//   All values validated to 0-50% range via dashClampSpeedCustomPct().
 
 #include <cstdint>
 #include <algorithm>
@@ -75,11 +96,11 @@ inline constexpr uint8_t kHw3StockOffsetCutoverKph = 80;
 
 // ─── New runtime state (settings) ────────────────────────────────────────────
 // Written from web server task, read from CAN task.
-static volatile uint8_t offsetMode = 1;         // 0=fixed, 1=auto(default), 2=custom
-static volatile uint8_t manualOffsetPct = 0;    // Fixed mode: 0/10/20/30/40/50%
-static volatile uint8_t customPct[4] = {30,20,10,10}; // 4-zone custom percentages
-static volatile float smoothedOffset = 0.0f;    // Smooth decel tracker (km/h)
-static volatile float actualOffset = 0.0f;      // Current actual offset (km/h)
+inline volatile uint8_t offsetMode = 1;          // 0=fixed, 1=auto(default), 2=custom
+inline volatile uint8_t manualOffsetPct = 0;    // Fixed mode: 0/10/20/30/40/50%
+inline volatile uint8_t customPct[4] = {30,20,10,10}; // 4-zone custom percentages
+inline volatile float smoothedOffset = 0.0f;    // Smooth decel tracker (km/h)
+inline volatile float actualOffset = 0.0f;      // Current actual offset (km/h)
 static constexpr float SMOOTH_RATE = 5.0f;      // Decel smoothing rate km/h/s
 
 // ─── Legacy compatibility shims ──────────────────────────────────────────────

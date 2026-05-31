@@ -902,8 +902,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="page" id="pg-strobe">
 <div class="page-title">灯光特技 <span class="exp-badge">实验</span></div>
 <div class="card">
-  <div class="card-title">后雾灯控制</div>
-  <div class="card-subtitle">0x273 CAN帧控制，仅D挡时激活</div>
+  <div class="card-title">后雾灯策略</div>
+  <div class="card-subtitle">这里仅保存默认策略；下方按钮才会立即发送 0x273 CAN-B 执行动作，仅D挡时激活</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">雾灯策略</div>
@@ -941,8 +941,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 <div class="card">
-  <div class="card-title">特技模式</div>
-  <div class="card-subtitle">需D挡，自动停止于其他挡位</div>
+  <div class="card-title">立即执行</div>
+  <div class="card-subtitle">这些按钮才会触发实际灯光动作；需D挡，自动停止于其他挡位</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
     <button class="btn" onclick="fogTrigger('strobe')" style="flex:1;min-width:100px">💡 爆闪</button>
     <button class="btn" onclick="fogTrigger('f1')" style="flex:1;min-width:100px">🏎️ F1领航灯</button>
@@ -1728,7 +1728,8 @@ async function poll(){
   if(mFsdTgl)mFsdTgl.checked=!!d.ci;
   setCls('ov-v14','stat-val '+(S.driveProfile===5?'v-warn':'v-dim'));
   setText('ov-v14',S.driveProfile===5?'MAX/V14':'待机');
-  setText('ov-hw',hwLabel(d.hw));
+  var hwText=d.hwName||hwLabel(d.hw);
+  setText('ov-hw',hwText);
   setCls('ov-can','stat-val '+(d.can?'v-ok':'v-err'));
   setText('ov-can',(d.can?'CAN1 Online':'CAN1 Offline')+' / '+($('s-can2')&&$('s-can2').textContent?$('s-can2').textContent:'CAN2 --'));
   setText('ov-up',fmtUp(d.up||0));
@@ -1741,7 +1742,7 @@ async function poll(){
   setText('m-fps',d.fps.toFixed(1)+' Hz');
   setText('m-rxtx',(d.rx||0)+' / '+(d.tx||0));
   setText('m-up',fmtUp(d.up||0));
-  setText('m-hw',hwLabel(d.hw));
+  setText('m-hw',(d.hwName||hwLabel(d.hw)));
   setText('m-drive',driveModeLabel(driveModeFromProfile(d.driveProfile,d.driveProfileName)));
   setText('m-speed',d.soff!==undefined?d.soff:'--');
   setText('m-defense',d.hw3OffsetSlew?'ON':'OFF');
@@ -1762,13 +1763,13 @@ async function poll(){
   setText('s-rx',(d.rx||0)+'/'+(d.tx||0));
   setText('s-tx',d.tx||0);
   setText('s-fps',d.fps.toFixed(1)+' Hz');
-  setText('s-hw',hwLabel(d.hw));
+  setText('s-hw',(d.hwName||hwLabel(d.hw)));
   setText('s-soff',d.soff||0);
   // Temp from /system_status is separate; use eflg field as proxy
   setText('s-txerr',d.txerr||0);
   setText('s-fd',d.fd||0);
   setStatusTriplet('module',d.ci?'FSD ON':'FSD OFF','启动保存: '+(d.ci?'ON':'OFF'),d.can?'CAN Online':'CAN Offline',d.can?'ok':'err');
-  setStatusTriplet('hw',hwLabel(d.hw),'mode_hw: '+hwLabel(d.hw),(d.can?'CAN运行 / ':'CAN离线 / ')+hwLabel(d.hw),d.can?'ok':'warn');
+  setStatusTriplet('hw',(d.hwName||hwLabel(d.hw)),'mode_hw: '+(d.hwName||hwLabel(d.hw)),(d.can?'CAN运行 / ':'CAN离线 / ')+(d.hwName||hwLabel(d.hw)),d.can?'ok':'warn');
   setStatusTriplet('speed','偏移 '+(d.soff!==undefined?d.soff:'--'),driveLabel(d.sp,d.spAuto),d.fusedSpeedLimitKph?('Fused '+d.fusedSpeedLimitKph+' kph'):'CAN未给出速度',d.can?'ok':'warn');
   setStatusTriplet('defense',d.hw3OffsetSlew?'防御 ON':'防御 OFF','slew '+(d.hw3OffsetSlew?'ON':'OFF'),'触发 '+(d.hw3SlewCount||0)+' / offset '+(d.hw3OffsetLast!==undefined?d.hw3OffsetLast:'--'),d.hw3OffsetSlew?'ok':'warn');
 
@@ -2277,18 +2278,22 @@ async function loadStrobePage(){
   var sel=$('fog-strategy');if(sel)sel.value=d.rear_fog_value||0;
   var cnt=$('strobe-count');if(cnt)cnt.value=d.count||3;
   var frq=$('strobe-freq');if(frq)frq.value=d.frequency_value||1;
-  // Get active state
+  // Get active state from execution endpoint plus gear from status.
+  var f=await fetchJson('/fog_light');
+  if(f)setText('strobe-status',f.active?'运行中':(f.reason||'待触发'));
   var s=await fetchJson('/status');
   if(s){
-    setText('strobe-status',s.strobeCont?'运行中':'待触发');
     var gears=['','P','R','N','D','','','','SNA'];
     setText('strobe-gear',s.gear!==undefined?gears[s.gear]||s.gear:'--');
   }
 }
 
 async function fogTrigger(mode){
-  try{await postForm('/fog_light',{trigger:mode});}
-  catch(e){}
+  try{
+    var r=await postForm('/fog_light',{trigger:mode});
+    if(r)setText('strobe-status',r.active?'运行中':(r.reason||'已发送'));
+  }
+  catch(e){setText('strobe-status','执行失败')}
   loadStrobePage();
 }
 
@@ -2400,11 +2405,12 @@ async function loadFirmwareInfo(){
   if(!d)return;
   setText('ota-ver',d.firmware||'--');
   setText('rel-current',d.firmware||'--');
-  setText('ota-build',d.idf||'--');
+  var buildLabel=d.uiBuildUtc||d.uiBuildId||d.buildEnv||'--';
+  setText('ota-build',buildLabel);
   var appUsed=d.app_used?Math.round(d.app_used/1024)+'KB':'--';
   var appTotal=d.app_size?Math.round(d.app_size/1024)+'KB':'--';
   setText('ota-flash',appUsed+' / '+appTotal);
-  setText('ota-sdk',d.target||'--');
+  setText('ota-sdk',(d.target||'--')+' / '+(d.idf||'--'));
 }
 
 var releaseUpdateUrl='';

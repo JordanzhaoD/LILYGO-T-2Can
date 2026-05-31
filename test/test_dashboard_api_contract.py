@@ -28,6 +28,31 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.tests_workflow = TESTS_WORKFLOW.read_text(encoding="utf-8")
         cls.release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
 
+    def test_dashboard_ui_generation_is_dependency_aware(self) -> None:
+        """PlatformIO must rebuild firmware when the generated dashboard header changes."""
+        build_script = (ROOT / "scripts" / "update_ota_build_timestamp.py").read_text(encoding="utf-8")
+        minify_script = (ROOT / "scripts" / "minify_dashboard.py").read_text(encoding="utf-8")
+        self.assertIn("env.Command", build_script)
+        self.assertIn("env.Depends(\"$BUILD_DIR/src/main.cpp.o\"", build_script)
+        self.assertIn("env.Depends(\"$BUILD_DIR/${PROGNAME}.elf\"", build_script)
+        self.assertIn("DASH_UI_BUILD_ID", minify_script)
+        self.assertIn("--check", minify_script)
+
+    def test_generated_dashboard_header_contains_current_phase_tokens(self) -> None:
+        """Generated gzip header must be regenerated from the current source UI."""
+        for token in [
+            "DASH_HTML_GZ",
+            "DASH_UI_BUILD_ID",
+            "DASH_UI_BUILD_UTC",
+            "pg-strobe",
+            "pg-shift",
+            "/speed_custom",
+            "/defense_config",
+            "/fog_light",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui_gen)
+
     def test_destructive_buttons_use_post_helpers(self) -> None:
         self.assertIn('onclick="resetStats()"', self.ui)
         self.assertIn('onclick="rebootDevice()"', self.ui)
@@ -44,6 +69,27 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('onclick="setHW(3)"', self.ui)
         self.assertIn("var map=[3,0,1,2];", self.ui)
         self.assertIn("if (v <= 3 && v != hwMode)", self.dash)
+
+    def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
+        """Device status must show which firmware/UI and handler mode are running."""
+        for token in [
+            "dashDefaultHw",
+            "effectiveHw",
+            "hwName",
+            "buildEnv",
+            "uiBuildId",
+            "uiBuildUtc",
+            "DASH_DEFAULT_HW",
+            "DASH_BUILD_ENV",
+            "DASH_UI_BUILD_ID",
+            "DASH_UI_BUILD_UTC",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        self.assertIn("DASH_DEFAULT_HW=", (ROOT / "scripts" / "platformio_sync_profile.py").read_text(encoding="utf-8"))
+        self.assertIn("DASH_BUILD_ENV", (ROOT / "scripts" / "platformio_sync_profile.py").read_text(encoding="utf-8"))
+        self.assertIn("d.hwName||hwLabel(d.hw)", self.ui)
+        self.assertIn("d.uiBuildUtc||d.uiBuildId||d.buildEnv", self.ui)
 
     def test_backend_accepts_panel_control_methods(self) -> None:
         expected_routes = [
@@ -523,6 +569,27 @@ class DashboardApiContractTests(unittest.TestCase):
         # Must still have legacy echo fallback
         self.assertIn("0xB6", body)
 
+    def test_dashboard_runtime_state_syncs_defense_to_handlers(self) -> None:
+        """Loaded NVS/UI defense state must reach active handler and handlerPool."""
+        runtime = re.search(r"static void dashApplyRuntimeState\(\).*?#if defined\(DASH_RGB_STATUS_LED\)", self.dash, re.S)
+        self.assertIsNotNone(runtime)
+        runtime_body = runtime.group(0)
+        for token in [
+            "dashHandler->bionicSteering = dashBionicSteering",
+            "dashHandler->isaChimeSuppress = nvsIsaChimeSuppress",
+            "dashHandler->banShieldEnable = nvsBanShieldEnable",
+            "dashHandler->legacyOffset = nvsLegacyOffset",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, runtime_body)
+
+        nvs_sync = re.search(r"static void dashApplyNvsRuntimeSwitches\(\).*?\n}\n", self.dash, re.S)
+        self.assertIsNotNone(nvs_sync)
+        nvs_body = nvs_sync.group(0)
+        self.assertIn("handlerPool[i]->bionicSteering = dashBionicSteering", nvs_body)
+        self.assertIn("handlerPool[i]->banShieldEnable = nvsBanShieldEnable", nvs_body)
+        self.assertIn("dashApplyNvsRuntimeSwitches();\n    dashSwapHandler(hwMode);", self.dash)
+
     def test_phase3_defense_config_exposes_dnd_params(self) -> None:
         """defense_config must accept and return dnd_volume and dnd_speed."""
         defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
@@ -662,6 +729,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("dashFogCtrl.startContinuous(", body)
         self.assertIn("dashFogOffRequested = true", body)
         self.assertIn("dashFogCtrl.isActive()", body)
+        self.assertIn('driverSupported', body)
+        self.assertIn('reason', body)
+        self.assertIn('"driver_not_supported"', body)
 
     def test_phase4_strobe_cont_is_functional(self) -> None:
         """/strobe_cont must be functional, not a stub."""
@@ -671,6 +741,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn('"Phase 4"', body)
         self.assertIn("dashFogCtrl.startStrobe(0", body)  # 0 = infinite
         self.assertIn("dashFogOffRequested = true", body)
+        self.assertIn('driverSupported', body)
+        self.assertIn('reason', body)
 
     def test_phase4_status_strobeCont_is_dynamic(self) -> None:
         """/status strobeCont must reflect actual state, not hardcoded."""
@@ -725,6 +797,9 @@ class DashboardApiContractTests(unittest.TestCase):
         for fn in ["loadStrobePage", "fogTrigger", "saveFogStrategy"]:
             with self.subTest(fn=fn):
                 self.assertIn(f"async function {fn}", self.ui)
+        self.assertIn("这里仅保存默认策略", self.ui)
+        self.assertIn("这些按钮才会触发实际灯光动作", self.ui)
+        self.assertIn("fetchJson('/fog_light')", self.ui)
 
     def test_phase4_js_navigates_to_strobe_page(self) -> None:
         """Page navigation must load strobe page data."""

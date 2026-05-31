@@ -63,6 +63,13 @@ jobs:
           - native_injection_after_ap
           - native_plugin_engine
           - native_plugin_engine_custom_key
+          - native_hw3
+          - native_hw4
+          - native_legacy
+          - native_helpers
+          - native_twai
+          - native_bionic_steer
+          - native_wheel_dnd
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6

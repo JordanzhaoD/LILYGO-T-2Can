@@ -255,10 +255,12 @@ if uses_dashboard:
         if cred_name in credentials:
             env.Append(CPPDEFINES=[(cred_name, f'\\"{credentials[cred_name]}\\"')])
 
-# Inject firmware version from VERSION file
+# Inject firmware version and build environment diagnostics.
 if version_path.exists():
     fw_version = version_path.read_text(encoding="utf-8").strip()
     env.Append(CPPDEFINES=[("FIRMWARE_VERSION", f'\\"{fw_version}\\"')])
+if uses_dashboard:
+    env.Append(CPPDEFINES=[("DASH_BUILD_ENV", f'\\"{env["PIOENV"]}\\"')])
 
 print(
     f"Synced {display_config_path.as_posix()} defines for {env['PIOENV']}: "
