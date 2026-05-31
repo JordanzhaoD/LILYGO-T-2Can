@@ -381,6 +381,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="nav-item" data-page="pg-drive"><span class="nav-icon">◉</span>驾驶模式</div>
     <div class="nav-item" data-page="pg-speed"><span class="nav-icon">↗</span>速度偏移</div>
     <div class="nav-item" data-page="pg-bus2"><span class="nav-icon">✦</span>CAN2控制</div>
+    <div class="nav-item" data-page="pg-strobe"><span class="nav-icon">⚡</span>灯光特技</div>
     <div class="nav-item" data-page="pg-defense"><span class="nav-icon">◈</span>FSD防御</div>
     <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA升级</div>
     <div class="nav-item" data-page="pg-network"><span class="nav-icon">◎</span>网络设置</div>
@@ -840,6 +841,64 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <input type="checkbox" id="svc-mode-tgl" onchange="toggleServiceMode()">
       <div class="tgl-track"></div>
     </label>
+  </div>
+</div>
+    </div>
+
+    <!-- Page 5.5: Light Stunt (Phase 4) -->
+    <div class="page" id="pg-strobe">
+<div class="page-title">灯光特技 <span class="exp-badge">实验</span></div>
+<div class="card">
+  <div class="card-title">后雾灯控制</div>
+  <div class="card-subtitle">0x273 CAN帧控制，仅D挡时激活</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">雾灯策略</div>
+      <div class="setting-desc">选择后雾灯模式</div>
+    </div>
+    <select id="fog-strategy" onchange="saveFogStrategy()">
+      <option value="0">关闭</option>
+      <option value="1">爆闪</option>
+      <option value="2">持续亮</option>
+    </select>
+  </div>
+</div>
+<div class="card">
+  <div class="card-title">爆闪参数</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">闪烁次数</div>
+    </div>
+    <select id="strobe-count" onchange="saveLightingConfig()">
+      <option value="3">3次</option>
+      <option value="5">5次</option>
+      <option value="7">7次</option>
+      <option value="10">10次</option>
+    </select>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">闪烁频率</div>
+    </div>
+    <select id="strobe-freq" onchange="saveLightingConfig()">
+      <option value="0">慢速</option>
+      <option value="1" selected>中速</option>
+      <option value="2">快速</option>
+    </select>
+  </div>
+</div>
+<div class="card">
+  <div class="card-title">特技模式</div>
+  <div class="card-subtitle">需D挡，自动停止于其他挡位</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+    <button class="btn" onclick="fogTrigger('strobe')" style="flex:1;min-width:100px">💡 爆闪</button>
+    <button class="btn" onclick="fogTrigger('f1')" style="flex:1;min-width:100px">🏎️ F1领航灯</button>
+    <button class="btn" onclick="fogTrigger('continuous')" style="flex:1;min-width:100px">🔆 持续亮</button>
+    <button class="btn btn-danger" onclick="fogTrigger('stop')" style="flex:1;min-width:100px">⏹ 停止</button>
+  </div>
+  <div class="diag-grid" style="margin-top:12px">
+    <div class="diag-item"><span class="lbl">当前状态</span><span class="v-acc" id="strobe-status">待触发</span></div>
+    <div class="diag-item"><span class="lbl">挡位</span><span class="v-dim" id="strobe-gear">--</span></div>
   </div>
 </div>
     </div>
@@ -1461,6 +1520,7 @@ function showPage(pageId){
   if(pageId==='pg-drive')loadDriveProfile();
   if(pageId==='pg-bus2')pollCAN2();
   if(pageId==='pg-bus2')loadLightingConfig();
+  if(pageId==='pg-strobe')loadStrobePage();
   if(pageId==='pg-speed')loadSpeedStrategy();
   if(pageId==='pg-defense')loadDefenseConfig();
   if(pageId==='pg-network'){pollWifiStatus();pollGatewayStatus();loadGatewayDns();loadGatewayBlocked();}
@@ -2064,6 +2124,35 @@ function setRearFogStrategy(strategy){
 
 function lightDelayMs(){
   return lightFrequency==='fast'?180:(lightFrequency==='slow'?650:350);
+}
+
+// ── Phase 4: Strobe / Fog Light ──────────────────────────────
+async function loadStrobePage(){
+  var d=await fetchJson('/lighting_config');
+  if(!d)return;
+  var sel=$('fog-strategy');if(sel)sel.value=d.rear_fog_value||0;
+  var cnt=$('strobe-count');if(cnt)cnt.value=d.count||3;
+  var frq=$('strobe-freq');if(frq)frq.value=d.frequency_value||1;
+  // Get active state
+  var s=await fetchJson('/status');
+  if(s){
+    setText('strobe-status',s.strobeCont?'运行中':'待触发');
+    var gears=['','P','R','N','D','','','','SNA'];
+    setText('strobe-gear',s.gear!==undefined?gears[s.gear]||s.gear:'--');
+  }
+}
+
+async function fogTrigger(mode){
+  try{await postForm('/fog_light',{trigger:mode});}
+  catch(e){}
+  loadStrobePage();
+}
+
+async function saveFogStrategy(){
+  var sel=$('fog-strategy');
+  if(!sel)return;
+  try{await postForm('/fog_light',{fogStrategy:sel.value});}
+  catch(e){}
 }
 
 async function strobeTest(mode){
@@ -2714,6 +2803,7 @@ function restartPoll(ms){
   <div class="mob-more-item" data-page="pg-speed">↗ 速度偏移</div>
   <div class="mob-more-item" data-page="pg-ota">⇧ OTA升级</div>
   <div class="mob-more-item" data-page="pg-bus2">✦ CAN2控制</div>
+  <div class="mob-more-item" data-page="pg-strobe">⚡ 灯光特技</div>
   <div class="mob-more-item" data-page="pg-network">◎ 网络设置</div>
   <div class="mob-more-item" data-page="pg-defense">◈ FSD防御</div>
   <div class="mob-more-item" data-page="pg-can">⌘ CAN工具</div>

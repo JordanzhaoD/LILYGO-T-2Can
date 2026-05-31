@@ -525,6 +525,114 @@ class DashboardApiContractTests(unittest.TestCase):
         """handlers.h must include dash_bionic_steer.h."""
         self.assertIn('#include "dash_bionic_steer.h"', self.handlers)
 
+    # ── Phase 4: Light Stunt System ───────────────────────────
+
+    def test_phase4_fog_light_header_exists(self) -> None:
+        """dash_fog_light.h must exist with core API surface."""
+        fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
+        for symbol in ["DashFogLight", "startStrobe", "startF1Pilot",
+                        "startContinuous", "stop", "tick", "buildFrame",
+                        "isActive", "kModeOff", "kModeStrobe",
+                        "kModeF1Pilot", "kModeContinuous"]:
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, fog)
+
+    def test_phase4_fog_light_safety_gear_check(self) -> None:
+        """Fog light must auto-stop when gearRaw != 4 (Drive)."""
+        fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
+        self.assertIn("gearRaw != 4", fog)
+        self.assertIn("if (isActive()) stop()", fog)
+
+    def test_phase4_fog_light_uses_can273_constants(self) -> None:
+        """Fog light must use the 0x273 CAN frame constants from can_frame_types.h."""
+        fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
+        # Includes can_frame_types.h which defines CAN_ID_REAR_FOG_LIGHT
+        self.assertIn("can_frame_types.h", fog)
+        self.assertIn("FOG_BASE_2_ON", fog)
+        self.assertIn("FOG_BASE_2_OFF", fog)
+
+    def test_phase4_fog_light_checksum(self) -> None:
+        """Fog frames must include checksum calculation for 0x273."""
+        fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
+        self.assertIn("0x73u + 0x02u", fog)  # CAN ID 0x273 bytes
+        self.assertIn("data[7]", fog)         # checksum byte
+
+    def test_phase4_fog_light_f1_timing(self) -> None:
+        """F1 pilot mode must use 135ms flash + 1500ms pause."""
+        fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
+        self.assertIn("kF1FlashDurationMs{135}", fog)
+        self.assertIn("kF1PauseMs{1500}", fog)
+        self.assertIn("kF1FlashCount{3}", fog)
+
+    def test_phase4_fog_handler_has_trigger_param(self) -> None:
+        """/fog_light must accept trigger parameter for execution."""
+        fog_handler = re.search(r"static void handleFogLight\(\).*?server\.send", self.dash, re.S)
+        self.assertIsNotNone(fog_handler)
+        body = fog_handler.group(0)
+        self.assertIn('server.hasArg("trigger")', body)
+        self.assertIn("dashFogCtrl.startStrobe(", body)
+        self.assertIn("dashFogCtrl.startF1Pilot(", body)
+        self.assertIn("dashFogCtrl.startContinuous(", body)
+        self.assertIn("dashFogCtrl.stop()", body)
+        self.assertIn("dashFogCtrl.isActive()", body)
+
+    def test_phase4_strobe_cont_is_functional(self) -> None:
+        """/strobe_cont must be functional, not a stub."""
+        strobe_handler = re.search(r"static void handleStrobeCont\(\).*?server\.send", self.dash, re.S)
+        self.assertIsNotNone(strobe_handler)
+        body = strobe_handler.group(0)
+        self.assertNotIn('"Phase 4"', body)
+        self.assertIn("dashFogCtrl.startStrobe(0", body)  # 0 = infinite
+        self.assertIn("dashFogCtrl.stop()", body)
+
+    def test_phase4_status_strobeCont_is_dynamic(self) -> None:
+        """/status strobeCont must reflect actual state, not hardcoded."""
+        # The old code was: j += ",\"strobeCont\":false";
+        # The new code uses dashFogCtrl.isActive()
+        self.assertNotIn('"strobeCont\\":false', self.dash)
+        self.assertIn("dashFogCtrl.isActive()", self.dash)
+
+    def test_phase4_dashboard_includes_fog_light_header(self) -> None:
+        """Dashboard must include dash_fog_light.h."""
+        self.assertIn('#include "dash_fog_light.h"', self.dash)
+
+    def test_phase4_dashboard_has_fog_ctrl_instance(self) -> None:
+        """Dashboard must have a DashFogLight instance."""
+        self.assertIn("DashFogLight dashFogCtrl", self.dash)
+
+    def test_phase4_ui_has_strobe_page(self) -> None:
+        """UI must have pg-strobe page with all controls."""
+        strobe_page = re.search(r'id="pg-strobe".*?id="pg-defense"', self.ui, re.S)
+        self.assertIsNotNone(strobe_page)
+        body = strobe_page.group(0)
+        for element in ['id="fog-strategy"', 'id="strobe-count"',
+                        'id="strobe-freq"', 'fogTrigger(\'strobe\')',
+                        'fogTrigger(\'f1\')', 'fogTrigger(\'continuous\')',
+                        'fogTrigger(\'stop\')', 'id="strobe-status"',
+                        'id="strobe-gear"']:
+            with self.subTest(element=element):
+                self.assertIn(element, body)
+
+    def test_phase4_ui_sidebar_has_stroke_nav(self) -> None:
+        """Sidebar must have pg-stroke navigation item."""
+        self.assertIn('data-page="pg-strobe"', self.ui)
+        self.assertIn('灯光特技', self.ui)
+
+    def test_phase4_ui_mobile_nav_has_stroke(self) -> None:
+        """Mobile nav must have pg-stroke item."""
+        # Count mobile nav items for pg-strobe
+        self.assertEqual(self.ui.count('data-page="pg-strobe"'), 2)  # sidebar + mobile
+
+    def test_phase4_js_has_fog_functions(self) -> None:
+        """JS must have loadStrobePage, fogTrigger, saveFogStrategy."""
+        for fn in ["loadStrobePage", "fogTrigger", "saveFogStrategy"]:
+            with self.subTest(fn=fn):
+                self.assertIn(f"async function {fn}", self.ui)
+
+    def test_phase4_js_navigates_to_strobe_page(self) -> None:
+        """Page navigation must load strobe page data."""
+        self.assertIn("pageId==='pg-strobe')loadStrobePage()", self.ui)
+
 
 if __name__ == "__main__":
     unittest.main()

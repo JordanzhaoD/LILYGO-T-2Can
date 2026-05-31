@@ -44,6 +44,7 @@
 #include "web/mcp2515_dashboard_ui.h"
 #include "dash_ota_guard.h"
 #include "dash_power_mgmt.h"
+#include "dash_fog_light.h"
 
 #ifndef DASH_SSID
 #error "Define -DDASH_SSID in build_flags (e.g. -DDASH_SSID=\\\"ADUnlock-1234\\\")"
@@ -136,6 +137,7 @@ static bool dashLightingEnabled = false;
 static uint8_t dashLightingCount = 3;
 static uint8_t dashLightingFrequency = 1; // 0=slow, 1=medium, 2=fast
 static uint8_t dashRearFogStrategy = 0;   // 0=off, 1=strobe, 2=continuous
+static DashFogLight dashFogCtrl;           // Phase 4 fog light controller instance
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
 static bool dashSpeedNoDisturb = false;
@@ -1874,7 +1876,8 @@ static void handleStatus()
     j += wifiAutoOffEnabled ? "true" : "false";
     j += ",\"fogStrategy\":";
     j += (int)dashRearFogStrategy;
-    j += ",\"strobeCont\":false";
+    j += ",\"strobeCont\":";
+    j += dashFogCtrl.isActive() ? "true" : "false";
     j += ",\"dndVolume\":";
     j += dashDndVolume ? "true" : "false";
     j += ",\"dndSpeed\":";
@@ -2475,7 +2478,7 @@ static void handleVehicleOtaStatus() {
     server.send(200, "application/json", json);
 }
 
-// POST/GET /fog_light — 后雾灯策略
+// POST/GET /fog_light — 后雾灯策略 + 执行控制
 static void handleFogLight() {
     dashPowerMgmtTouchWeb();
     if (server.hasArg("fogStrategy")) {
@@ -2485,15 +2488,50 @@ static void handleFogLight() {
         prefs.begin(PREFS_NS, false);
         prefs.putUChar("lt_fog", strategy);
         prefs.end();
+        // Stop active fog when strategy changes to off
+        if (strategy == 0) dashFogCtrl.stop();
         dashLog(String("[CFG] Fog strategy: ") + dashRearFogStrategyName(strategy));
     }
-    server.send(200, "application/json", "{\"fogStrategy\":" + String(dashRearFogStrategy) + "}");
+    // Phase 4: trigger fog light execution
+    if (server.hasArg("trigger")) {
+        String t = server.arg("trigger");
+        if (t == "strobe") {
+            dashFogCtrl.startStrobe(dashLightingCount, dashLightingFrequency);
+            dashLog("[FOG] Strobe started");
+        } else if (t == "f1") {
+            dashFogCtrl.startF1Pilot();
+            dashLog("[FOG] F1 pilot started");
+        } else if (t == "continuous") {
+            dashFogCtrl.startContinuous();
+            dashLog("[FOG] Continuous ON");
+        } else if (t == "stop") {
+            dashFogCtrl.stop();
+            dashLog("[FOG] Stopped");
+        }
+    }
+    String j = "{\"fogStrategy\":";
+    j += String(dashRearFogStrategy);
+    j += ",\"active\":";
+    j += dashFogCtrl.isActive() ? "true" : "false";
+    j += "}";
+    server.send(200, "application/json", j);
 }
 
-// POST /strobe_cont — 连续闪烁（Phase 4 实现完整逻辑）
+// POST /strobe_cont — 连续闪烁（Phase 4: now functional）
 static void handleStrobeCont() {
     dashPowerMgmtTouchWeb();
-    server.send(200, "application/json", "{\"ok\":true,\"note\":\"Phase 4\"}");
+    bool enable = server.hasArg("enable") && server.arg("enable") == "1";
+    if (enable) {
+        dashFogCtrl.startStrobe(0, dashLightingFrequency);  // 0 = infinite
+        dashLog("[STROBE] Continuous strobe started");
+    } else {
+        dashFogCtrl.stop();
+        dashLog("[STROBE] Stopped");
+    }
+    String j = "{\"ok\":true,\"strobeCont\":";
+    j += dashFogCtrl.isActive() ? "true" : "false";
+    j += "}";
+    server.send(200, "application/json", j);
 }
 
 static void handleGearAssistStatus()
