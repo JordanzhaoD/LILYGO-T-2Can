@@ -1,0 +1,197 @@
+<h2>当前 Dashboard vs 参考界面对比</h2>
+<p class="subtitle">左侧是当前 T-2CAN 的布局，右侧是参考截图的设计方向</p>
+
+<div class="split">
+  <!-- LEFT: Current Dashboard Structure -->
+  <div class="mockup">
+    <div class="mockup-header">当前 T-2CAN Dashboard（单页滚动）</div>
+    <div class="mockup-body" style="padding:12px;font-size:13px;">
+      <div style="background:#1a1a2e;border-radius:8px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #333;padding-bottom:8px;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="background:#2d2d44;padding:2px 8px;border-radius:4px;font-size:11px">HW3</span>
+            <span style="color:#888;font-size:12px">GTW —</span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button style="background:#2d2d44;border:none;color:#aaa;padding:3px 10px;border-radius:4px;font-size:11px">中文</button>
+            <button style="background:#2d2d44;border:none;color:#aaa;padding:3px 10px;border-radius:4px;font-size:11px">Light</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px">
+          <div style="background:#2d2d44;padding:6px;border-radius:4px;text-align:center"><div style="color:#888;font-size:10px">CAN Bus</div><div style="color:#4ade80;font-size:12px">Online</div></div>
+          <div style="background:#2d2d44;padding:6px;border-radius:4px;text-align:center"><div style="color:#888;font-size:10px">FSD Switch</div><div style="color:#f87171;font-size:12px">OFF</div></div>
+          <div style="background:#2d2d44;padding:6px;border-radius:4px;text-align:center"><div style="color:#888;font-size:10px">CAN FPS</div><div style="color:#60a5fa;font-size:12px">32.5 Hz</div></div>
+          <div style="background:#2d2d44;padding:6px;border-radius:4px;text-align:center"><div style="color:#888;font-size:10px">RX / TX</div><div style="color:#60a5fa;font-size:12px">1.2K / 340</div></div>
+        </div>
+        <button style="background:#dc2626;border:none;color:#fff;padding:6px 16px;border-radius:6px;width:100%;font-size:13px">Turn FSD On</button>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:11px">
+        <div style="background:#2d2d44;border-radius:6px;padding:8px;border-left:3px solid #60a5fa">
+          <div style="color:#60a5fa;font-weight:600;margin-bottom:4px">System Status</div>
+          <div style="color:#888">CPU, Heap, Flash, WiFi...</div>
+        </div>
+        <div style="background:#2d2d44;border-radius:6px;padding:8px;border-left:3px solid #a78bfa">
+          <div style="color:#a78bfa;font-weight:600;margin-bottom:4px">Bus2 Sniffer</div>
+          <div style="color:#888">0 IDs | MCP2515 secondary</div>
+        </div>
+        <div style="background:#2d2d44;border-radius:6px;padding:8px;border-left:3px solid #fbbf24">
+          <div style="color:#fbbf24;font-weight:600;margin-bottom:4px">Lighting / Stalk Test</div>
+          <div style="color:#888">0x249 injection + Service Mode</div>
+        </div>
+        <div style="background:#2d2d44;border-radius:6px;padding:8px;border-left:3px solid #4ade80">
+          <div style="color:#4ade80;font-weight:600;margin-bottom:4px">Configuration</div>
+          <div style="color:#888">HW version, Speed limit, WiFi, CAN pins...</div>
+        </div>
+        <div style="background:#2d2d44;border-radius:6px;padding:8px;border-left:3px solid #f87171">
+          <div style="color:#f87171;font-weight:600;margin-bottom:4px">Firmware Update</div>
+          <div style="color:#888">Manual OTA .bin upload</div>
+        </div>
+        <div style="background:#2d2d44;border-radius:6px;padding:8px;border-left:3px solid #38bdf8">
+          <div style="color:#38bdf8;font-weight:600;margin-bottom:4px">CAN Tools</div>
+          <div style="color:#888">Sniffer, Recorder, Controller, Write Check</div>
+        </div>
+        <div style="background:#2d2d44;border-radius:6px;padding:8px;border-left:3px solid #888">
+          <div style="color:#888;font-weight:600;margin-bottom:4px">CAN Debug</div>
+          <div style="color:#666">Debug log toggle</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Reference Design Direction -->
+  <div class="mockup">
+    <div class="mockup-header">参考界面设计方向（侧边栏导航）</div>
+    <div class="mockup-body" style="padding:0;font-size:13px;">
+      <div style="display:flex;height:320px">
+        <!-- Sidebar -->
+        <div style="width:140px;background:#0f172a;padding:12px 0;flex-shrink:0">
+          <div style="padding:0 12px 12px;border-bottom:1px solid #1e293b;margin-bottom:4px">
+            <div style="color:#f8fafc;font-weight:700;font-size:14px">T-2CAN</div>
+            <div style="color:#64748b;font-size:10px">Control Panel</div>
+          </div>
+          <div style="padding:6px 12px;font-size:11px">
+            <div style="background:#1e40af;color:#e0e7ff;padding:5px 8px;border-radius:4px;margin-bottom:2px;font-weight:500">模块配置</div>
+            <div style="color:#94a3b8;padding:5px 8px;margin-bottom:2px;border-radius:4px">破解模式</div>
+            <div style="color:#94a3b8;padding:5px 8px;margin-bottom:2px;border-radius:4px">速度偏移</div>
+            <div style="color:#94a3b8;padding:5px 8px;margin-bottom:2px;border-radius:4px">灯光特技</div>
+            <div style="color:#94a3b8;padding:5px 8px;margin-bottom:2px;border-radius:4px">FSD防御</div>
+            <div style="color:#94a3b8;padding:5px 8px;margin-bottom:2px;border-radius:4px">OTA升级</div>
+            <div style="color:#94a3b8;padding:5px 8px;margin-bottom:2px;border-radius:4px">网络设置</div>
+            <div style="color:#94a3b8;padding:5px 8px;margin-bottom:2px;border-radius:4px">CAN工具</div>
+          </div>
+        </div>
+        <!-- Main content -->
+        <div style="flex:1;background:#1e293b;padding:12px;overflow-y:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #334155">
+            <div style="display:flex;gap:16px;align-items:center">
+              <div style="color:#4ade80;font-size:12px">CAN 32.5 Hz</div>
+              <div style="background:#166534;color:#4ade80;padding:2px 8px;border-radius:4px;font-size:11px">已启用</div>
+              <div style="background:#7c2d12;color:#fbbf24;padding:2px 8px;border-radius:4px;font-size:11px">FSD 防封保护</div>
+            </div>
+            <div style="color:#64748b;font-size:11px">00:15:32</div>
+          </div>
+          <!-- Module content area -->
+          <div style="background:#334155;border-radius:8px;padding:12px;margin-bottom:8px">
+            <div style="color:#f8fafc;font-weight:600;margin-bottom:8px">硬件版本</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+              <div style="background:#1e40af;border:2px solid #3b82f6;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#93c5fd;font-size:10px">Auto</div>
+                <div style="color:#fff;font-weight:600">自动检测</div>
+              </div>
+              <div style="background:#1e293b;border:1px solid #475569;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#94a3b8;font-size:10px">HW3</div>
+                <div style="color:#cbd5e1">HW3</div>
+              </div>
+              <div style="background:#1e293b;border:1px solid #475569;border-radius:8px;padding:10px;text-align:center">
+                <div style="color:#94a3b8;font-size:10px">HW4</div>
+                <div style="color:#cbd5e1">HW4</div>
+              </div>
+            </div>
+          </div>
+          <div style="background:#334155;border-radius:8px;padding:12px">
+            <div style="color:#f8fafc;font-weight:600;margin-bottom:8px">速度配置</div>
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+              <div style="display:flex;justify-content:space-between;align-items:center;background:#1e293b;padding:8px 12px;border-radius:6px">
+                <span style="color:#94a3b8;font-size:12px">速度偏移</span>
+                <span style="color:#4ade80;font-size:12px">+15 km/h</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;background:#1e293b;padding:8px 12px;border-radius:6px">
+                <span style="color:#94a3b8;font-size:12px">跟随距离</span>
+                <span style="color:#60a5fa;font-size:12px">3</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">功能映射关系</h3>
+<table style="width:100%;border-collapse:collapse;font-size:13px">
+  <thead>
+    <tr style="border-bottom:2px solid #334155">
+      <th style="text-align:left;padding:8px;color:#94a3b8">参考侧边栏模块</th>
+      <th style="text-align:left;padding:8px;color:#94a3b8">T-2CAN 现有功能</th>
+      <th style="text-align:center;padding:8px;color:#94a3b8">状态</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid #1e293b">
+      <td style="padding:6px 8px">模块配置</td>
+      <td style="padding:6px 8px">Configuration → Hardware</td>
+      <td style="padding:6px 8px;text-align:center;color:#4ade80">已有</td>
+    </tr>
+    <tr style="border-bottom:1px solid #1e293b">
+      <td style="padding:6px 8px">破解模式 (FSD开关)</td>
+      <td style="padding:6px 8px">FSD Switch 顶部按钮</td>
+      <td style="padding:6px 8px;text-align:center;color:#4ade80">已有</td>
+    </tr>
+    <tr style="border-bottom:1px solid #1e293b">
+      <td style="padding:6px 8px">速度偏移</td>
+      <td style="padding:6px 8px">HW3 Speed + Legacy Speed</td>
+      <td style="padding:6px 8px;text-align:center;color:#4ade80">已有</td>
+    </tr>
+    <tr style="border-bottom:1px solid #1e293b">
+      <td style="padding:6px 8px">灯光特技</td>
+      <td style="padding:6px 8px">Lighting / Stalk Test + Service Mode</td>
+      <td style="padding:6px 8px;text-align:center;color:#4ade80">已有</td>
+    </tr>
+    <tr style="border-bottom:1px solid #1e293b">
+      <td style="padding:6px 8px">FSD防御</td>
+      <td style="padding:6px 8px">HW3 Offset Slew</td>
+      <td style="padding:6px 8px;text-align:center;color:#4ade80">已有</td>
+    </tr>
+    <tr style="border-bottom:1px solid #1e293b">
+      <td style="padding:6px 8px">OTA升级</td>
+      <td style="padding:6px 8px">Firmware Update</td>
+      <td style="padding:6px 8px;text-align:center;color:#4ade80">已有</td>
+    </tr>
+    <tr style="border-bottom:1px solid #1e293b">
+      <td style="padding:6px 8px">网络设置</td>
+      <td style="padding:6px 8px">WiFi Hotspot + Internet + Gateway</td>
+      <td style="padding:6px 8px;text-align:center;color:#4ade80">已有</td>
+    </tr>
+    <tr style="border-bottom:1px solid #1e293b">
+      <td style="padding:6px 8px">CAN工具</td>
+      <td style="padding:6px 8px">Sniffer + Recorder + Controller</td>
+      <td style="padding:6px 8px;text-align:center;color:#4ade80">已有(新增)</td>
+    </tr>
+    <tr style="border-bottom:1px solid #1e293b">
+      <td style="padding:6px 8px;color:#64748b">驾驶模式</td>
+      <td style="padding:6px 8px;color:#64748b">—</td>
+      <td style="padding:6px 8px;text-align:center;color:#f87171">不适用</td>
+    </tr>
+    <tr style="border-bottom:1px solid #1e293b">
+      <td style="padding:6px 8px;color:#64748b">黑名单</td>
+      <td style="padding:6px 8px;color:#64748b">—</td>
+      <td style="padding:6px 8px;text-align:center;color:#f87171">不适用</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;color:#64748b">自动换挡</td>
+      <td style="padding:6px 8px;color:#64748b">—</td>
+      <td style="padding:6px 8px;text-align:center;color:#f87171">不适用</td>
+    </tr>
+  </tbody>
+</table>

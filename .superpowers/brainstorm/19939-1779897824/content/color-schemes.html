@@ -1,0 +1,173 @@
+<h2>选择配色方案</h2>
+<p class="subtitle">三种视觉风格，点击选择你喜欢的</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>深蓝科技风（参考截图风格）</h3>
+      <p>深色背景 + 蓝色强调色，与参考截图一致</p>
+    </div>
+  </div>
+</div>
+
+<div class="cards">
+  <!-- Scheme A: Dark Blue Tech -->
+  <div class="card" data-choice="scheme-a" onclick="toggleSelect(this)" style="cursor:pointer">
+    <div class="card-image">
+      <div style="display:flex;height:200px;overflow:hidden">
+        <div style="width:120px;background:#0f172a;padding:12px 8px;flex-shrink:0">
+          <div style="color:#f8fafc;font-weight:700;font-size:13px;margin-bottom:12px;padding-left:4px">T-2CAN</div>
+          <div style="background:#1e40af;color:#e0e7ff;padding:5px 8px;border-radius:4px;margin-bottom:3px;font-size:10px;font-weight:500">模块配置</div>
+          <div style="color:#94a3b8;padding:5px 8px;margin-bottom:3px;font-size:10px">破解模式</div>
+          <div style="color:#94a3b8;padding:5px 8px;margin-bottom:3px;font-size:10px">速度偏移</div>
+          <div style="color:#94a3b8;padding:5px 8px;margin-bottom:3px;font-size:10px">灯光特技</div>
+          <div style="color:#94a3b8;padding:5px 8px;font-size:10px">网络设置</div>
+        </div>
+        <div style="flex:1;background:#1e293b;padding:12px">
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #334155">
+            <span style="color:#4ade80;font-size:11px;font-weight:600">CAN 32.5 Hz</span>
+            <span style="background:#166534;color:#4ade80;padding:2px 8px;border-radius:4px;font-size:10px">已启用</span>
+          </div>
+          <div style="background:#334155;border-radius:8px;padding:10px;margin-bottom:8px">
+            <div style="color:#f8fafc;font-weight:600;font-size:12px;margin-bottom:6px">硬件版本</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+              <div style="background:#1e40af;border:2px solid #3b82f6;border-radius:6px;padding:8px;text-align:center">
+                <div style="color:#93c5fd;font-size:9px">Auto</div>
+                <div style="color:#fff;font-weight:600;font-size:11px">自动检测</div>
+              </div>
+              <div style="background:#1e293b;border:1px solid #475569;border-radius:6px;padding:8px;text-align:center">
+                <div style="color:#94a3b8;font-size:9px">HW3</div>
+                <div style="color:#cbd5e1;font-size:11px">HW3</div>
+              </div>
+              <div style="background:#1e293b;border:1px solid #475569;border-radius:6px;padding:8px;text-align:center">
+                <div style="color:#94a3b8;font-size:9px">HW4</div>
+                <div style="color:#cbd5e1;font-size:11px">HW4</div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <div style="background:#334155;border-radius:6px;padding:8px;flex:1;display:flex;justify-content:space-between;align-items:center">
+              <span style="color:#94a3b8;font-size:10px">速度偏移</span>
+              <span style="color:#4ade80;font-size:11px;font-weight:600">+15</span>
+            </div>
+            <div style="background:#334155;border-radius:6px;padding:8px;flex:1;display:flex;justify-content:space-between;align-items:center">
+              <span style="color:#94a3b8;font-size:10px">RX / TX</span>
+              <span style="color:#60a5fa;font-size:11px">1.2K / 340</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 深蓝科技风</h3>
+      <p>参考截图同款：#0f172a 深底 + #3b82f6 蓝色强调 + #4ade80 绿色状态</p>
+    </div>
+  </div>
+
+  <!-- Scheme B: Warm Dark -->
+  <div class="card" data-choice="scheme-b" onclick="toggleSelect(this)" style="cursor:pointer">
+    <div class="card-image">
+      <div style="display:flex;height:200px;overflow:hidden">
+        <div style="width:120px;background:#1c1917;padding:12px 8px;flex-shrink:0">
+          <div style="color:#fafaf9;font-weight:700;font-size:13px;margin-bottom:12px;padding-left:4px">T-2CAN</div>
+          <div style="background:#92400e;color:#fef3c7;padding:5px 8px;border-radius:4px;margin-bottom:3px;font-size:10px;font-weight:500">模块配置</div>
+          <div style="color:#a8a29e;padding:5px 8px;margin-bottom:3px;font-size:10px">破解模式</div>
+          <div style="color:#a8a29e;padding:5px 8px;margin-bottom:3px;font-size:10px">速度偏移</div>
+          <div style="color:#a8a29e;padding:5px 8px;margin-bottom:3px;font-size:10px">灯光特技</div>
+          <div style="color:#a8a29e;padding:5px 8px;font-size:10px">网络设置</div>
+        </div>
+        <div style="flex:1;background:#292524;padding:12px">
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #44403c">
+            <span style="color:#4ade80;font-size:11px;font-weight:600">CAN 32.5 Hz</span>
+            <span style="background:#166534;color:#4ade80;padding:2px 8px;border-radius:4px;font-size:10px">已启用</span>
+          </div>
+          <div style="background:#44403c;border-radius:8px;padding:10px;margin-bottom:8px">
+            <div style="color:#fafaf9;font-weight:600;font-size:12px;margin-bottom:6px">硬件版本</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+              <div style="background:#92400e;border:2px solid #d97706;border-radius:6px;padding:8px;text-align:center">
+                <div style="color:#fde68a;font-size:9px">Auto</div>
+                <div style="color:#fff;font-weight:600;font-size:11px">自动检测</div>
+              </div>
+              <div style="background:#292524;border:1px solid #57534e;border-radius:6px;padding:8px;text-align:center">
+                <div style="color:#a8a29e;font-size:9px">HW3</div>
+                <div style="color:#d6d3d1;font-size:11px">HW3</div>
+              </div>
+              <div style="background:#292524;border:1px solid #57534e;border-radius:6px;padding:8px;text-align:center">
+                <div style="color:#a8a29e;font-size:9px">HW4</div>
+                <div style="color:#d6d3d1;font-size:11px">HW4</div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <div style="background:#44403c;border-radius:6px;padding:8px;flex:1;display:flex;justify-content:space-between;align-items:center">
+              <span style="color:#a8a29e;font-size:10px">速度偏移</span>
+              <span style="color:#4ade80;font-size:11px;font-weight:600">+15</span>
+            </div>
+            <div style="background:#44403c;border-radius:6px;padding:8px;flex:1;display:flex;justify-content:space-between;align-items:center">
+              <span style="color:#a8a29e;font-size:10px">RX / TX</span>
+              <span style="color:#fbbf24;font-size:11px">1.2K / 340</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 暖色深色风</h3>
+      <p>石板灰底 + 琥珀色强调，温暖不刺眼，长时间使用更舒适</p>
+    </div>
+  </div>
+
+  <!-- Scheme C: Current Optimized -->
+  <div class="card" data-choice="scheme-c" onclick="toggleSelect(this)" style="cursor:pointer">
+    <div class="card-image">
+      <div style="display:flex;height:200px;overflow:hidden">
+        <div style="width:120px;background:#111827;padding:12px 8px;flex-shrink:0">
+          <div style="color:#f9fafb;font-weight:700;font-size:13px;margin-bottom:12px;padding-left:4px">T-2CAN</div>
+          <div style="background:#7c3aed;color:#ede9fe;padding:5px 8px;border-radius:4px;margin-bottom:3px;font-size:10px;font-weight:500">模块配置</div>
+          <div style="color:#9ca3af;padding:5px 8px;margin-bottom:3px;font-size:10px">破解模式</div>
+          <div style="color:#9ca3af;padding:5px 8px;margin-bottom:3px;font-size:10px">速度偏移</div>
+          <div style="color:#9ca3af;padding:5px 8px;margin-bottom:3px;font-size:10px">灯光特技</div>
+          <div style="color:#9ca3af;padding:5px 8px;font-size:10px">网络设置</div>
+        </div>
+        <div style="flex:1;background:#1f2937;padding:12px">
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #374151">
+            <span style="color:#4ade80;font-size:11px;font-weight:600">CAN 32.5 Hz</span>
+            <span style="background:#166534;color:#4ade80;padding:2px 8px;border-radius:4px;font-size:10px">已启用</span>
+          </div>
+          <div style="background:#374151;border-radius:8px;padding:10px;margin-bottom:8px">
+            <div style="color:#f9fafb;font-weight:600;font-size:12px;margin-bottom:6px">硬件版本</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+              <div style="background:#7c3aed;border:2px solid #a78bfa;border-radius:6px;padding:8px;text-align:center">
+                <div style="color:#c4b5fd;font-size:9px">Auto</div>
+                <div style="color:#fff;font-weight:600;font-size:11px">自动检测</div>
+              </div>
+              <div style="background:#1f2937;border:1px solid #4b5563;border-radius:6px;padding:8px;text-align:center">
+                <div style="color:#9ca3af;font-size:9px">HW3</div>
+                <div style="color:#e5e7eb;font-size:11px">HW3</div>
+              </div>
+              <div style="background:#1f2937;border:1px solid #4b5563;border-radius:6px;padding:8px;text-align:center">
+                <div style="color:#9ca3af;font-size:9px">HW4</div>
+                <div style="color:#e5e7eb;font-size:11px">HW4</div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <div style="background:#374151;border-radius:6px;padding:8px;flex:1;display:flex;justify-content:space-between;align-items:center">
+              <span style="color:#9ca3af;font-size:10px">速度偏移</span>
+              <span style="color:#4ade80;font-size:11px;font-weight:600">+15</span>
+            </div>
+            <div style="background:#374151;border-radius:6px;padding:8px;flex:1;display:flex;justify-content:space-between;align-items:center">
+              <span style="color:#9ca3af;font-size:10px">RX / TX</span>
+              <span style="color:#60a5fa;font-size:11px">1.2K / 340</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. 紫色现代风（当前色系优化）</h3>
+      <p>保留当前 Dashboard 的紫色调，但升级为侧边栏 + 卡片布局</p>
+    </div>
+  </div>
+</div>

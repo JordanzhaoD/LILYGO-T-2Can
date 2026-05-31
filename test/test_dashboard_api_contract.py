@@ -382,6 +382,149 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("setText('ap-mode',ap.mode||", self.ui)
         self.assertIn('",\\"mode\\":\\""', self.dash)
 
+    # ── Phase 3: Bionic Steering + Wheel DND ──────────────────
+
+    def test_phase3_bionic_steer_header_exists(self) -> None:
+        """dash_bionic_steer.h must exist with core API surface."""
+        bionic = (ROOT / "include" / "dash_bionic_steer.h").read_text(encoding="utf-8")
+        for symbol in ["DashBionicSteer", "DashBionicPRNG", "computePerturbation",
+                        "applyToFrame", "beginPhase", "reportFailure", "reportSuccess",
+                        "isDisabled", "reset", "kPerturbCap", "kMaxConsecutiveFails"]:
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, bionic)
+        # Safety cap
+        self.assertIn("kPerturbCap{60}", bionic)
+        # Amplitude range
+        self.assertIn("kAmplitudeLo{30}", bionic)
+        self.assertIn("kAmplitudeHi{55}", bionic)
+
+    def test_phase3_bionic_steer_xorshift32(self) -> None:
+        """xorshift32 PRNG must produce deterministic sequence from seed."""
+        bionic = (ROOT / "include" / "dash_bionic_steer.h").read_text(encoding="utf-8")
+        self.assertIn("s ^= s << 13", bionic)
+        self.assertIn("s ^= s >> 17", bionic)
+        self.assertIn("s ^= s << 5", bionic)
+
+    def test_phase3_bionic_failure_disables_after_3(self) -> None:
+        """3 consecutive failures must auto-disable bionic."""
+        bionic = (ROOT / "include" / "dash_bionic_steer.h").read_text(encoding="utf-8")
+        self.assertIn("kMaxConsecutiveFails{3}", bionic)
+        self.assertIn("consecutiveFails++", bionic)
+        self.assertIn("disabled = true", bionic)
+
+    def test_phase3_wheel_dnd_header_exists(self) -> None:
+        """dash_wheel_dnd.h must exist with four-step sequence state machine."""
+        dnd = (ROOT / "include" / "dash_wheel_dnd.h").read_text(encoding="utf-8")
+        for symbol in ["DashWheelDND", "startVolume", "startSpeed", "tick",
+                        "isRunning", "reset", "kSteps", "kStepCount{4}",
+                        "kCanId{0x3C2}"]:
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, dnd)
+        # Sequence: 01→00→3F→00
+        self.assertIn("0x01", dnd)
+        self.assertIn("0x3F", dnd)
+        # 50ms step interval
+        self.assertIn("kStepIntervalMs{50}", dnd)
+
+    def test_phase3_wheel_dnd_checksum(self) -> None:
+        """DND frames must include Tesla checksum calculation."""
+        dnd = (ROOT / "include" / "dash_wheel_dnd.h").read_text(encoding="utf-8")
+        self.assertIn("0xC2u + 0x03u", dnd)  # CAN ID 0x3C2 bytes
+        self.assertIn("outData[7]", dnd)
+
+    def test_phase3_naghandler_bionic_branch(self) -> None:
+        """NagHandler must branch on bionicSteering with fallback."""
+        nag = re.search(r"struct NagHandler.*?^\};", self.handlers, re.S | re.M)
+        self.assertIsNotNone(nag)
+        body = nag.group(0)
+        # Must check bionicSteering flag
+        self.assertIn("bionicSteering", body)
+        # Must have DashBionicSteer instance
+        self.assertIn("DashBionicSteer bionic;", body)
+        # Must use bionic path
+        self.assertIn("bionic.beginPhase()", body)
+        self.assertIn("bionic.computePerturbation()", body)
+        self.assertIn("bionic.applyToFrame(", body)
+        # Must have failure reporting
+        self.assertIn("bionic.reportFailure()", body)
+        self.assertIn("bionic.reportSuccess()", body)
+        # Must still have legacy echo fallback
+        self.assertIn("0xB6", body)
+
+    def test_phase3_defense_config_exposes_dnd_params(self) -> None:
+        """defense_config must accept and return dnd_volume and dnd_speed."""
+        defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(defense)
+        body = defense.group(0)
+        self.assertIn('server.hasArg("dnd_volume")', body)
+        self.assertIn('server.hasArg("dnd_speed")', body)
+        self.assertIn("dashDndVolume", body)
+        self.assertIn("dashDndSpeed", body)
+
+    def test_phase3_defense_config_json_includes_bionic_status(self) -> None:
+        """defense_config JSON must report bionic_disabled for UI warning."""
+        json_fn = re.search(r"static String dashDefenseConfigJson\(\).*?return j;", self.dash, re.S)
+        self.assertIsNotNone(json_fn)
+        body = json_fn.group(0)
+        self.assertIn('\\"bionic_disabled\\"', body)
+        self.assertIn('\\"dnd_volume\\"', body)
+        self.assertIn('\\"dnd_speed\\"', body)
+        self.assertIn("dashBionicDisabled", body)
+
+    def test_phase3_defense_ui_has_7_toggles(self) -> None:
+        """Defense page must have all 7 toggle switches in pg-defense section."""
+        defense_page = re.search(r'id="pg-defense".*?id="pg-ota"', self.ui, re.S)
+        self.assertIsNotNone(defense_page)
+        body = defense_page.group(0)
+        toggles = [
+            'id="hw3-slew-tgl"',
+            'id="def-bionic-tgl"',
+            'id="def-sound-tgl"',
+            'id="def-dnd-vol-tgl"',
+            'id="def-speed-nd-tgl"',
+            'id="def-dnd-spd-tgl"',
+            'id="def-apeap-tgl"',
+        ]
+        for tid in toggles:
+            with self.subTest(toggle=tid):
+                self.assertIn(tid, body)
+
+    def test_phase3_defense_ui_bionic_warning_element(self) -> None:
+        """UI must have bionic-disabled warning element."""
+        self.assertIn('id="def-bionic-warn"', self.ui)
+        self.assertIn("bionic_disabled", self.ui)
+
+    def test_phase3_defense_js_saves_dnd_params(self) -> None:
+        """saveDefenseConfig JS must POST dnd_volume and dnd_speed."""
+        save_fn = re.search(r"async function saveDefenseConfig\(\)\{.*?\}", self.ui, re.S)
+        self.assertIsNotNone(save_fn)
+        body = save_fn.group(0)
+        self.assertIn("def-dnd-vol-tgl", body)
+        self.assertIn("def-dnd-spd-tgl", body)
+        self.assertIn("dnd_volume", body)
+        self.assertIn("dnd_speed", body)
+
+    def test_phase3_defense_js_loads_dnd_params(self) -> None:
+        """loadDefenseConfig JS must read dnd_volume and dnd_speed."""
+        load_fn = re.search(r"async function loadDefenseConfig\(\)\{.*?setText\('tb-exp'", self.ui, re.S)
+        self.assertIsNotNone(load_fn)
+        body = load_fn.group(0)
+        self.assertIn("d.dnd_volume", body)
+        self.assertIn("d.dnd_speed", body)
+        self.assertIn("def-dnd-vol-tgl", body)
+        self.assertIn("def-dnd-spd-tgl", body)
+
+    def test_phase3_bionicsteering_in_car_manager_base(self) -> None:
+        """bionicSteering must be in CarManagerBase for dashboard access."""
+        base = re.search(r"struct CarManagerBase.*?virtual ~CarManagerBase", self.handlers, re.S)
+        self.assertIsNotNone(base)
+        body = base.group(0)
+        self.assertIn("Shared<bool> bionicSteering{false}", body)
+
+    def test_phase3_handlers_includes_bionic_header(self) -> None:
+        """handlers.h must include dash_bionic_steer.h."""
+        self.assertIn('#include "dash_bionic_steer.h"', self.handlers)
+
 
 if __name__ == "__main__":
     unittest.main()

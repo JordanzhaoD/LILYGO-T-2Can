@@ -1,0 +1,158 @@
+<h2>更新：CAN 引脚移至 CAN 工具</h2>
+<p class="subtitle">网络设置去掉 CAN 引脚，CAN 工具新增引脚配置区</p>
+
+<div class="split">
+  <!-- Updated Network page (without CAN pins) -->
+  <div class="mockup">
+    <div class="mockup-header">8. 网络设置 (pg-network) — 更新后</div>
+    <div class="mockup-body" style="padding:0">
+      <div style="display:flex;min-height:320px">
+        <div style="width:90px;background:#111827;padding:8px 0;flex-shrink:0;font-size:9px">
+          <div style="padding:4px 6px;color:#f9fafb;font-weight:700;font-size:10px;margin-bottom:6px">T-2CAN</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">概览</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">模块配置</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">FSD 开关</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">速度偏移</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">Bus2 控制</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">FSD 防御</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">OTA 升级</div>
+          <div style="background:#7c3aed;color:#fff;padding:2px 5px;margin:1px 2px;border-radius:3px;font-weight:500">网络设置</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">CAN 工具</div>
+        </div>
+        <div style="flex:1;background:#1f2937;padding:8px;overflow-y:auto;font-size:9px">
+          <div style="background:#374151;border-radius:6px;padding:6px;margin-bottom:6px">
+            <div style="color:#f9fafb;font-weight:600;font-size:11px;margin-bottom:4px">WiFi 热点</div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:#9ca3af">SSID</span><span style="color:#d1d5db">T2CAN-XXXX</span></div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:#9ca3af">连接设备</span><span style="color:#4ade80">2</span></div>
+            <div style="display:flex;justify-content:space-between"><span style="color:#9ca3af">WiFi Mode</span><span style="color:#a78bfa">AP + STA</span></div>
+          </div>
+          <div style="background:#374151;border-radius:6px;padding:6px;margin-bottom:6px">
+            <div style="color:#f9fafb;font-weight:600;font-size:11px;margin-bottom:4px">WiFi 联网</div>
+            <div style="display:flex;justify-content:space-between"><span style="color:#9ca3af">状态</span><span style="color:#fbbf24">未配置</span></div>
+          </div>
+          <div style="background:#374151;border-radius:6px;padding:6px;margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <span style="color:#f9fafb;font-weight:600;font-size:11px">STA-AP 网关</span>
+              <div style="width:30px;height:16px;background:#4b5563;border-radius:8px;position:relative"><div style="width:12px;height:12px;background:#9ca3af;border-radius:50%;position:absolute;top:2px;left:2px"></div></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;margin-bottom:4px">
+              <div style="background:#1f2937;border-radius:3px;padding:2px 4px;display:flex;justify-content:space-between"><span style="color:#6b7280">AP</span><span style="color:#4ade80">100.100.1.1</span></div>
+              <div style="background:#1f2937;border-radius:3px;padding:2px 4px;display:flex;justify-content:space-between"><span style="color:#6b7280">STA</span><span style="color:#fbbf24">192.168.1.x</span></div>
+              <div style="background:#1f2937;border-radius:3px;padding:2px 4px;display:flex;justify-content:space-between"><span style="color:#6b7280">NAT</span><span style="color:#4ade80">Active</span></div>
+              <div style="background:#1f2937;border-radius:3px;padding:2px 4px;display:flex;justify-content:space-between"><span style="color:#6b7280">DNS</span><span style="color:#4ade80">OK</span></div>
+            </div>
+          </div>
+          <div style="background:#374151;border-radius:6px;padding:6px;margin-bottom:6px">
+            <div style="color:#f9fafb;font-weight:600;font-size:11px;margin-bottom:4px">上游 DNS</div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:2px;margin-bottom:4px">
+              <div style="background:#7c3aed;border:1px solid #a78bfa;color:#fff;text-align:center;padding:3px;border-radius:3px;font-size:8px">Auto</div>
+              <div style="background:#1f2937;border:1px solid #4b5563;color:#9ca3af;text-align:center;padding:3px;border-radius:3px;font-size:8px">Ali</div>
+              <div style="background:#1f2937;border:1px solid #4b5563;color:#9ca3af;text-align:center;padding:3px;border-radius:3px;font-size:8px">Tencent</div>
+              <div style="background:#1f2937;border:1px solid #4b5563;color:#9ca3af;text-align:center;padding:3px;border-radius:3px;font-size:8px">Custom</div>
+            </div>
+          </div>
+          <div style="background:#374151;border-radius:6px;padding:6px">
+            <div style="color:#f9fafb;font-weight:600;font-size:11px;margin-bottom:4px">DNS 过滤规则</div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="color:#f87171;font-size:9px">黑名单</span><span style="color:#6b7280;font-size:8px">12 域名</span></div>
+            <div style="background:#1f2937;border-radius:3px;padding:4px;margin-bottom:4px;font-family:monospace;font-size:8px;color:#9ca3af">tesla.com, tmobile.com...</div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="color:#4ade80;font-size:9px">白名单</span><span style="color:#6b7280;font-size:8px">5 域名</span></div>
+            <div style="background:#1f2937;border-radius:3px;padding:4px;font-family:monospace;font-size:8px;color:#9ca3af">update.tesla.com, navi.tesla.com...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Updated CAN Tools page (with CAN pins added) -->
+  <div class="mockup">
+    <div class="mockup-header">9. CAN 工具 (pg-can) — 更新后</div>
+    <div class="mockup-body" style="padding:0">
+      <div style="display:flex;min-height:320px">
+        <div style="width:90px;background:#111827;padding:8px 0;flex-shrink:0;font-size:9px">
+          <div style="padding:4px 6px;color:#f9fafb;font-weight:700;font-size:10px;margin-bottom:6px">T-2CAN</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">概览</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">模块配置</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">FSD 开关</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">速度偏移</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">Bus2 控制</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">FSD 防御</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">OTA 升级</div>
+          <div style="color:#6b7280;padding:2px 5px;margin:1px 2px">网络设置</div>
+          <div style="background:#7c3aed;color:#fff;padding:2px 5px;margin:1px 2px;border-radius:3px;font-weight:500">CAN 工具</div>
+        </div>
+        <div style="flex:1;background:#1f2937;padding:8px;overflow-y:auto;font-size:9px">
+          <!-- CAN Pins section (NEW) -->
+          <div style="background:#374151;border-radius:6px;padding:6px;margin-bottom:6px">
+            <div style="color:#f9fafb;font-weight:600;font-size:11px;margin-bottom:4px">CAN 引脚配置</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:4px">
+              <div style="background:#1f2937;border-radius:4px;padding:4px 6px">
+                <div style="color:#9ca3af;font-size:8px">Bus1 TX (TWAI)</div>
+                <div style="color:#a78bfa;font-size:11px;font-weight:600">GPIO 7</div>
+              </div>
+              <div style="background:#1f2937;border-radius:4px;padding:4px 6px">
+                <div style="color:#9ca3af;font-size:8px">Bus1 RX (TWAI)</div>
+                <div style="color:#a78bfa;font-size:11px;font-weight:600">GPIO 6</div>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-bottom:4px">
+              <div style="background:#1f2937;border-radius:4px;padding:4px 6px">
+                <div style="color:#9ca3af;font-size:8px">Bus2 CS</div>
+                <div style="color:#a78bfa;font-size:11px;font-weight:600">GPIO 10</div>
+              </div>
+              <div style="background:#1f2937;border-radius:4px;padding:4px 6px">
+                <div style="color:#9ca3af;font-size:8px">SPI SCK</div>
+                <div style="color:#a78bfa;font-size:11px;font-weight:600">GPIO 12</div>
+              </div>
+              <div style="background:#1f2937;border-radius:4px;padding:4px 6px">
+                <div style="color:#9ca3af;font-size:8px">SPI MISO</div>
+                <div style="color:#a78bfa;font-size:11px;font-weight:600">GPIO 13</div>
+              </div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <div style="background:#1f2937;border-radius:4px;padding:4px 6px;flex:1;margin-right:3px">
+                <div style="color:#9ca3af;font-size:8px">SPI MOSI</div>
+                <div style="color:#a78bfa;font-size:11px;font-weight:600">GPIO 11</div>
+              </div>
+              <div style="background:#1f2937;border-radius:4px;padding:4px 6px;flex:1">
+                <div style="color:#9ca3af;font-size:8px">MCP RST</div>
+                <div style="color:#a78bfa;font-size:11px;font-weight:600">GPIO 9</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sub-tabs -->
+          <div style="display:flex;gap:2px;margin-bottom:6px;background:#374151;border-radius:4px;padding:2px">
+            <div style="background:#7c3aed;color:#fff;padding:3px 6px;border-radius:3px;font-size:9px;font-weight:500;flex:1;text-align:center">Sniffer</div>
+            <div style="color:#9ca3af;padding:3px 6px;font-size:9px;flex:1;text-align:center">Recorder</div>
+            <div style="color:#9ca3af;padding:3px 6px;font-size:9px;flex:1;text-align:center">Controller</div>
+            <div style="color:#9ca3af;padding:3px 6px;font-size:9px;flex:1;text-align:center">Debug</div>
+          </div>
+
+          <!-- Sniffer -->
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <span style="color:#f9fafb;font-weight:500;font-size:10px">CAN Sniffer</span>
+            <span style="color:#9ca3af;font-size:8px">32 frames</span>
+          </div>
+          <div style="display:flex;gap:3px;margin-bottom:4px">
+            <div style="flex:1;background:#374151;border:1px solid #4b5563;border-radius:3px;padding:3px 4px;color:#6b7280;font-size:8px">Filter: ID...</div>
+            <div style="background:#374151;border:1px solid #4b5563;color:#9ca3af;padding:3px 6px;border-radius:3px;font-size:8px">⏸</div>
+          </div>
+          <div style="background:#374151;border-radius:4px;overflow:hidden;font-size:8px">
+            <div style="display:grid;grid-template-columns:36px 18px 70px 24px;background:#4b5563;padding:2px 3px;color:#9ca3af">
+              <div>ID</div><div>Dir</div><div>数据</div><div>Age</div>
+            </div>
+            <div style="display:grid;grid-template-columns:36px 18px 70px 24px;padding:2px 3px;border-top:1px solid #4b5563">
+              <div style="color:#a78bfa;font-family:monospace">0x249</div><div style="color:#4ade80">R</div><div style="color:#6b7280;font-family:monospace">9B 14 00 00</div><div style="color:#9ca3af;text-align:right">0.1s</div>
+            </div>
+            <div style="display:grid;grid-template-columns:36px 18px 70px 24px;padding:2px 3px;border-top:1px solid #4b5563">
+              <div style="color:#a78bfa;font-family:monospace">0x399</div><div style="color:#f87171">T</div><div style="color:#6b7280;font-family:monospace">82 00 0F 00</div><div style="color:#9ca3af;text-align:right">0.2s</div>
+            </div>
+            <div style="display:grid;grid-template-columns:36px 18px 70px 24px;padding:2px 3px;border-top:1px solid #4b5563">
+              <div style="color:#a78bfa;font-family:monospace">0x2B1</div><div style="color:#4ade80">R</div><div style="color:#6b7280;font-family:monospace">00 FF 3A 01</div><div style="color:#9ca3af;text-align:right">0.3s</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

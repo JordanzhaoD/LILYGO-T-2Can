@@ -1,0 +1,208 @@
+<h2>更新：网络设置页 (pg-network)</h2>
+<p class="subtitle">新增 DNS 过滤、黑白名单、上游 DNS 选择</p>
+
+<div class="mockup">
+  <div class="mockup-header">8. 网络设置 (pg-network) — 完整版</div>
+  <div class="mockup-body" style="padding:0">
+    <div style="display:flex;min-height:480px">
+      <div style="width:100px;background:#111827;padding:8px 0;flex-shrink:0;font-size:9px">
+        <div style="padding:4px 8px;color:#f9fafb;font-weight:700;font-size:11px;margin-bottom:6px">T-2CAN</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">概览</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">模块配置</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 开关</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">速度偏移</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">Bus2 控制</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 防御</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">OTA 升级</div>
+        <div style="background:#7c3aed;color:#fff;padding:3px 6px;margin:1px 3px;border-radius:3px;font-weight:500">网络设置</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">CAN 工具</div>
+      </div>
+      <div style="flex:1;background:#1f2937;padding:10px;overflow-y:auto;font-size:10px">
+
+        <!-- Section: WiFi Hotspot -->
+        <div style="background:#374151;border-radius:8px;padding:8px;margin-bottom:8px">
+          <div style="color:#f9fafb;font-weight:600;font-size:12px;margin-bottom:6px">WiFi 热点</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <span style="color:#9ca3af">SSID</span>
+            <span style="color:#d1d5db">T2CAN-XXXX</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <span style="color:#9ca3af">连接设备</span>
+            <span style="color:#4ade80">2 clients</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:#9ca3af">WiFi Mode</span>
+            <span style="color:#a78bfa">AP + STA</span>
+          </div>
+        </div>
+
+        <!-- Section: WiFi Internet -->
+        <div style="background:#374151;border-radius:8px;padding:8px;margin-bottom:8px">
+          <div style="color:#f9fafb;font-weight:600;font-size:12px;margin-bottom:6px">WiFi 联网</div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:#9ca3af">状态</span>
+            <span style="color:#fbbf24">未配置</span>
+          </div>
+        </div>
+
+        <!-- Section: CAN Pins -->
+        <div style="background:#374151;border-radius:8px;padding:8px;margin-bottom:8px">
+          <div style="color:#f9fafb;font-weight:600;font-size:12px;margin-bottom:6px">CAN 引脚</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+            <div style="background:#1f2937;border-radius:4px;padding:4px 6px">
+              <div style="color:#9ca3af;font-size:9px">TX</div>
+              <div style="color:#a78bfa">GPIO 7</div>
+            </div>
+            <div style="background:#1f2937;border-radius:4px;padding:4px 6px">
+              <div style="color:#9ca3af;font-size:9px">RX</div>
+              <div style="color:#a78bfa">GPIO 6</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: STA-AP Gateway (BIG section) -->
+        <div style="background:#374151;border-radius:8px;padding:8px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <div style="color:#f9fafb;font-weight:600;font-size:12px">STA-AP 网关</div>
+            <div style="width:32px;height:18px;background:#4b5563;border-radius:9px;position:relative">
+              <div style="width:14px;height:14px;background:#9ca3af;border-radius:50%;position:absolute;top:2px;left:2px"></div>
+            </div>
+          </div>
+
+          <!-- Gateway diagnostics grid -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:6px">
+            <div style="background:#1f2937;border-radius:4px;padding:3px 5px;display:flex;justify-content:space-between">
+              <span style="color:#6b7280">AP</span><span style="color:#4ade80">100.100.1.1</span>
+            </div>
+            <div style="background:#1f2937;border-radius:4px;padding:3px 5px;display:flex;justify-content:space-between">
+              <span style="color:#6b7280">STA</span><span style="color:#fbbf24">192.168.1.x</span>
+            </div>
+            <div style="background:#1f2937;border-radius:4px;padding:3px 5px;display:flex;justify-content:space-between">
+              <span style="color:#6b7280">NAT</span><span style="color:#4ade80">Active</span>
+            </div>
+            <div style="background:#1f2937;border-radius:4px;padding:3px 5px;display:flex;justify-content:space-between">
+              <span style="color:#6b7280">DNS</span><span style="color:#4ade80">OK</span>
+            </div>
+            <div style="background:#1f2937;border-radius:4px;padding:3px 5px;display:flex;justify-content:space-between">
+              <span style="color:#6b7280">Slow</span><span style="color:#9ca3af">0</span>
+            </div>
+            <div style="background:#1f2937;border-radius:4px;padding:3px 5px;display:flex;justify-content:space-between">
+              <span style="color:#6b7280">Pending</span><span style="color:#9ca3af">0</span>
+            </div>
+          </div>
+
+          <!-- Network Performance Mode -->
+          <div style="background:#1f2937;border-radius:6px;padding:6px;display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <div>
+              <div style="color:#e5e7eb;font-size:10px">网络性能模式</div>
+              <div style="color:#6b7280;font-size:8px">转发流量时降低 WebUI 轮询</div>
+            </div>
+            <div style="width:32px;height:18px;background:#4ade80;border-radius:9px;position:relative">
+              <div style="width:14px;height:14px;background:#fff;border-radius:50%;position:absolute;top:2px;right:2px"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Upstream DNS -->
+        <div style="background:#374151;border-radius:8px;padding:8px;margin-bottom:8px">
+          <div style="color:#f9fafb;font-weight:600;font-size:12px;margin-bottom:6px">上游 DNS</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin-bottom:6px">
+            <div style="background:#7c3aed;border:1px solid #a78bfa;color:#fff;text-align:center;padding:4px;border-radius:4px;font-size:9px">Auto</div>
+            <div style="background:#1f2937;border:1px solid #4b5563;color:#9ca3af;text-align:center;padding:4px;border-radius:4px;font-size:9px">223.5.5.5<br>Ali</div>
+            <div style="background:#1f2937;border:1px solid #4b5563;color:#9ca3af;text-align:center;padding:4px;border-radius:4px;font-size:9px">119.29.29.29<br>Tencent</div>
+            <div style="background:#1f2937;border:1px solid #4b5563;color:#9ca3af;text-align:center;padding:4px;border-radius:4px;font-size:9px">Custom</div>
+          </div>
+          <!-- DNS Profiles -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:6px">
+            <div style="background:#1f2937;border:1px solid #4b5563;color:#9ca3af;text-align:center;padding:5px;border-radius:4px;font-size:9px">保守模式</div>
+            <div style="background:#1f2937;border:1px solid #4b5563;color:#9ca3af;text-align:center;padding:5px;border-radius:4px;font-size:9px">激进模式</div>
+          </div>
+        </div>
+
+        <!-- Section: Blacklist / Whitelist -->
+        <div style="background:#374151;border-radius:8px;padding:8px;margin-bottom:8px">
+          <div style="color:#f9fafb;font-weight:600;font-size:12px;margin-bottom:6px">DNS 过滤规则</div>
+          <!-- Blacklist -->
+          <div style="margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+              <span style="color:#f87171;font-weight:500;font-size:10px">黑名单</span>
+              <span style="color:#6b7280;font-size:9px">已屏蔽 12 域名</span>
+            </div>
+            <div style="background:#1f2937;border:1px solid #4b5563;border-radius:4px;padding:6px;min-height:36px;font-family:monospace;font-size:9px;color:#d1d5db;line-height:1.6">
+              tesla.com<br>tmobile.com<br>vzw.com<br><span style="color:#6b7280">... 9 more</span>
+            </div>
+          </div>
+          <!-- Whitelist -->
+          <div style="margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+              <span style="color:#4ade80;font-weight:500;font-size:10px">白名单</span>
+              <span style="color:#6b7280;font-size:9px">已放行 5 域名</span>
+            </div>
+            <div style="background:#1f2937;border:1px solid #4b5563;border-radius:4px;padding:6px;min-height:36px;font-family:monospace;font-size:9px;color:#d1d5db;line-height:1.6">
+              update.tesla.com<br>navi.tesla.com<br><span style="color:#6b7280">... 3 more</span>
+            </div>
+          </div>
+          <!-- DNS Test -->
+          <div style="display:flex;gap:3px;margin-bottom:4px">
+            <div style="flex:1;background:#1f2937;border:1px solid #4b5563;border-radius:4px;padding:4px 6px;color:#6b7280;font-size:9px">输入域名测试...</div>
+            <button style="background:#7c3aed;border:none;color:#fff;padding:4px 8px;border-radius:4px;font-size:9px">测试</button>
+          </div>
+          <!-- Filter list -->
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+            <span style="color:#9ca3af;font-size:9px">已拦截记录: 156 条</span>
+            <div style="display:flex;gap:3px">
+              <button style="background:#1f2937;border:1px solid #4b5563;color:#9ca3af;padding:2px 6px;border-radius:3px;font-size:8px">刷新</button>
+              <button style="background:#1f2937;border:1px solid #4b5563;color:#9ca3af;padding:2px 6px;border-radius:3px;font-size:8px">清空</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:16px">
+  <h3>网络设置页分区总结</h3>
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead>
+      <tr style="border-bottom:2px solid #334155">
+        <th style="text-align:left;padding:6px;color:#94a3b8">区块</th>
+        <th style="text-align:left;padding:6px;color:#94a3b8">内容</th>
+        <th style="text-align:center;padding:6px;color:#94a3b8">来源</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid #1e293b">
+        <td style="padding:4px 6px;color:#a78bfa">WiFi 热点</td>
+        <td style="padding:4px 6px">SSID、密码、连接设备数</td>
+        <td style="padding:4px 6px;text-align:center">上游现有</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e293b">
+        <td style="padding:4px 6px;color:#a78bfa">WiFi 联网</td>
+        <td style="padding:4px 6px">4 个保存的网络、连接状态</td>
+        <td style="padding:4px 6px;text-align:center">上游现有</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e293b">
+        <td style="padding:4px 6px;color:#a78bfa">CAN 引脚</td>
+        <td style="padding:4px 6px">TX/RX GPIO 配置</td>
+        <td style="padding:4px 6px;text-align:center">上游现有</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e293b">
+        <td style="padding:4px 6px;color:#a78bfa">STA-AP 网关</td>
+        <td style="padding:4px 6px">NAT 开关、诊断面板、性能模式</td>
+        <td style="padding:4px 6px;text-align:center">上游现有</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1e293b">
+        <td style="padding:4px 6px;color:#a78bfa">上游 DNS</td>
+        <td style="padding:4px 6px">Auto/Ali/Tencent/Custom + 保守/激进模式</td>
+        <td style="padding:4px 6px;text-align:center">上游现有</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 6px;color:#a78bfa">DNS 过滤规则</td>
+        <td style="padding:4px 6px">黑名单 + 白名单 + DNS 测试 + 拦截记录</td>
+        <td style="padding:4px 6px;text-align:center">上游现有</td>
+      </tr>
+    </tbody>
+  </table>
+</div>

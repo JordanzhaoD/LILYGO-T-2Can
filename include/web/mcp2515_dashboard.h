@@ -140,6 +140,8 @@ static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
 static bool dashSpeedNoDisturb = false;
 static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行逻辑）
+static bool dashDndSpeed = false;       // 速度滚轮DND（Phase 3实现执行逻辑）
+static bool dashBionicDisabled = false; // bionic auto-disabled after 3 failures
 static bool dashApEapCompatible = true;
 
 // HW3 slew limiter constants/state moved to include/dash_hw3_speed.h so
@@ -2369,10 +2371,17 @@ static String dashDefenseConfigJson()
     j += dashDefenseEnabled ? "true" : "false";
     j += ",\"bionic_steering\":";
     j += dashBionicSteering ? "true" : "false";
+    // Bionic disabled warning (3 consecutive failures)
+    j += ",\"bionic_disabled\":";
+    j += dashBionicDisabled ? "true" : "false";
     j += ",\"sound_warning_suppression\":";
     j += dashHandler ? ((bool)dashHandler->isaChimeSuppress ? "true" : "false") : (nvsIsaChimeSuppress ? "true" : "false");
+    j += ",\"dnd_volume\":";
+    j += dashDndVolume ? "true" : "false";
     j += ",\"speed_no_disturb\":";
     j += dashSpeedNoDisturb ? "true" : "false";
+    j += ",\"dnd_speed\":";
+    j += dashDndSpeed ? "true" : "false";
     j += ",\"ap_eap_compatible\":";
     j += dashApEapCompatible ? "true" : "false";
     j += ",\"slew_rate_enabled\":";
@@ -2387,12 +2396,21 @@ static void handleDefenseConfig()
 {
     if (server.hasArg("enabled") || server.hasArg("bionic_steering") ||
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
-        server.hasArg("ap_eap_compatible"))
+        server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
+        server.hasArg("dnd_speed"))
     {
         if (server.hasArg("enabled"))
             dashDefenseEnabled = dashArgTruthy(server.arg("enabled"));
         if (server.hasArg("bionic_steering"))
-            dashBionicSteering = dashArgTruthy(server.arg("bionic_steering"));
+        {
+            bool v = dashArgTruthy(server.arg("bionic_steering"));
+            dashBionicSteering = v;
+            // Reset bionic disabled state when user re-enables
+            if (v) dashBionicDisabled = false;
+            // Sync to NagHandler if available
+            if (dashHandler)
+                dashHandler->bionicSteering = v;
+        }
         if (server.hasArg("sound_warning_suppression"))
         {
             bool v = dashArgTruthy(server.arg("sound_warning_suppression"));
@@ -2400,8 +2418,12 @@ static void handleDefenseConfig()
             if (dashHandler)
                 dashHandler->isaChimeSuppress = v;
         }
+        if (server.hasArg("dnd_volume"))
+            dashDndVolume = dashArgTruthy(server.arg("dnd_volume"));
         if (server.hasArg("speed_no_disturb"))
             dashSpeedNoDisturb = dashArgTruthy(server.arg("speed_no_disturb"));
+        if (server.hasArg("dnd_speed"))
+            dashDndSpeed = dashArgTruthy(server.arg("dnd_speed"));
         if (server.hasArg("ap_eap_compatible"))
             dashApEapCompatible = dashArgTruthy(server.arg("ap_eap_compatible"));
         hw3OffsetSlew = dashDefenseEnabled;

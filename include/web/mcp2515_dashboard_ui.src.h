@@ -852,10 +852,10 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-defense-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-defense-run">待检测</div></div>
 </div>
-<!-- Slew Toggle -->
+<!-- Master switch + 5 defense toggles -->
 <div class="card">
   <div class="card-title">FSD 防封保护</div>
-  <div class="card-subtitle">保留现有 slew rate 保护接口，扩展为截图同款防御页</div>
+  <div class="card-subtitle">仿生扭矩替代固定echo，轮DND消除提示音</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">启用 slew rate 限制</div>
@@ -869,16 +869,24 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">仿生方向盘 <span class="exp-badge">实验</span></div>
-      <div class="setting-desc">保存到防御配置，后续接入方向盘仿真逻辑</div>
+      <div class="setting-desc">0x370 正弦波随机扭矩，模拟人手握持</div>
+      <div class="setting-desc" id="def-bionic-warn" style="color:#ef4444;display:none">⚠ 已自动回退至echo（连续帧异常）</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
   <div class="setting-row">
     <div>
       <div class="setting-name">声音警告抑制</div>
-      <div class="setting-desc">映射到 handler isaChimeSuppress</div>
+      <div class="setting-desc">ISA bit 抑制 + 0x3C2 音量滚轮DND</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-sound-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">音量滚轮DND <span class="exp-badge">Phase 3</span></div>
+      <div class="setting-desc">0x3C2 四步序列消除音量提示音</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-dnd-vol-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
   <div class="setting-row">
     <div>
@@ -886,6 +894,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="setting-desc">保存到防御配置，避免速度策略频繁扰动</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-speed-nd-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">速度滚轮DND <span class="exp-badge">Phase 3</span></div>
+      <div class="setting-desc">0x3C2 四步序列消除速度滚轮提示</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-dnd-spd-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
   <div class="setting-row">
     <div>
@@ -1729,12 +1744,17 @@ async function loadDefenseConfig(){
   var tgl=$('hw3-slew-tgl');
   if(tgl)tgl.checked=!!d.enabled;
   var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
+  // Bionic auto-disabled warning
+  var bioWarn=$('def-bionic-warn');
+  if(bioWarn)bioWarn.style.display=!!d.bionic_disabled?'block':'none';
   var sound=$('def-sound-tgl');if(sound)sound.checked=!!d.sound_warning_suppression;
+  var dndVol=$('def-dnd-vol-tgl');if(dndVol)dndVol.checked=!!d.dnd_volume;
   var nd=$('def-speed-nd-tgl');if(nd)nd.checked=!!d.speed_no_disturb;
+  var dndSpd=$('def-dnd-spd-tgl');if(dndSpd)dndSpd.checked=!!d.dnd_speed;
   var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
   setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
   var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
-  var exp=(d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible);
+  var exp=(d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
   setStatusTriplet('defense',d.enabled?'防御 ON':'防御 OFF',
     'NVS '+(d.enabled?'ON':'OFF')+(exp?' / 含实验项':''),
     exp?'实验项需实车验证':'等待 /status 运行确认',
@@ -1917,13 +1937,17 @@ async function saveDefenseConfig(){
   var tgl=$('hw3-slew-tgl');
   var bio=$('def-bionic-tgl');
   var sound=$('def-sound-tgl');
+  var dndVol=$('def-dnd-vol-tgl');
   var nd=$('def-speed-nd-tgl');
+  var dndSpd=$('def-dnd-spd-tgl');
   var apeap=$('def-apeap-tgl');
   var data={
     enabled:tgl&&tgl.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
+    dnd_volume:dndVol&&dndVol.checked?'1':'0',
     speed_no_disturb:nd&&nd.checked?'1':'0',
+    dnd_speed:dndSpd&&dndSpd.checked?'1':'0',
     ap_eap_compatible:apeap&&apeap.checked?'1':'0'
   };
   try{await postForm('/defense_config',data);}

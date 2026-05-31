@@ -1,0 +1,171 @@
+<h2>页面设计详解 — 第 3 部分</h2>
+<p class="subtitle">OTA 升级 + 网络设置 + CAN 工具</p>
+
+<div class="split">
+  <!-- Page 7: OTA -->
+  <div class="mockup">
+    <div class="mockup-header">7. OTA 升级 (pg-ota)</div>
+    <div class="mockup-body" style="padding:0">
+      <div style="display:flex;min-height:260px">
+        <div style="width:100px;background:#111827;padding:8px 0;flex-shrink:0;font-size:9px">
+          <div style="padding:4px 8px;color:#f9fafb;font-weight:700;font-size:11px;margin-bottom:6px">T-2CAN</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">概览</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">模块配置</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 开关</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">速度偏移</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">Bus2 控制</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 防御</div>
+          <div style="background:#7c3aed;color:#fff;padding:3px 6px;margin:1px 3px;border-radius:3px;font-weight:500">OTA 升级</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">网络设置</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">CAN 工具</div>
+        </div>
+        <div style="flex:1;background:#1f2937;padding:10px">
+          <!-- Firmware info -->
+          <div style="background:#374151;border-radius:8px;padding:10px;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+              <span style="color:#9ca3af;font-size:10px">当前版本</span>
+              <span style="color:#a78bfa;font-size:10px;font-weight:500">v3.0.3-beta.1</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+              <span style="color:#9ca3af;font-size:10px">构建时间</span>
+              <span style="color:#d1d5db;font-size:10px">2026-05-28 10:30</span>
+            </div>
+            <div style="display:flex;justify-content:space-between">
+              <span style="color:#9ca3af;font-size:10px">Flash 占用</span>
+              <span style="color:#d1d5db;font-size:10px">1.2 MB / 16 MB</span>
+            </div>
+          </div>
+          <!-- Upload area -->
+          <div style="background:#374151;border:2px dashed #4b5563;border-radius:8px;padding:16px;text-align:center;margin-bottom:8px">
+            <div style="color:#9ca3af;font-size:20px;margin-bottom:4px">↑</div>
+            <div style="color:#e5e7eb;font-size:11px;font-weight:500">选择固件文件</div>
+            <div style="color:#6b7280;font-size:9px">支持 .bin 格式</div>
+          </div>
+          <button style="background:#7c3aed;border:none;color:#fff;padding:8px 16px;border-radius:6px;width:100%;font-size:11px;cursor:pointer">开始上传</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Page 8: Network -->
+  <div class="mockup">
+    <div class="mockup-header">8. 网络设置 (pg-network)</div>
+    <div class="mockup-body" style="padding:0">
+      <div style="display:flex;min-height:260px">
+        <div style="width:100px;background:#111827;padding:8px 0;flex-shrink:0;font-size:9px">
+          <div style="padding:4px 8px;color:#f9fafb;font-weight:700;font-size:11px;margin-bottom:6px">T-2CAN</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">概览</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">模块配置</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 开关</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">速度偏移</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">Bus2 控制</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 防御</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">OTA 升级</div>
+          <div style="background:#7c3aed;color:#fff;padding:3px 6px;margin:1px 3px;border-radius:3px;font-weight:500">网络设置</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">CAN 工具</div>
+        </div>
+        <div style="flex:1;background:#1f2937;padding:10px">
+          <!-- WiFi Hotspot -->
+          <div style="color:#f9fafb;font-weight:600;font-size:11px;margin-bottom:4px">WiFi 热点</div>
+          <div style="background:#374151;border-radius:6px;padding:6px 8px;margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between;font-size:10px">
+              <span style="color:#9ca3af">SSID</span>
+              <span style="color:#d1d5db">T2CAN-XXXX</span>
+            </div>
+          </div>
+          <div style="background:#374151;border-radius:6px;padding:6px 8px;margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between;font-size:10px">
+              <span style="color:#9ca3af">连接设备</span>
+              <span style="color:#4ade80">2</span>
+            </div>
+          </div>
+          <!-- WiFi Internet -->
+          <div style="color:#f9fafab;font-weight:600;font-size:11px;margin-bottom:4px;margin-top:6px">WiFi 联网</div>
+          <div style="background:#374151;border-radius:6px;padding:6px 8px;margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between;font-size:10px">
+              <span style="color:#9ca3af">状态</span>
+              <span style="color:#fbbf24">未配置</span>
+            </div>
+          </div>
+          <!-- Gateway -->
+          <div style="color:#f9fafb;font-weight:600;font-size:11px;margin-bottom:4px;margin-top:6px">STA-AP 网关</div>
+          <div style="background:#374151;border-radius:6px;padding:6px 8px;margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between;font-size:10px">
+              <span style="color:#9ca3af">NAPT</span>
+              <span style="color:#9ca3af">不可用</span>
+            </div>
+          </div>
+          <!-- CAN Pins -->
+          <div style="color:#f9fafb;font-weight:600;font-size:11px;margin-bottom:4px;margin-top:6px">CAN 引脚</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+            <div style="background:#374151;border-radius:6px;padding:6px 8px;font-size:10px">
+              <div style="color:#9ca3af;margin-bottom:2px">TX</div>
+              <div style="color:#a78bfa">GPIO 7</div>
+            </div>
+            <div style="background:#374151;border-radius:6px;padding:6px 8px;font-size:10px">
+              <div style="color:#9ca3af;margin-bottom:2px">RX</div>
+              <div style="color:#a78bfa">GPIO 6</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Page 9: CAN Tools -->
+<div class="mockup" style="margin-top:16px">
+  <div class="mockup-header">9. CAN 工具 (pg-can)</div>
+  <div class="mockup-body" style="padding:0">
+    <div style="display:flex;min-height:240px">
+      <div style="width:100px;background:#111827;padding:8px 0;flex-shrink:0;font-size:9px">
+        <div style="padding:4px 8px;color:#f9fafb;font-weight:700;font-size:11px;margin-bottom:6px">T-2CAN</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">概览</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">模块配置</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 开关</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">速度偏移</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">Bus2 控制</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 防御</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">OTA 升级</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">网络设置</div>
+        <div style="background:#7c3aed;color:#fff;padding:3px 6px;margin:1px 3px;border-radius:3px;font-weight:500">CAN 工具</div>
+      </div>
+      <div style="flex:1;background:#1f2937;padding:10px">
+        <!-- Sub-tabs -->
+        <div style="display:flex;gap:2px;margin-bottom:8px;background:#374151;border-radius:6px;padding:2px">
+          <div style="background:#7c3aed;color:#fff;padding:4px 8px;border-radius:4px;font-size:10px;font-weight:500;flex:1;text-align:center">Sniffer</div>
+          <div style="color:#9ca3af;padding:4px 8px;font-size:10px;flex:1;text-align:center">Recorder</div>
+          <div style="color:#9ca3af;padding:4px 8px;font-size:10px;flex:1;text-align:center">Controller</div>
+          <div style="color:#9ca3af;padding:4px 8px;font-size:10px;flex:1;text-align:center">Debug</div>
+        </div>
+        <!-- Sniffer content -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="color:#f9fafb;font-weight:500;font-size:11px">CAN Sniffer</span>
+          <span style="color:#9ca3af;font-size:9px">32 frames</span>
+        </div>
+        <div style="display:flex;gap:4px;margin-bottom:6px">
+          <div style="flex:1;background:#374151;border:1px solid #4b5563;border-radius:4px;padding:4px 6px;font-size:9px;color:#6b7280">Filter: ID or name...</div>
+          <button style="background:#374151;border:1px solid #4b5563;color:#9ca3af;padding:4px 8px;border-radius:4px;font-size:9px">⏸</button>
+        </div>
+        <!-- Frame table -->
+        <div style="background:#374151;border-radius:6px;overflow:hidden;font-size:8px">
+          <div style="display:grid;grid-template-columns:40px 20px 80px 30px;background:#4b5563;padding:3px 4px;color:#9ca3af">
+            <div>ID</div><div>Dir</div><div>数据</div><div>Age</div>
+          </div>
+          <div style="display:grid;grid-template-columns:40px 20px 80px 30px;padding:2px 4px;border-top:1px solid #4b5563">
+            <div style="color:#a78bfa;font-family:monospace">0x249</div><div style="color:#4ade80">R</div><div style="color:#6b7280;font-family:monospace">9B 14 00 00</div><div style="color:#9ca3af;text-align:right">0.1s</div>
+          </div>
+          <div style="display:grid;grid-template-columns:40px 20px 80px 30px;padding:2px 4px;border-top:1px solid #4b5563">
+            <div style="color:#a78bfa;font-family:monospace">0x399</div><div style="color:#f87171">T</div><div style="color:#6b7280;font-family:monospace">82 00 0F 00..</div><div style="color:#9ca3af;text-align:right">0.2s</div>
+          </div>
+          <div style="display:grid;grid-template-columns:40px 20px 80px 30px;padding:2px 4px;border-top:1px solid #4b5563">
+            <div style="color:#a78bfa;font-family:monospace">0x2B1</div><div style="color:#4ade80">R</div><div style="color:#6b7280;font-family:monospace">00 FF 3A 01..</div><div style="color:#9ca3af;text-align:right">0.3s</div>
+          </div>
+          <div style="display:grid;grid-template-columns:40px 20px 80px 30px;padding:2px 4px;border-top:1px solid #4b5563">
+            <div style="color:#a78bfa;font-family:monospace">0x102</div><div style="color:#4ade80">R</div><div style="color:#6b7280;font-family:monospace">01 82 00 4F..</div><div style="color:#9ca3af;text-align:right">0.5s</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

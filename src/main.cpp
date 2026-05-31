@@ -198,10 +198,17 @@ static void t2canDrainSecondary()
         t2canSecondaryRxCount = t2canSecondaryRxCount + 1;
         t2canRecordBus2(f);
 #ifdef ESP32_DASHBOARD
-        // Also feed bus2 frames into the CSV recorder (with bus column) so a
-        // timestamped sequential capture of X197 9/10 can be downloaded for
-        // offline checksum/counter reverse-engineering (0x249/0x3E9/0x3F5).
         dashRecordCanFrame(f, 'R');
+        // CAN B is Party CAN — the FSD activation frame (0x3EE/0x3FD) lives here.
+        // Dispatch FSD-relevant frames to the active handler so injection can
+        // modify and retransmit them on the same bus (MCP2515).
+        // NOTE: Do NOT call dashPostProcessFrame here — the handler already
+        // injects, and calling it again would double-send (DASH_FSD_252_COMPAT=1),
+        // overflowing the MCP2515's 3-slot TX buffer and causing Tx errors.
+        if (appActiveHandler)
+        {
+            appActiveHandler->handleMessage(f, *appDriverSecondary);
+        }
 #endif
     }
 }
@@ -331,6 +338,10 @@ static void app_main_setup()
 #endif
 #ifdef DRIVER_T2CAN_DUAL
     t2canSetupSecondary();
+    // Wire the MCP2515 TX callback so the dashboard counts injected frames
+    // sent on the secondary (Party CAN) bus.
+    if (appDriverSecondary && dashDriver)
+        appDriverSecondary->onSendFrame = dashDriver->onSendFrame;
 #endif
 }
 

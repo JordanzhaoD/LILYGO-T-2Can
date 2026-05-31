@@ -9,6 +9,7 @@
 #include "log_buffer.h"
 #include "dash_hw3_speed.h"
 #include "dash_legacy_speed.h"
+#include "dash_bionic_steer.h"
 
 #ifndef DASH_FSD_252_COMPAT
 #define DASH_FSD_252_COMPAT 0
@@ -64,6 +65,7 @@ struct CarManagerBase
     Shared<bool> tlsscBypass{false};
     Shared<bool> emergencyVehicleDetection{true};
     Shared<bool> isaChimeSuppress{false};
+    Shared<bool> bionicSteering{false};   // Phase 3: bionic steering mode
     Shared<uint8_t> hw4OffsetRaw{0};
     Shared<bool> banShieldEnable{false};
     Shared<uint32_t> banShieldBlocks{0};
@@ -556,6 +558,7 @@ struct NagHandler : public CarManagerBase
 {
     Shared<bool> nagKillerActive{true};
     Shared<uint32_t> nagEchoCount{0};
+    DashBionicSteer bionic;  // bionic steering state
 
     const uint32_t *filterIds() const override
     {
@@ -575,6 +578,9 @@ struct NagHandler : public CarManagerBase
         if (!nagKillerActive || !nagKillerRuntime || handsOn != 0)
             return;
 
+        // Read bionic steering mode from handler member (set by dashboard)
+        bool useBionic = (bool)bionicSteering && !bionic.isDisabled();
+
         CanFrame echo;
         echo.id = 880;
         echo.dlc = 8;
@@ -584,8 +590,24 @@ struct NagHandler : public CarManagerBase
         echo.data[2] = (frame.data[2] & 0xF0) | 0x08;
         echo.data[5] = frame.data[5];
 
-        // Fixed torque = 1.80 Nm (tRaw = 0x08B6)
-        echo.data[3] = 0xB6;
+        if (useBionic)
+        {
+            // ── Bionic sine-wave torque path ──────────────────
+            if (bionic.needsNewPhase())
+                bionic.beginPhase();
+
+            int pert = bionic.computePerturbation();
+            uint8_t d2lo = 0x08;
+            uint8_t d3   = 0xB6;
+            bionic.applyToFrame(d2lo, d3, pert);
+            echo.data[2] = (frame.data[2] & 0xF0) | d2lo;
+            echo.data[3] = d3;
+        }
+        else
+        {
+            // ── Legacy fixed torque = 1.80 Nm (tRaw = 0x08B6) ─
+            echo.data[3] = 0xB6;
+        }
 
         // handsOnLevel = 1
         echo.data[4] = frame.data[4] | 0x40;
@@ -599,6 +621,29 @@ struct NagHandler : public CarManagerBase
         uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] + echo.data[4] + echo.data[5] + echo.data[6];
         echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
 
+        // Verify checksum (sanity check for bionic mode)
+        if (useBionic)
+        {
+            uint16_t verify = echo.data[0] + echo.data[1] + echo.data[2] +
+                              echo.data[3] + echo.data[4] + echo.data[5] +
+                              echo.data[6] + 0x73;
+            uint8_t expectedCs = static_cast<uint8_t>(verify & 0xFF);
+            if (echo.data[7] != expectedCs)
+            {
+                bionic.reportFailure();
+                // Fall back to legacy echo on checksum mismatch
+                echo.data[2] = (frame.data[2] & 0xF0) | 0x08;
+                echo.data[3] = 0xB6;
+                sum = echo.data[0] + echo.data[1] + echo.data[2] +
+                      echo.data[3] + echo.data[4] + echo.data[5] + echo.data[6];
+                echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
+            }
+            else
+            {
+                bionic.reportSuccess();
+            }
+        }
+
         framesSent++;
         nagEchoCount++;
         driver.send(echo);
@@ -606,8 +651,10 @@ struct NagHandler : public CarManagerBase
         if (enablePrint && (nagEchoCount % 500 == 1))
         {
             char buf[LogRingBuffer::kMaxMsgLen];
-            snprintf(buf, sizeof(buf), "NagHandler: echo=%u",
-                     (unsigned int)(uint32_t)nagEchoCount);
+            snprintf(buf, sizeof(buf),
+                     "NagHandler: echo=%u bionic=%s",
+                     (unsigned int)(uint32_t)nagEchoCount,
+                     useBionic ? "ON" : "off");
             logRing.push(buf,
 #ifndef NATIVE_BUILD
                          millis()

@@ -1,0 +1,189 @@
+<h2>页面设计详解 — 第 2 部分</h2>
+<p class="subtitle">速度偏移 + Bus2 控制 + FSD 防御</p>
+
+<div class="split">
+  <!-- Page 4: Speed Offset -->
+  <div class="mockup">
+    <div class="mockup-header">4. 速度偏移 (pg-speed)</div>
+    <div class="mockup-body" style="padding:0">
+      <div style="display:flex;min-height:300px">
+        <div style="width:100px;background:#111827;padding:8px 0;flex-shrink:0;font-size:9px">
+          <div style="padding:4px 8px;color:#f9fafb;font-weight:700;font-size:11px;margin-bottom:6px">T-2CAN</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">概览</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">模块配置</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 开关</div>
+          <div style="background:#7c3aed;color:#fff;padding:3px 6px;margin:1px 3px;border-radius:3px;font-weight:500">速度偏移</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">Bus2 控制</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 防御</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">OTA 升级</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">网络设置</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">CAN 工具</div>
+        </div>
+        <div style="flex:1;background:#1f2937;padding:10px">
+          <div style="color:#f9fafb;font-weight:600;font-size:12px;margin-bottom:8px">HW3 自定义速度</div>
+          <!-- Toggle -->
+          <div style="background:#374151;border-radius:6px;padding:8px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="color:#e5e7eb;font-size:11px">启用自定义速度</span>
+            <div style="width:36px;height:20px;background:#4b5563;border-radius:10px;position:relative">
+              <div style="width:16px;height:16px;background:#9ca3af;border-radius:50%;position:absolute;top:2px;left:2px"></div>
+            </div>
+          </div>
+          <!-- Speed bucket table -->
+          <div style="background:#374151;border-radius:6px;overflow:hidden;margin-bottom:8px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;background:#4b5563;padding:4px 8px;font-size:9px;color:#9ca3af">
+              <div>实际速度</div><div>目标显示</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;padding:4px 8px;border-top:1px solid #4b5563;font-size:10px">
+              <div style="color:#d1d5db">30 km/h</div><div style="color:#4ade80;text-align:right">→ 45</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;padding:4px 8px;border-top:1px solid #4b5563;font-size:10px">
+              <div style="color:#d1d5db">40 km/h</div><div style="color:#4ade80;text-align:right">→ 60</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;padding:4px 8px;border-top:1px solid #4b5563;font-size:10px">
+              <div style="color:#d1d5db">50 km/h</div><div style="color:#4ade80;text-align:right">→ 75</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;padding:4px 8px;border-top:1px solid #4b5563;font-size:10px">
+              <div style="color:#d1d5db">60 km/h</div><div style="color:#4ade80;text-align:right">→ 90</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;padding:4px 8px;border-top:1px solid #4b5563;font-size:10px">
+              <div style="color:#d1d5db">70 km/h</div><div style="color:#4ade80;text-align:right">→ 105</div>
+            </div>
+          </div>
+          <!-- Realtime stats -->
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px">
+            <div style="background:#374151;border-radius:6px;padding:6px;text-align:center">
+              <div style="color:#9ca3af;font-size:9px">Fused</div>
+              <div style="color:#4ade80;font-size:11px">82</div>
+            </div>
+            <div style="background:#374151;border-radius:6px;padding:6px;text-align:center">
+              <div style="color:#9ca3af;font-size:9px">Stock</div>
+              <div style="color:#fbbf24;font-size:11px">+15</div>
+            </div>
+            <div style="background:#374151;border-radius:6px;padding:6px;text-align:center">
+              <div style="color:#9ca3af;font-size:9px">Raw</div>
+              <div style="color:#60a5fa;font-size:11px">97</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Page 5: Bus2 Control -->
+  <div class="mockup">
+    <div class="mockup-header">5. Bus2 控制 (pg-bus2)</div>
+    <div class="mockup-body" style="padding:0">
+      <div style="display:flex;min-height:300px">
+        <div style="width:100px;background:#111827;padding:8px 0;flex-shrink:0;font-size:9px">
+          <div style="padding:4px 8px;color:#f9fafb;font-weight:700;font-size:11px;margin-bottom:6px">T-2CAN</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">概览</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">模块配置</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 开关</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">速度偏移</div>
+          <div style="background:#7c3aed;color:#fff;padding:3px 6px;margin:1px 3px;border-radius:3px;font-weight:500">Bus2 控制</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 防御</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">OTA 升级</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">网络设置</div>
+          <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">CAN 工具</div>
+        </div>
+        <div style="flex:1;background:#1f2937;padding:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="color:#f9fafb;font-weight:600;font-size:12px">Bus2 ID 表</div>
+            <span style="color:#9ca3af;font-size:10px">12 IDs</span>
+          </div>
+          <!-- Bus2 ID table -->
+          <div style="background:#374151;border-radius:6px;overflow:hidden;margin-bottom:8px;font-size:9px">
+            <div style="display:grid;grid-template-columns:60px 30px 50px 40px;background:#4b5563;padding:4px 6px;color:#9ca3af">
+              <div>ID</div><div>DLC</div><div>数据</div><div>次数</div>
+            </div>
+            <div style="display:grid;grid-template-columns:60px 30px 50px 40px;padding:3px 6px;border-top:1px solid #4b5563">
+              <div style="color:#a78bfa;font-family:monospace">0x249</div><div style="color:#d1d5db">4</div><div style="color:#6b7280;font-family:monospace">9B 14..</div><div style="color:#4ade80;text-align:right">842</div>
+            </div>
+            <div style="display:grid;grid-template-columns:60px 30px 50px 40px;padding:3px 6px;border-top:1px solid #4b5563">
+              <div style="color:#a78bfa;font-family:monospace">0x339</div><div style="color:#d1d5db">8</div><div style="color:#6b7280;font-family:monospace">00 00..</div><div style="color:#4ade80;text-align:right">126</div>
+            </div>
+            <div style="display:grid;grid-template-columns:60px 30px 50px 40px;padding:3px 6px;border-top:1px solid #4b5563">
+              <div style="color:#a78bfa;font-family:monospace">0x3E9</div><div style="color:#d1d5db">8</div><div style="color:#6b7280;font-family:monospace">FF 80..</div><div style="color:#4ade80;text-align:right">63</div>
+            </div>
+          </div>
+          <!-- Stalk Test -->
+          <div style="color:#f9fafb;font-weight:600;font-size:12px;margin-bottom:6px">Stalk 注入测试</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
+            <button style="background:#7c3aed;border:none;color:#fff;padding:8px;border-radius:6px;font-size:11px;cursor:pointer">PULL 闪灯</button>
+            <button style="background:#dc2626;border:none;color:#fff;padding:8px;border-radius:6px;font-size:11px;cursor:pointer">PUSH 远光</button>
+          </div>
+          <!-- Service Mode -->
+          <div style="background:#374151;border-radius:6px;padding:8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#e5e7eb;font-size:11px">Service Mode</div>
+              <div style="color:#9ca3af;font-size:9px">持续注入 0x339</div>
+            </div>
+            <div style="width:36px;height:20px;background:#4b5563;border-radius:10px;position:relative">
+              <div style="width:16px;height:16px;background:#9ca3af;border-radius:50%;position:absolute;top:2px;left:2px"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Page 6: FSD Defense -->
+<div class="mockup" style="margin-top:16px">
+  <div class="mockup-header">6. FSD 防御 (pg-defense)</div>
+  <div class="mockup-body" style="padding:0">
+    <div style="display:flex;min-height:200px">
+      <div style="width:100px;background:#111827;padding:8px 0;flex-shrink:0;font-size:9px">
+        <div style="padding:4px 8px;color:#f9fafb;font-weight:700;font-size:11px;margin-bottom:6px">T-2CAN</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">概览</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">模块配置</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">FSD 开关</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">速度偏移</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">Bus2 控制</div>
+        <div style="background:#7c3aed;color:#fff;padding:3px 6px;margin:1px 3px;border-radius:3px;font-weight:500">FSD 防御</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">OTA 升级</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">网络设置</div>
+        <div style="color:#6b7280;padding:3px 6px;margin:1px 3px">CAN 工具</div>
+      </div>
+      <div style="flex:1;background:#1f2937;padding:10px">
+        <div style="color:#f9fafb;font-weight:600;font-size:12px;margin-bottom:8px">HW3 Offset Slew 保护</div>
+        <!-- Toggle -->
+        <div style="background:#374151;border-radius:6px;padding:8px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div>
+            <div style="color:#e5e7eb;font-size:11px">启用 Slew 保护</div>
+            <div style="color:#9ca3af;font-size:9px">限制 HW3 mux2 偏移量的下行突变</div>
+          </div>
+          <div style="width:36px;height:20px;background:#4ade80;border-radius:10px;position:relative">
+            <div style="width:16px;height:16px;background:#fff;border-radius:50%;position:absolute;top:2px;right:2px"></div>
+          </div>
+        </div>
+        <!-- Slew rate config -->
+        <div style="background:#374151;border-radius:6px;overflow:hidden;margin-bottom:8px">
+          <div style="padding:6px 8px;border-bottom:1px solid #4b5563;font-size:10px">
+            <div style="display:flex;justify-content:space-between">
+              <span style="color:#9ca3af">最大下降速率</span>
+              <span style="color:#4ade80">2 km/h/周期</span>
+            </div>
+          </div>
+          <div style="padding:6px 8px;border-bottom:1px solid #4b5563;font-size:10px">
+            <div style="display:flex;justify-content:space-between">
+              <span style="color:#9ca3af">最小偏移保持</span>
+              <span style="color:#fbbf24">5 km/h</span>
+            </div>
+          </div>
+          <div style="padding:6px 8px;font-size:10px">
+            <div style="display:flex;justify-content:space-between">
+              <span style="color:#9ca3af">保护触发次数</span>
+              <span style="color:#60a5fa">23</span>
+            </div>
+          </div>
+        </div>
+        <!-- Status indicator -->
+        <div style="background:#166534;border:1px solid #22c55e;border-radius:6px;padding:8px;display:flex;align-items:center;gap:8px">
+          <div style="width:8px;height:8px;background:#4ade80;border-radius:50%;box-shadow:0 0 6px #4ade80"></div>
+          <span style="color:#4ade80;font-size:11px;font-weight:500">防护运行中</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

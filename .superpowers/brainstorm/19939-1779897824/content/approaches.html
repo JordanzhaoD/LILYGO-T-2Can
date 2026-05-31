@@ -1,0 +1,139 @@
+<h2>实施路径对比</h2>
+<p class="subtitle">三种技术方案实现侧边栏 Dashboard，点击选择</p>
+
+<div class="cards">
+  <!-- Approach A -->
+  <div class="card" data-choice="approach-a" onclick="toggleSelect(this)" style="cursor:pointer">
+    <div class="card-image">
+      <div style="background:#1f2937;border-radius:8px;overflow:hidden">
+        <div style="background:#111827;padding:10px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #374151">
+          <div style="width:16px;height:2px;background:#a78bfa;border-radius:1px"></div>
+          <div style="width:16px;height:2px;background:#a78bfa;border-radius:1px"></div>
+          <div style="width:16px;height:2px;background:#a78bfa;border-radius:1px"></div>
+          <span style="color:#a78bfa;font-size:11px;margin-left:8px">single HTML, all sections</span>
+        </div>
+        <div style="padding:12px">
+          <div style="font-size:11px;color:#e5e7eb;margin-bottom:6px">app.html (单文件)</div>
+          <div style="background:#374151;border-radius:4px;padding:6px 8px;margin-bottom:4px;font-family:monospace;font-size:10px;color:#9ca3af">
+            &lt;div id="page-overview" class="page active"&gt;...&lt;/div&gt;
+          </div>
+          <div style="background:#374151;border-radius:4px;padding:6px 8px;margin-bottom:4px;font-family:monospace;font-size:10px;color:#6b7280">
+            &lt;div id="page-fsd" class="page"&gt;...&lt;/div&gt;
+          </div>
+          <div style="background:#374151;border-radius:4px;padding:6px 8px;margin-bottom:4px;font-family:monospace;font-size:10px;color:#6b7280">
+            &lt;div id="page-speed" class="page"&gt;...&lt;/div&gt;
+          </div>
+          <div style="background:#374151;border-radius:4px;padding:6px 8px;font-family:monospace;font-size:10px;color:#6b7280">
+            ... × 5 more pages
+          </div>
+          <div style="margin-top:8px;display:flex;gap:4px">
+            <span style="background:#166534;color:#4ade80;padding:2px 6px;border-radius:3px;font-size:9px">简单</span>
+            <span style="background:#7c2d12;color:#fbbf24;padding:2px 6px;border-radius:3px;font-size:9px">体积大</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 单文件重写（推荐）</h3>
+      <p>一个 HTML 文件包含所有 8 个页面，JS 控制显示/隐藏。与当前架构一致，后端 API 不变，只需重写前端。</p>
+    </div>
+  </div>
+
+  <!-- Approach B -->
+  <div class="card" data-choice="approach-b" onclick="toggleSelect(this)" style="cursor:pointer">
+    <div class="card-image">
+      <div style="background:#1f2937;border-radius:8px;overflow:hidden">
+        <div style="background:#111827;padding:10px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #374151">
+          <div style="width:16px;height:2px;background:#60a5fa;border-radius:1px"></div>
+          <div style="width:16px;height:2px;background:#60a5fa;border-radius:1px"></div>
+          <div style="width:16px;height:2px;background:#60a5fa;border-radius:1px"></div>
+          <span style="color:#60a5fa;font-size:11px;margin-left:8px">CSS-in-JS templates</span>
+        </div>
+        <div style="padding:12px">
+          <div style="font-size:11px;color:#e5e7eb;margin-bottom:6px">模板化渲染</div>
+          <div style="background:#374151;border-radius:4px;padding:6px 8px;margin-bottom:4px;font-family:monospace;font-size:10px;color:#60a5fa">
+            const pages = { overview: renderOverview, ... }
+          </div>
+          <div style="background:#374151;border-radius:4px;padding:6px 8px;margin-bottom:4px;font-family:monospace;font-size:10px;color:#9ca3af">
+            function renderOverview(d) { return `...` }
+          </div>
+          <div style="background:#374151;border-radius:4px;padding:6px 8px;font-family:monospace;font-size:10px;color:#9ca3af">
+            sidebar.onclick → render(page)
+          </div>
+          <div style="margin-top:8px;display:flex;gap:4px">
+            <span style="background:#1e3a5f;color:#60a5fa;padding:2px 6px;border-radius:3px;font-size:9px">体积小</span>
+            <span style="background:#7c2d12;color:#fbbf24;padding:2px 6px;border-radius:3px;font-size:9px">复杂</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. JS 模板化渲染</h3>
+      <p>HTML 只包含骨架和侧边栏，页面内容通过 JS 模板函数动态生成。体积更小，但代码复杂度高。</p>
+    </div>
+  </div>
+
+  <!-- Approach C -->
+  <div class="card" data-choice="approach-c" onclick="toggleSelect(this)" style="cursor:pointer">
+    <div class="card-image">
+      <div style="background:#1f2937;border-radius:8px;overflow:hidden">
+        <div style="background:#111827;padding:10px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #374151">
+          <div style="width:16px;height:2px;background:#f87171;border-radius:1px"></div>
+          <div style="width:16px;height:2px;background:#f87171;border-radius:1px"></div>
+          <div style="width:16px;height:2px;background:#f87171;border-radius:1px"></div>
+          <span style="color:#f87171;font-size:11px;margin-left:8px">partial rewrite only</span>
+        </div>
+        <div style="padding:12px">
+          <div style="font-size:11px;color:#e5e7eb;margin-bottom:6px">渐进式改造</div>
+          <div style="display:flex;gap:4px;margin-bottom:6px">
+            <div style="background:#374151;border-radius:4px;padding:6px;flex:1;text-align:center">
+              <div style="color:#4ade80;font-size:9px">保留</div>
+              <div style="color:#9ca3af;font-size:9px">HTML结构</div>
+            </div>
+            <div style="background:#374151;border-radius:4px;padding:6px;flex:1;text-align:center">
+              <div style="color:#f87171;font-size:9px">重写</div>
+              <div style="color:#9ca3af;font-size:9px">CSS样式</div>
+            </div>
+            <div style="background:#374151;border-radius:4px;padding:6px;flex:1;text-align:center">
+              <div style="color:#fbbf24;font-size:9px">新增</div>
+              <div style="color:#9ca3af;font-size:9px">sidebar JS</div>
+            </div>
+          </div>
+          <div style="background:#374151;border-radius:4px;padding:6px 8px;font-family:monospace;font-size:10px;color:#9ca3af">
+            cards → pages (CSS class swap)
+          </div>
+          <div style="margin-top:8px;display:flex;gap:4px">
+            <span style="background:#166534;color:#4ade80;padding:2px 6px;border-radius:3px;font-size:9px">风险低</span>
+            <span style="background:#7c2d12;color:#fbbf24;padding:2px 6px;border-radius:3px;font-size:9px">不够彻底</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. 渐进式改造</h3>
+      <p>保留现有 HTML 结构，添加侧边栏导航容器，用 CSS 将现有卡片转为页面。最小改动，但布局可能不够灵活。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:16px">
+  <h3>推荐：方案 A</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>为什么推荐 A</h4>
+      <ul>
+        <li>与当前架构完全一致，后端 API 零改动</li>
+        <li>一次性彻底重写，不背负旧代码包袱</li>
+        <li>minify + gzip 后体积可接受（ESP32 16MB flash）</li>
+        <li>前端 JS 简单（show/hide pages），不易出 bug</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>主要顾虑</h4>
+      <ul>
+        <li>HTML 源文件会比现在大（但 gzip 后差异不大）</li>
+        <li>需要完整重写 .src.h 文件</li>
+      </ul>
+    </div>
+  </div>
+</div>
