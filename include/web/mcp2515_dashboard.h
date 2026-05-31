@@ -901,6 +901,15 @@ static bool dashArgTruthy(const String &v)
     return v == "1" || v == "true" || v == "on" || v == "yes";
 }
 
+static uint8_t dashClampSpeedCustomPct(int v)
+{
+    if (v < 0)
+        return 0;
+    if (v > 50)
+        return 50;
+    return static_cast<uint8_t>(v);
+}
+
 static const char *dashHwModeName(uint8_t mode)
 {
     switch (mode)
@@ -1106,6 +1115,12 @@ static void dashSavePrefs()
     prefs.putUChar("sp_sel", dashManualSpeedProfile);
     prefs.putUChar("drv_prof", dashDriveProfile);
     prefs.putUChar("spd_str", dashSpeedStrategy);
+    prefs.putUChar("offsetMode", offsetMode);
+    prefs.putUChar("manualPct", manualOffsetPct);
+    prefs.putUChar("cp0", customPct[0]);
+    prefs.putUChar("cp1", customPct[1]);
+    prefs.putUChar("cp2", customPct[2]);
+    prefs.putUChar("cp3", customPct[3]);
     prefs.putBool("lt_en", dashLightingEnabled);
     prefs.putUChar("lt_cnt", dashLightingCount);
     prefs.putUChar("lt_freq", dashLightingFrequency);
@@ -1280,6 +1295,16 @@ static void dashLoadPrefs()
     dashSpeedStrategy = prefs.getUChar("spd_str", dashSpeedProfileAuto ? 1 : 0);
     if (dashSpeedStrategy > 2)
         dashSpeedStrategy = 1;
+    offsetMode = prefs.getUChar("offsetMode", dashSpeedStrategy);
+    if (offsetMode > 2)
+        offsetMode = 1;
+    dashSpeedStrategy = offsetMode;
+    manualOffsetPct = dashClampSpeedCustomPct(prefs.getUChar("manualPct", manualOffsetPct));
+    customPct[0] = dashClampSpeedCustomPct(prefs.getUChar("cp0", customPct[0]));
+    customPct[1] = dashClampSpeedCustomPct(prefs.getUChar("cp1", customPct[1]));
+    customPct[2] = dashClampSpeedCustomPct(prefs.getUChar("cp2", customPct[2]));
+    customPct[3] = dashClampSpeedCustomPct(prefs.getUChar("cp3", customPct[3]));
+    dashSyncLegacyShims();
     dashLightingEnabled = prefs.getBool("lt_en", false);
     dashLightingCount = prefs.getUChar("lt_cnt", 3);
     if (!(dashLightingCount == 3 || dashLightingCount == 5 || dashLightingCount == 7 || dashLightingCount == 10))
@@ -1319,6 +1344,7 @@ static void dashLoadPrefs()
                 prefs.getUChar(k, defHs[i]));
         }
     }
+    dashSyncLegacyShims();
     // Legacy MPP custom speed-limit override
     legacyMppOverride = prefs.getBool("lg_mpp_en", false);
     legacyMppCustomEnable = prefs.getBool("lg_mppc_en", false);
@@ -1580,6 +1606,29 @@ static void dashCheckBusHealth()
 #endif
 static WebServer server(80);
 
+static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxValue, uint8_t &out)
+{
+    if (!server.hasArg(name))
+        return false;
+    String value = server.arg(name);
+    if (value.length() == 0)
+        return false;
+    uint16_t parsed = 0;
+    for (unsigned int i = 0; i < value.length(); i++)
+    {
+        char c = value.charAt(i);
+        if (c < '0' || c > '9')
+            return false;
+        parsed = static_cast<uint16_t>(parsed * 10 + (c - '0'));
+        if (parsed > maxValue)
+            return false;
+    }
+    if (parsed < minValue)
+        return false;
+    out = static_cast<uint8_t>(parsed);
+    return true;
+}
+
 #include "web/dash_gateway.h"
 
 static void handleRoot()
@@ -1692,6 +1741,12 @@ static void handleStatus()
     j += (fusedSpeedLimitRaw == 0 || fusedSpeedLimitRaw == 31)
              ? 0
              : (uint16_t)fusedSpeedLimitRaw * 5;
+    j += ",\"speedLimit\":";
+    j += (fusedSpeedLimitRaw == 0 || fusedSpeedLimitRaw == 31)
+             ? 0
+             : (uint16_t)fusedSpeedLimitRaw * 5;
+    j += ",\"actOffset\":";
+    j += String((float)actualOffset, 1);
     j += ",\"hw3StockOffset\":";
     j += hw3StockOffsetKph;
     // Legacy MPP custom speed-limit override
@@ -1909,23 +1964,18 @@ static void handleConfig()
         }
     }
     // ─── HW3 custom speed-limit boost ────────────────────────────────────────
-    if (server.hasArg("hw3CustomSpeed"))
+    if (server.hasArg("hw3CustomSpeed") || server.hasArg("hw3HighSpeedEnable") || server.hasArg("hw3AutoSpeed"))
     {
-        bool v = server.arg("hw3CustomSpeed") == "1";
-        if (v != hw3CustomSpeed)
-        {
-            hw3CustomSpeed = v;
-            dashLog("[CFG] HW3 custom speed " + String(v ? "ON" : "OFF"));
-        }
-    }
-    if (server.hasArg("hw3HighSpeedEnable"))
-    {
-        bool v = server.arg("hw3HighSpeedEnable") == "1";
-        if (v != hw3HighSpeedEnable)
-        {
-            hw3HighSpeedEnable = v;
-            dashLog("[CFG] HW3 high-speed " + String(v ? "ON" : "OFF"));
-        }
+        bool legacyHw3CustomSpeed = hw3CustomSpeed;
+        bool legacyHw3HighSpeedEnable = hw3HighSpeedEnable;
+        bool legacyHw3AutoSpeed = hw3AutoSpeed;
+        if (server.hasArg("hw3CustomSpeed")) legacyHw3CustomSpeed = server.arg("hw3CustomSpeed") == "1";
+        if (server.hasArg("hw3HighSpeedEnable")) legacyHw3HighSpeedEnable = server.arg("hw3HighSpeedEnable") == "1";
+        if (server.hasArg("hw3AutoSpeed")) legacyHw3AutoSpeed = server.arg("hw3AutoSpeed") == "1";
+        dashSpeedStrategy = legacyHw3CustomSpeed ? 2 : ((legacyHw3HighSpeedEnable || legacyHw3AutoSpeed) ? 1 : 0);
+        offsetMode = dashSpeedStrategy;
+        dashSyncLegacyShims();
+        dashLog(String("[CFG] HW3 speed strategy ") + dashSpeedStrategyName(dashSpeedStrategy));
     }
     if (server.hasArg("hw3WireEncoding"))
     {
@@ -2139,21 +2189,108 @@ static void handleSpeedStrategy()
             return;
         }
         dashSpeedStrategy = static_cast<uint8_t>(next);
+        offsetMode = dashSpeedStrategy;
+        dashSyncLegacyShims();
+        if (hwMode == 0 && dashSpeedStrategy == 2)
+            legacyMppCustomEnable = true;
         if (dashSpeedStrategy == 1)
             dashSpeedProfileAuto = true;
-        else if (dashSpeedStrategy == 0)
-            dashSpeedProfileAuto = false;
         else
-        {
             dashSpeedProfileAuto = false;
-            hw3CustomSpeed = true;
-            legacyMppCustomEnable = true;
-        }
         dashApplyRuntimeState();
         dashSavePrefs();
         dashLog(String("[CFG] /speed_strategy ") + dashSpeedStrategyName(dashSpeedStrategy));
     }
     server.send(200, "application/json", dashSpeedStrategyJson());
+}
+
+static String dashSpeedCustomJson()
+{
+    String j = "{\"ok\":true,\"customPct\":[";
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        if (i)
+            j += ",";
+        j += customPct[i];
+    }
+    j += "],\"manualPct\":";
+    j += manualOffsetPct;
+    j += ",\"cp1\":";
+    j += customPct[0];
+    j += ",\"cp2\":";
+    j += customPct[1];
+    j += ",\"cp3\":";
+    j += customPct[2];
+    j += ",\"cp4\":";
+    j += customPct[3];
+    j += "}";
+    return j;
+}
+
+static void handleSpeedCustomGet()
+{
+    server.send(200, "application/json", dashSpeedCustomJson());
+}
+
+static void handleSpeedCustom()
+{
+    bool changed = false;
+    bool valid = true;
+    bool hasManualPct = server.hasArg("manualPct");
+    bool hasCp1 = server.hasArg("cp1");
+    bool hasCp2 = server.hasArg("cp2");
+    bool hasCp3 = server.hasArg("cp3");
+    bool hasCp4 = server.hasArg("cp4");
+    uint8_t next = 0;
+    uint8_t nextManualPct = manualOffsetPct;
+    uint8_t nextCustomPct[4] = {customPct[0], customPct[1], customPct[2], customPct[3]};
+
+    if (hasManualPct)
+    {
+        valid = dashArgUIntInRange("manualPct", 0, 50, next) && valid;
+        nextManualPct = next;
+        changed = true;
+    }
+    if (hasCp1)
+    {
+        valid = dashArgUIntInRange("cp1", 0, 50, next) && valid;
+        nextCustomPct[0] = next;
+        changed = true;
+    }
+    if (hasCp2)
+    {
+        valid = dashArgUIntInRange("cp2", 0, 50, next) && valid;
+        nextCustomPct[1] = next;
+        changed = true;
+    }
+    if (hasCp3)
+    {
+        valid = dashArgUIntInRange("cp3", 0, 50, next) && valid;
+        nextCustomPct[2] = next;
+        changed = true;
+    }
+    if (hasCp4)
+    {
+        valid = dashArgUIntInRange("cp4", 0, 50, next) && valid;
+        nextCustomPct[3] = next;
+        changed = true;
+    }
+    if (!valid)
+    {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"manualPct/cp1..cp4 must be decimal integers from 0 to 50\"}");
+        return;
+    }
+    if (changed)
+    {
+        manualOffsetPct = nextManualPct;
+        customPct[0] = nextCustomPct[0];
+        customPct[1] = nextCustomPct[1];
+        customPct[2] = nextCustomPct[2];
+        customPct[3] = nextCustomPct[3];
+        dashSavePrefs();
+        dashLog("[CFG] /speed_custom saved");
+    }
+    server.send(200, "application/json", dashSpeedCustomJson());
 }
 
 static String dashLightingConfigJson()
@@ -5214,6 +5351,8 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/drive_profile", HTTP_POST, handleDriveProfile);
     server.on("/speed_strategy", HTTP_GET, handleSpeedStrategy);
     server.on("/speed_strategy", HTTP_POST, handleSpeedStrategy);
+    server.on("/speed_custom", HTTP_GET, handleSpeedCustomGet);
+    server.on("/speed_custom", HTTP_POST, handleSpeedCustom);
     server.on("/lighting_config", HTTP_GET, handleLightingConfig);
     server.on("/lighting_config", HTTP_POST, handleLightingConfig);
     server.on("/defense_config", HTTP_GET, handleDefenseConfig);

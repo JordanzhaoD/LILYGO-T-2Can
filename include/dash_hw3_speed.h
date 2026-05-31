@@ -310,6 +310,14 @@ inline constexpr uint8_t kHw3AutoTargetForVisible80Kph = 85;
 
 inline volatile bool hw3AutoSpeed = true;
 
+// Dashboard API compatibility state for USE_NEW_SPEED_ALGO=0 rollback builds.
+// These names are read/written by mcp2515_dashboard.h even when the old bucket
+// algorithm is selected. The old compute path below remains bucket-based.
+inline volatile uint8_t offsetMode = 1;         // 0=fixed, 1=auto(default), 2=custom
+inline volatile uint8_t manualOffsetPct = 0;    // accepted for API/NVS compatibility
+inline volatile uint8_t customPct[4] = {30,20,10,10}; // accepted for API/NVS compatibility
+inline volatile float actualOffset = 0.0f;      // old path does not compute this metric
+
 inline uint8_t dashComputeHw3AutoTargetKph(uint8_t fusedLimitKph) {
     if (fusedLimitKph == 60) return kHw3AutoTargetAt60Kph;
     if (fusedLimitKph < kHw3AutoTargetBelow60Kph) return kHw3AutoTargetBelow60Kph;
@@ -422,9 +430,14 @@ inline uint8_t dashEncodeHw3Offset(int offsetKph, uint8_t flKph)
     return dashEncodeHw3OffsetKph5(offsetKph);
 }
 
-// ─── Stub for new-algo functions used by dashboard.h ─────────────────────────
+// ─── Compatibility helpers for new dashboard API used by dashboard.h ─────────
 inline float dashComputeOffset(float, float) { return 0.0f; }
-inline void dashSyncLegacyShims() {}
+inline void dashSyncLegacyShims() {
+    if (offsetMode > 2) offsetMode = 1;
+    hw3AutoSpeed = (offsetMode == 1);
+    hw3CustomSpeed = (offsetMode == 2);
+    hw3HighSpeedEnable = (offsetMode != 0);
+}
 
 #endif // USE_NEW_SPEED_ALGO
 

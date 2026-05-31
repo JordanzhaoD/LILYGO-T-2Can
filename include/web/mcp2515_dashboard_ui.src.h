@@ -676,63 +676,70 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 <div class="card">
   <div class="card-title">速度偏移模式</div>
-  <div class="card-subtitle">固定百分比 / 自动偏移 / 自定义映射沿用现有固件字段</div>
-  <div class="sel-cards c3" id="speed-strategy-cards" style="margin-bottom:10px">
-    <div class="sel-card" onclick="setSpeedStrategy('fixed')"><div class="sel-lbl">策略</div><div class="sel-name">fixed</div></div>
-    <div class="sel-card active" onclick="setSpeedStrategy('auto')"><div class="sel-lbl">策略</div><div class="sel-name">auto</div></div>
-    <div class="sel-card" onclick="setSpeedStrategy('custom')"><div class="sel-lbl">策略</div><div class="sel-name">custom</div></div>
+  <div class="card-subtitle">选择固定百分比 / 自动偏移 / 自定义偏移，配置会同步到 /speed_strategy 与 /speed_custom</div>
+  <div class="sel-cards c3" id="speed-mode-tabs" style="margin-bottom:12px">
+    <div class="sel-card" onclick="showSpeedMode('fixed')"><div class="sel-lbl">模式</div><div class="sel-name">固定百分比</div></div>
+    <div class="sel-card active" onclick="showSpeedMode('auto')"><div class="sel-lbl">模式</div><div class="sel-name">自动偏移</div></div>
+    <div class="sel-card" onclick="showSpeedMode('custom')"><div class="sel-lbl">模式</div><div class="sel-name">自定义偏移</div></div>
   </div>
-  <div class="sel-cards c3" id="profile-cards">
-    <div class="sel-card" onclick="setProfile(0)"><div class="sel-lbl">固定</div><div class="sel-name">Chill</div></div>
-    <div class="sel-card active" onclick="setProfile(1)"><div class="sel-lbl">标准</div><div class="sel-name">Normal</div></div>
-    <div class="sel-card" onclick="setProfile(2)"><div class="sel-lbl">较高</div><div class="sel-name">Hurry</div></div>
-  </div>
-  <div class="mode-note">当前生效偏移：<span id="speed-current">--</span></div>
+  <div class="mode-note">当前策略：<span id="speed-current">auto</span></div>
 </div>
-<!-- HW3 Custom Speed -->
+
+<!-- Realtime Offset -->
 <div class="card">
-  <div class="card-title">HW3 自定义速度 <span class="exp-badge">需实车验证</span></div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">启用自定义速度</div>
-      <div class="setting-desc">覆盖默认速度映射表</div>
-    </div>
-    <label class="tgl">
-      <input type="checkbox" id="hw3-ct-tgl" onchange="saveHw3Speed()">
-      <div class="tgl-track"></div>
-    </label>
+  <div class="card-title">实时偏移</div>
+  <div class="diag-grid">
+    <div class="diag-item"><span class="lbl">速度限制 speedLimit</span><span class="v-info" id="sp-limit">--</span></div>
+    <div class="diag-item"><span class="lbl">实际偏移 actOffset</span><span class="v-acc" id="sp-act-offset">--</span></div>
+    <div class="diag-item"><span class="lbl">生效模式</span><span class="v-dim" id="sp-active-mode">--</span></div>
+    <div class="diag-item"><span class="lbl">Wire Encoding</span><span class="v-dim" id="sp-wire">--</span></div>
+    <div class="diag-item"><span class="lbl">Fused Raw</span><span class="v-dim" id="sp-raw">--</span></div>
+    <div class="diag-item"><span class="lbl">Stock Offset</span><span class="v-dim" id="sp-stock">--</span></div>
   </div>
 </div>
 
-<!-- Speed Bucket Table -->
-<div class="card">
-  <div class="card-title">速度映射表</div>
+<div class="card" id="speed-panel-fixed">
+  <div class="card-title">固定百分比</div>
+  <div class="card-subtitle">所有速度限制统一使用同一个偏移百分比</div>
+  <div class="sel-cards c3" id="speed-fixed-pct" style="margin-bottom:10px">
+    <div class="sel-card" onclick="setSpeedFixedPct(0)"><div class="sel-lbl">固定</div><div class="sel-name">0%</div></div>
+    <div class="sel-card" onclick="setSpeedFixedPct(10)"><div class="sel-lbl">固定</div><div class="sel-name">10%</div></div>
+    <div class="sel-card" onclick="setSpeedFixedPct(20)"><div class="sel-lbl">固定</div><div class="sel-name">20%</div></div>
+    <div class="sel-card active" onclick="setSpeedFixedPct(30)"><div class="sel-lbl">固定</div><div class="sel-name">30%</div></div>
+    <div class="sel-card" onclick="setSpeedFixedPct(40)"><div class="sel-lbl">固定</div><div class="sel-name">40%</div></div>
+    <div class="sel-card" onclick="setSpeedFixedPct(50)"><div class="sel-lbl">固定</div><div class="sel-name">50%</div></div>
+  </div>
+  <div class="mode-note">保存时会 POST /speed_strategy=fixed，并通过 /speed_custom 写入 manualPct。</div>
+</div>
+
+<div class="card" id="speed-panel-auto" style="display:none">
+  <div class="card-title">自动偏移算法</div>
+  <div class="card-subtitle">固件按当前 speedLimit 自动选择偏移比例，适合日常使用</div>
   <table class="tbl">
-    <thead><tr><th>实际速度</th><th>目标速度</th></tr></thead>
+    <thead><tr><th>速度限制</th><th>自动偏移</th></tr></thead>
     <tbody>
-      <tr><td>30</td><td><input class="inp" type="number" id="hw3-b30" value="45" onchange="saveHw3Speed()" style="width:80px"></td></tr>
-      <tr><td>40</td><td><input class="inp" type="number" id="hw3-b40" value="60" onchange="saveHw3Speed()" style="width:80px"></td></tr>
-      <tr><td>50</td><td><input class="inp" type="number" id="hw3-b50" value="75" onchange="saveHw3Speed()" style="width:80px"></td></tr>
-      <tr><td>60</td><td><input class="inp" type="number" id="hw3-b60" value="90" onchange="saveHw3Speed()" style="width:80px"></td></tr>
-      <tr><td>70</td><td><input class="inp" type="number" id="hw3-b70" value="105" onchange="saveHw3Speed()" style="width:80px"></td></tr>
+      <tr><td>≤ 40 km/h</td><td>+50%，封顶 60</td></tr>
+      <tr><td>≤ 60 km/h</td><td>+50%，封顶 90</td></tr>
+      <tr><td>≤ 90 km/h</td><td>+30%，封顶 117</td></tr>
+      <tr><td>≤ 110 km/h</td><td>+20%，封顶 132</td></tr>
+      <tr><td>> 110 km/h</td><td>+10%，封顶 132</td></tr>
     </tbody>
   </table>
+  <button class="btn" onclick="setSpeedStrategy('auto')" style="margin-top:12px;width:100%">启用自动偏移</button>
 </div>
 
-<!-- High Speed Section -->
-<div class="card">
-  <div class="card-title">高速映射</div>
-  <table class="tbl">
-    <thead><tr><th>实际速度</th><th>目标速度</th></tr></thead>
-    <tbody>
-      <tr><td>80</td><td><input class="inp" type="number" id="hw3-b80" value="90" onchange="saveHw3Speed()" style="width:80px"></td></tr>
-      <tr><td>100</td><td><input class="inp" type="number" id="hw3-b100" value="110" onchange="saveHw3Speed()" style="width:80px"></td></tr>
-      <tr><td>120</td><td><input class="inp" type="number" id="hw3-b120" value="130" onchange="saveHw3Speed()" style="width:80px"></td></tr>
-    </tbody>
-  </table>
+<div class="card" id="speed-panel-custom" style="display:none">
+  <div class="card-title">自定义 4 区间偏移</div>
+  <div class="card-subtitle">填写每个速度区间的偏移百分比，范围 0-50%</div>
+  <div class="setting-row"><div><div class="setting-name">0-50 km/h</div><div class="setting-desc">低速区间 cp1</div></div><input class="inp" type="number" min="0" max="50" id="speed-cp1" value="30" style="width:86px"></div>
+  <div class="setting-row"><div><div class="setting-name">51-70 km/h</div><div class="setting-desc">城市快速路 cp2</div></div><input class="inp" type="number" min="0" max="50" id="speed-cp2" value="20" style="width:86px"></div>
+  <div class="setting-row"><div><div class="setting-name">71-100 km/h</div><div class="setting-desc">高速巡航 cp3</div></div><input class="inp" type="number" min="0" max="50" id="speed-cp3" value="10" style="width:86px"></div>
+  <div class="setting-row"><div><div class="setting-name">101+ km/h</div><div class="setting-desc">高限速区间 cp4</div></div><input class="inp" type="number" min="0" max="50" id="speed-cp4" value="10" style="width:86px"></div>
+  <button class="btn" onclick="saveSpeedCustom()" style="width:100%;margin-top:10px">保存自定义偏移</button>
 </div>
 
-<!-- Encoding + Stats -->
+<!-- Encoding -->
+
 <div class="card">
   <div class="setting-row">
     <div>
@@ -744,17 +751,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <option value="1">编码 A</option>
       <option value="2">编码 B</option>
     </select>
-  </div>
-</div>
-
-<!-- Realtime Stats -->
-<div class="card">
-  <div class="card-title">实时数据</div>
-  <div class="diag-grid">
-    <div class="diag-item"><span class="lbl">Fused</span><span class="v-acc" id="sp-fused">--</span></div>
-    <div class="diag-item"><span class="lbl">Stock Offset</span><span class="v-dim" id="sp-stock">--</span></div>
-    <div class="diag-item"><span class="lbl">Raw Write</span><span class="v-dim" id="sp-raw">--</span></div>
-    <div class="diag-item"><span class="lbl">Speed</span><span class="v-dim" id="sp-speed">--</span></div>
   </div>
 </div>
     </div>
@@ -1631,7 +1627,6 @@ function updateProfileCards(sp){
   for(var i=0;i<items.length;i++){
     items[i].classList.toggle('active',i===sp);
   }
-  setText('speed-current',sp===0?'Chill':(sp===2?'Hurry':'Normal'));
 }
 
 function updateDriveCards(sp,spa){
@@ -1662,27 +1657,52 @@ async function loadDriveProfile(){
   setStatusTriplet('drive',mode,mode,mode==='max'?'MAX/V14 需实车验证':'配置已同步',mode==='max'?'warn':'ok');
 }
 
+var speedStrategyState='auto';
+var speedManualPct=30;
+
+function speedPctVal(id,def){
+  var el=$(id);
+  var v=el?parseInt(el.value,10):def;
+  if(isNaN(v))v=def;
+  if(v<0)v=0;
+  if(v>50)v=50;
+  if(el)el.value=String(v);
+  return v;
+}
+
+function updateSpeedFixedCards(pct){
+  var cards=$('speed-fixed-pct');
+  if(!cards)return;
+  var items=cards.querySelectorAll('.sel-card');
+  var values=[0,10,20,30,40,50];
+  for(var i=0;i<items.length;i++)items[i].classList.toggle('active',values[i]===pct);
+}
+
+function showSpeedMode(strategy){
+  speedStrategyState=strategy||'auto';
+  var tabs=$('speed-mode-tabs');
+  if(tabs){
+    var items=tabs.querySelectorAll('.sel-card');
+    var values=['fixed','auto','custom'];
+    for(var i=0;i<items.length;i++)items[i].classList.toggle('active',values[i]===speedStrategyState);
+  }
+  var fixed=$('speed-panel-fixed'),auto=$('speed-panel-auto'),custom=$('speed-panel-custom');
+  if(fixed)fixed.style.display=speedStrategyState==='fixed'?'block':'none';
+  if(auto)auto.style.display=speedStrategyState==='auto'?'block':'none';
+  if(custom)custom.style.display=speedStrategyState==='custom'?'block':'none';
+  setText('speed-current',speedStrategyState);
+}
+
 function updateSpeedPage(d){
-  var ctTgl=$('hw3-ct-tgl');
-  if(ctTgl)ctTgl.checked=!!d.hw3CustomSpeed;
-  // Fill bucket inputs
-  var buckets=[30,40,50,60,70];
-  for(var i=0;i<5;i++){
-    var inp=$('hw3-b'+buckets[i]);
-    if(inp&&d.hw3CustomTarget)inp.value=d.hw3CustomTarget[i];
-  }
-  var hsb=[80,100,120];
-  for(var i=0;i<3;i++){
-    var inp=$('hw3-b'+hsb[i]);
-    if(inp&&d.hw3HighSpeedTarget)inp.value=d.hw3HighSpeedTarget[i];
-  }
   var enc=$('hw3-enc');
   if(enc)enc.value=String(d.hw3WireEncoding||0);
-  // Realtime stats
-  setText('sp-fused',d.fusedSpeedLimitKph?d.fusedSpeedLimitKph+' kph':'--');
+  var speedLimit=(d.speedLimit!==undefined&&d.speedLimit>0)?d.speedLimit:(d.fusedSpeedLimitKph||0);
+  setText('sp-limit',speedLimit?speedLimit+' kph':'--');
+  setText('sp-act-offset',d.actOffset!==undefined?d.actOffset+' kph':'--');
+  setText('sp-active-mode',speedStrategyState);
+  setText('sp-wire',d.hw3WireEncoding!==undefined?d.hw3WireEncoding:'--');
   setText('sp-stock',d.hw3StockOffset!==undefined?d.hw3StockOffset+' kph':'--');
   setText('sp-raw',d.fusedSpeedLimitRaw!==undefined?d.fusedSpeedLimitRaw:'--');
-  setText('sp-speed',d.soff!==undefined?d.soff:'--');
 }
 
 function updateDefensePage(d){
@@ -1798,26 +1818,63 @@ async function setDriveMode(mode){
 }
 
 function updateSpeedStrategyCards(strategy){
-  var cards=$('speed-strategy-cards');
-  if(!cards)return;
-  var items=cards.querySelectorAll('.sel-card');
-  var values=['fixed','auto','custom'];
-  for(var i=0;i<items.length;i++)items[i].classList.toggle('active',values[i]===strategy);
+  showSpeedMode(strategy||'auto');
+}
+
+function applySpeedCustom(d){
+  if(!d)return;
+  if(d.manualPct!==undefined)speedManualPct=parseInt(d.manualPct,10)||0;
+  updateSpeedFixedCards(speedManualPct);
+  var vals=d.customPct||[d.cp1,d.cp2,d.cp3,d.cp4];
+  for(var i=0;i<4;i++){
+    var el=$('speed-cp'+(i+1));
+    if(el&&vals&&vals[i]!==undefined)el.value=vals[i];
+  }
 }
 
 async function loadSpeedStrategy(){
-  var d=await fetchJson('/speed_strategy');
-  if(!d)return;
-  var strategy=d.strategy||'auto';
-  updateSpeedStrategyCards(strategy);
+  var strategyResp=await fetchJson('/speed_strategy');
+  var customResp=await fetchJson('/speed_custom');
+  if(customResp)applySpeedCustom(customResp);
+  var strategy=(strategyResp&&strategyResp.strategy)||'auto';
+  showSpeedMode(strategy);
   setStatusTriplet('speed',strategy,strategy,'等待 /status 速度确认',strategy==='custom'?'warn':'ok');
 }
 
 async function setSpeedStrategy(strategy){
-  updateSpeedStrategyCards(strategy);
+  showSpeedMode(strategy);
   try{await postForm('/speed_strategy',{strategy:strategy});showToast(T('已保存')||'Saved',true)}
-  catch(e){loadSpeedStrategy()}
+  catch(e){loadSpeedStrategy();return}
   setStatusTriplet('speed',strategy,strategy,'等待 /status 速度确认',strategy==='custom'?'warn':'ok');
+}
+
+async function setSpeedFixedPct(pct){
+  speedManualPct=pct;
+  showSpeedMode('fixed');
+  updateSpeedFixedCards(pct);
+  try{
+    await postForm('/speed_strategy',{strategy:'fixed'});
+    await postForm('/speed_custom',{manualPct:String(pct)});
+    showToast(T('已保存')||'Saved',true);
+  }catch(e){loadSpeedStrategy();return}
+  setStatusTriplet('speed','fixed','manualPct '+pct+'%','等待 /status 速度确认','ok');
+}
+
+async function saveSpeedCustom(){
+  var data={
+    cp1:String(speedPctVal('speed-cp1',30)),
+    cp2:String(speedPctVal('speed-cp2',20)),
+    cp3:String(speedPctVal('speed-cp3',10)),
+    cp4:String(speedPctVal('speed-cp4',10))
+  };
+  showSpeedMode('custom');
+  try{
+    await postForm('/speed_strategy',{strategy:'custom'});
+    var d=await postForm('/speed_custom',data);
+    applySpeedCustom(d);
+    showToast(T('已保存')||'Saved',true);
+  }catch(e){loadSpeedStrategy();return}
+  setStatusTriplet('speed','custom','cp1-cp4 已保存','等待 /status 速度确认','warn');
 }
 
 // ── Save Config (generic toggle) ───────────────────────────
