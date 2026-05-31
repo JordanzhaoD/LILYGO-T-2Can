@@ -1998,11 +1998,11 @@ static void handleConfig()
             dashLog("[CFG] FSD boot auto-enable " + String(v ? "ON" : "OFF"));
         }
     }
-    if (hasFsdSwitchArg && ((requestedFsdSwitch != canActive) || (requestedFsdSwitch != forceActivate) || (requestedFsdSwitch != bootCanActive)))
+    if (hasFsdSwitchArg && ((requestedFsdSwitch != canActive) || (requestedFsdSwitch != forceActivate)))
     {
         canActive = requestedFsdSwitch;
         forceActivate = requestedFsdSwitch;
-        bootCanActive = requestedFsdSwitch;
+        // Only update bootCanActive when explicitly provided via bootCan param
         dashLog("[CFG] FSD master switch " + String(requestedFsdSwitch ? "ON" : "OFF"));
     }
     bool profileAutoRequested = server.hasArg("spa") && server.arg("spa") == "1";

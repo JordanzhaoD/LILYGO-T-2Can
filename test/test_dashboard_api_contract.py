@@ -92,7 +92,11 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("d.uiBuildUtc||d.uiBuildId||d.buildEnv", self.ui)
 
     def test_uptime_and_fsd_boot_persistence_are_wired(self) -> None:
-        """Running time and FSD boot/default state must round-trip through /status and /config."""
+        """Running time and FSD boot/default state must round-trip through /status and /config.
+
+        bootCan is independently controlled via the "开机自动启用" toggle (saveConfig),
+        NOT coupled to toggleFsd(). This allows boot=ON + current session=OFF.
+        """
         self.assertIn('uptime', self.dash)
         self.assertIn('bootCan', self.dash)
         self.assertIn('prefs.putBool("boot_can", bootCanActive)', self.dash)
@@ -100,7 +104,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('server.hasArg("bootCan")', self.dash)
         self.assertIn("var uptime=(d.uptime!==undefined)?d.uptime:(d.up||0);", self.ui)
         self.assertIn("fmtUp(uptime)", self.ui)
-        self.assertIn("bootCan:next?'1':'0'", self.ui)
+        # bootCan is decoupled from toggleFsd() — only sent by saveConfig() boot toggle
+        self.assertNotIn("bootCan:next?'1':'0'", self.ui)
         self.assertIn("data.bootCan=bt.checked?'1':'0'", self.ui)
 
     def test_fsd_injection_control_lives_in_module_page(self) -> None:

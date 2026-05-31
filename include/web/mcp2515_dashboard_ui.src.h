@@ -1784,9 +1784,9 @@ async function poll(){
   if(qaBtn){qaBtn.classList.toggle('active',!!d.ci)}
   if(qaSt){qaSt.textContent=d.ci?'ON':'OFF';qaSt.style.color=d.ci?'var(--ok)':'var(--err)'}
 
-  // Boot toggle
+  // Boot toggle — show stored boot preference, not current session state
   var bt=$('fsd-boot-tgl');
-  if(bt)bt.checked=!!d.ci;
+  if(bt)bt.checked=!!(d.bootCan!==undefined?d.bootCan:d.ci);
 
   // HW page
   updateHwCards(d.hw);
@@ -1964,7 +1964,9 @@ async function loadDefenseConfig(){
 async function toggleFsd(){
   var next=S.ci?0:1;
   if(next&&!confirm('确认开启 FSD 注入？')){poll();return}
-  try{await postForm('/config',{can:next?'1':'0',force:next?'1':'0',bootCan:next?'1':'0'});}
+  // Only toggle current session (can+force), do NOT change bootCan
+  // bootCan is independently controlled by the "开机自动启用" toggle
+  try{await postForm('/config',{can:next?'1':'0',force:next?'1':'0'});}
   catch(e){return}
   S.ci=!!next;
   var masterTgl=$('ov-master-tgl');
