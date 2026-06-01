@@ -18,6 +18,30 @@
 #include <cstdint>
 #include <algorithm>
 #include "can_frame_types.h"
+#include "dash_hw3_speed.h"
+
+// Current verified Legacy/HW2.x speed-offset wire path writes UI_userSpeedOffset
+// on CAN 760 byte 5 low 6 bits (raw = offset_kph + 30). The field can encode
+// raw 0..63, so the positive offset range is 0..33 kph.
+inline constexpr uint8_t kLegacySimpleOffsetMaxKph = 33;
+
+inline uint8_t dashClampLegacySimpleOffsetKph(int v)
+{
+    if (v < 0) v = 0;
+    if (v > kLegacySimpleOffsetMaxKph) v = kLegacySimpleOffsetMaxKph;
+    return static_cast<uint8_t>(v);
+}
+
+inline uint8_t dashComputeLegacySimpleOffsetKph(int fallbackOffsetKph)
+{
+    uint8_t fl = fusedSpeedLimitRaw;
+    if (fl == 0 || fl == 31)
+        return dashClampLegacySimpleOffsetKph(fallbackOffsetKph);
+
+    float limitKph = static_cast<float>(fl) * 5.0f;
+    float offsetKph = dashComputeOffset(limitKph, 0.05f);
+    return dashClampLegacySimpleOffsetKph(static_cast<int>(offsetKph + 0.5f));
+}
 
 inline constexpr uint8_t kLegacyMppCustomBucketBaseKph = 30;
 inline constexpr uint8_t kLegacyMppCustomBucketStepKph = 10;

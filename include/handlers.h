@@ -139,6 +139,13 @@ struct CarManagerBase
         return (bool)APActive || (bool)Parked || (bool)Summoning;
     }
 
+    bool injectionAllowed() const
+    {
+        if (checkAD && !checkAD())
+            return false;
+        return enhancedAutopilotInjectionAllowed(injectionGateOpen());
+    }
+
     // Recompute Summoning from current sprSeen + lastAca state. Summoning
     // requires both: ACA bit currently set AND we have seen at least one
     // UI_selfParkRequest non-zero command in the current autonomy episode.
@@ -280,10 +287,11 @@ struct LegacyHandler : public CarManagerBase
         // so the offset unit follows the car's setting.
         if (frame.id == 760)
         {
-            if ((int)legacyOffset == 0) return;
             if (checkAD && !checkAD()) return;
             if (frame.dlc < 6) return;
-            uint8_t raw = (uint8_t)((int)legacyOffset + 30);
+            uint8_t effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
+            if (effectiveOffset == 0) return;
+            uint8_t raw = (uint8_t)(effectiveOffset + 30);
             frame.data[5] = (frame.data[5] & 0xC0) | (raw & 0x3F);
             framesSent++;
             driver.send(frame);
@@ -309,6 +317,8 @@ struct LegacyHandler : public CarManagerBase
             if (frame.dlc < 1)
                 return;
             APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+            if (frame.dlc >= 2)
+                fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
             return;
         }
         // 0x3EE (1006) — FSD activation frame (mux 0/1)
@@ -321,10 +331,10 @@ struct LegacyHandler : public CarManagerBase
             if (index == 0)
             {
                 fsdTriggered = (bool)forceActivateRuntime || isFSDSelectedInUI(frame);
+                ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && (bool)fsdTriggered && (!checkAD || checkAD()))
+            if (index == 0 && (bool)fsdTriggered && injectionAllowed())
             {
-                ADEnabled = true;
                 setBit(frame, 46, true);
                 setSpeedProfileV12V13(frame, speedProfile);
                 framesSent++;
@@ -332,10 +342,11 @@ struct LegacyHandler : public CarManagerBase
                 if (onSend) onSend(0, true);
             }
             // Mux 1: nag suppression + optional vision speed limit removal
-            if (index == 1 && (bool)fsdTriggered && (!checkAD || checkAD()))
+            if (index == 1 && (bool)fsdTriggered && injectionAllowed())
             {
                 setBit(frame, 19, false);
                 if ((bool)removeVisionSpeedLimit) setBit(frame, 48, false);
+                framesSent++;
                 driver.send(frame);
                 if (onSend) onSend(1, true);
             }
@@ -451,10 +462,10 @@ struct HW3Handler : public CarManagerBase
             if (index == 0)
             {
                 bool fsdRequested = (bool)forceActivateRuntime || isFSDSelectedInUI(frame);
-                fsdTriggered = fsdRequested && (!checkAD || checkAD());
+                fsdTriggered = fsdRequested;
                 ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && (bool)fsdTriggered)
+            if (index == 0 && (bool)fsdTriggered && injectionAllowed())
             {
                 speedOffset = std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
                 hw3StockOffsetKph = (int)speedOffset;
@@ -467,15 +478,16 @@ struct HW3Handler : public CarManagerBase
             }
 
             // ── Mux 1: Nag suppression ─────────────────────────────────────
-            if (index == 1 && (bool)fsdTriggered && (!checkAD || checkAD()))
+            if (index == 1 && (bool)fsdTriggered && injectionAllowed())
             {
                 setBit(frame, 19, false);
+                framesSent++;
                 driver.send(frame);
                 if (onSend) onSend(1, true);
             }
 
             // ── Mux 2: Speed offset (three-layer + slew limiter) ──────────
-            if (index == 2 && (bool)fsdTriggered && (!checkAD || checkAD()))
+            if (index == 2 && (bool)fsdTriggered && injectionAllowed())
             {
                 uint8_t stockRaw = static_cast<uint8_t>(((frame.data[0] >> 6) & 0x03) |
                                                         ((frame.data[1] & 0x3F) << 2));
@@ -717,7 +729,7 @@ struct HW4Handler : public CarManagerBase
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
             // ISA chime suppress — runtime gate (all build modes)
-            if ((bool)isaChimeSuppress && frame.dlc >= 8 && (!checkAD || checkAD()))
+            if ((bool)isaChimeSuppress && frame.dlc >= 8 && injectionAllowed())
             {
                 frame.data[1] |= 0x20;
                 frame.data[7] = computeVehicleChecksum(frame);
@@ -796,10 +808,10 @@ struct HW4Handler : public CarManagerBase
             if (index == 0)
             {
                 bool fsdRequested = (bool)forceActivateRuntime || isFSDSelectedInUI(frame);
-                fsdTriggered = fsdRequested && (!checkAD || checkAD());
+                fsdTriggered = fsdRequested;
                 ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && (bool)fsdTriggered)
+            if (index == 0 && (bool)fsdTriggered && injectionAllowed())
             {
                 setBit(frame, 46, true);
                 setBit(frame, 60, true);
@@ -811,7 +823,7 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 1: Nag suppression + FSD ready signal
-            if (index == 1 && (bool)fsdTriggered && (!checkAD || checkAD()))
+            if (index == 1 && (bool)fsdTriggered && injectionAllowed())
             {
                 setBit(frame, 19, false);
                 setBit(frame, 47, true);
@@ -821,7 +833,7 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 2: Speed profile + offset
-            if (index == 2 && (bool)fsdTriggered && (!checkAD || checkAD()))
+            if (index == 2 && (bool)fsdTriggered && injectionAllowed())
             {
                 // Speed profile
                 frame.data[7] &= static_cast<uint8_t>(~(0x07 << 4));

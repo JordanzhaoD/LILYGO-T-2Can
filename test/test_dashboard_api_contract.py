@@ -8,6 +8,7 @@ UI_SRC = ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h"
 UI_GEN = ROOT / "include" / "web" / "mcp2515_dashboard_ui.h"
 DASH = ROOT / "include" / "web" / "mcp2515_dashboard.h"
 HANDLERS = ROOT / "include" / "handlers.h"
+LEGACY_SPEED = ROOT / "include" / "dash_legacy_speed.h"
 MAIN = ROOT / "src" / "main.cpp"
 VERSION = ROOT / "VERSION"
 CHANGELOG = ROOT / "CHANGELOG.md"
@@ -22,6 +23,7 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.ui_gen = UI_GEN.read_text(encoding="utf-8")
         cls.dash = DASH.read_text(encoding="utf-8")
         cls.handlers = HANDLERS.read_text(encoding="utf-8")
+        cls.legacy_speed = LEGACY_SPEED.read_text(encoding="utf-8")
         cls.main = MAIN.read_text(encoding="utf-8")
         cls.version = VERSION.read_text(encoding="utf-8")
         cls.changelog = CHANGELOG.read_text(encoding="utf-8")
@@ -94,8 +96,8 @@ class DashboardApiContractTests(unittest.TestCase):
     def test_uptime_and_fsd_boot_persistence_are_wired(self) -> None:
         """Running time and FSD boot/default state must round-trip through /status and /config.
 
-        bootCan is independently controlled via the "开机自动启用" toggle (saveConfig),
-        NOT coupled to toggleFsd(). This allows boot=ON + current session=OFF.
+        bootCan can be changed via the "开机自动启用" toggle (saveConfig),
+        and the master toggle also persists the chosen state as the boot default.
         """
         self.assertIn('uptime', self.dash)
         self.assertIn('bootCan', self.dash)
@@ -104,9 +106,66 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('server.hasArg("bootCan")', self.dash)
         self.assertIn("var uptime=(d.uptime!==undefined)?d.uptime:(d.up||0);", self.ui)
         self.assertIn("fmtUp(uptime)", self.ui)
-        # bootCan is decoupled from toggleFsd() — only sent by saveConfig() boot toggle
-        self.assertNotIn("bootCan:next?'1':'0'", self.ui)
+        # Jordan chose master-toggle persistence: toggleFsd() updates bootCan too.
+        self.assertIn("bootCan:next?'1':'0'", self.ui)
         self.assertIn("data.bootCan=bt.checked?'1':'0'", self.ui)
+
+    def test_status_mux_json_is_closed_before_phase1_fields(self) -> None:
+        """The /status JSON must close mux[] before appending Phase 1 root fields."""
+        match = re.search(r"static void handleStatus\(\).*?server\.send\(200, \"application/json\", j\);", self.dash, re.S)
+        self.assertIsNotNone(match)
+        body = match.group(0)
+        mux_pos = body.index('j += "]},\\"mux\\":[";')
+        vehicle_pos = body.index('j += ",\\"vehicleOta\\":";')
+        between = body[mux_pos:vehicle_pos]
+        self.assertIn('j += "]";', between)
+        self.assertNotIn('j += "]}";', body[vehicle_pos:])
+
+    def test_settings_backup_exports_new_dashboard_config(self) -> None:
+        """Backup JSON must include the newer FSD, speed, defense, lighting and power settings."""
+        match = re.search(r"static void handleSettingsExport\(\).*?server\.send\(200, \"application/json\", j\);", self.dash, re.S)
+        self.assertIsNotNone(match)
+        body = match.group(0)
+        for token in [
+            '\\"bootCan\\"',
+            '\\"apGate\\"',
+            '\\"apAutoRestore\\"',
+            '\\"driveProfile\\"',
+            '\\"speedStrategy\\"',
+            '\\"speed\\"',
+            '\\"lighting\\"',
+            '\\"defense\\"',
+            '\\"power\\"',
+            '\\"fsdRuntime\\"',
+            '\\"legacyMpp\\"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, body)
+
+    def test_settings_import_restores_new_dashboard_config(self) -> None:
+        """Restore must accept Auto HW and write all persisted dashboard config groups."""
+        match = re.search(r"static void handleSettingsImport\(\).*?dashLog\(\"\[BACKUP\] Settings imported", self.dash, re.S)
+        self.assertIsNotNone(match)
+        body = match.group(0)
+        self.assertIn("hw >= 0 && hw <= 3", body)
+        self.assertNotIn("hw >= 0 && hw <= 2", body)
+        for token in [
+            'p.putBool("boot_can"',
+            'p.putBool("ap_gate"',
+            'p.putBool("ap_rst"',
+            'p.putUChar("drv_prof"',
+            'p.putUChar("offsetMode"',
+            'p.putUChar("manualPct"',
+            'p.putBool("lt_en"',
+            'p.putBool("def_en"',
+            'p.putBool(NVS_KEY_AUTO_SHUTDOWN',
+            'p.putBool("fa"',
+            'p.putBool("lg_mpp_en"',
+            "i < kHw3CustomTargetCount && i < arr.size()",
+            "i < kHw3HighSpeedBucketCount && i < arr.size()",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, body)
 
     def test_fsd_injection_control_lives_in_module_page(self) -> None:
         """FSD injection controls belong to Module Config, not Driving Mode."""
@@ -334,14 +393,41 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn("dashComputeHw3AutoTargetKph", body)
         self.assertNotIn("hw3HighSpeedTargetPct", body)
 
-    def test_speed_strategy_enables_legacy_custom_only_for_legacy_hw(self) -> None:
-        """/speed_strategy custom keeps Legacy/HW2.x behavior without enabling it for HW3/HW4/Auto."""
+    def test_speed_strategy_does_not_enable_legacy_mpp(self) -> None:
+        """/speed_strategy drives the shared 3-mode algorithm, not the old Legacy MPP path."""
         speed_strategy = re.search(r"static void handleSpeedStrategy\(\).*?static String dashSpeedCustomJson\(\)", self.dash, re.S)
         self.assertIsNotNone(speed_strategy)
         body = speed_strategy.group(0)
-        self.assertIn('if (hwMode == 0 && dashSpeedStrategy == 2)', body)
-        self.assertIn('legacyMppCustomEnable = true;', body)
-        self.assertEqual(body.count('legacyMppCustomEnable ='), 1)
+        self.assertNotIn('legacyMppCustomEnable = true;', body)
+        self.assertNotIn('legacyMppCustomEnable =', body)
+        self.assertIn('offsetMode = dashSpeedStrategy;', body)
+        self.assertIn('dashSyncLegacyShims();', body)
+
+    def test_legacy_can760_uses_simple_offset_helper_not_mpp(self) -> None:
+        """Legacy speed offset must use the verified CAN760 byte5 UI_userSpeedOffset path."""
+        can760 = re.search(r"if \(frame\.id == 760\).*?if \(frame\.id == 1080\)", self.handlers, re.S)
+        self.assertIsNotNone(can760)
+        body = can760.group(0)
+        self.assertIn('dashComputeLegacySimpleOffsetKph', body)
+        self.assertIn('frame.data[5]', body)
+        self.assertNotIn('dashComputeLegacyMppTargetKph', body)
+        self.assertNotIn('frame.data[6]', body)
+
+    def test_legacy_handler_captures_fused_speed_limit_from_921(self) -> None:
+        """Legacy/HW0 needs the same fused speed limit input as the 3-mode speed UI."""
+        can921 = re.search(r"if \(frame\.id == 921\).*?// 0x3EE", self.handlers, re.S)
+        self.assertIsNotNone(can921)
+        body = can921.group(0)
+        self.assertIn('fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);', body)
+        self.assertIn('APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));', body)
+
+    def test_legacy_simple_offset_helper_reuses_three_mode_state(self) -> None:
+        """Legacy simple offset should reuse the speed page algorithm and clamp to byte5 wire range."""
+        self.assertIn('kLegacySimpleOffsetMaxKph = 33', self.legacy_speed)
+        self.assertIn('dashComputeLegacySimpleOffsetKph', self.legacy_speed)
+        self.assertIn('fusedSpeedLimitRaw', self.legacy_speed)
+        self.assertIn('dashComputeOffset(limitKph, 0.05f)', self.legacy_speed)
+        self.assertIn('dashClampLegacySimpleOffsetKph', self.legacy_speed)
 
     def test_phase2_speed_custom_endpoint_contract(self) -> None:
         """/speed_custom exposes four validated custom percentage zones."""

@@ -1964,15 +1964,17 @@ async function loadDefenseConfig(){
 async function toggleFsd(){
   var next=S.ci?0:1;
   if(next&&!confirm('确认开启 FSD 注入？')){poll();return}
-  // Only toggle current session (can+force), do NOT change bootCan
-  // bootCan is independently controlled by the "开机自动启用" toggle
-  try{await postForm('/config',{can:next?'1':'0',force:next?'1':'0'});}
+  // 主开关同时更新当前会话和开机默认值，重启后保持一致。
+  try{await postForm('/config',{can:next?'1':'0',force:next?'1':'0',bootCan:next?'1':'0'});}
   catch(e){return}
   S.ci=!!next;
+  S.bootCan=!!next;
   var masterTgl=$('ov-master-tgl');
   if(masterTgl)masterTgl.checked=S.ci;
   var mFsdTgl=$('m-fsd-tgl');
   if(mFsdTgl)mFsdTgl.checked=S.ci;
+  var bootTgl=$('fsd-boot-tgl');
+  if(bootTgl)bootTgl.checked=S.bootCan;
   updateFsdToggle(S.ci);
   poll();
 }
