@@ -12,6 +12,7 @@ LEGACY_SPEED = ROOT / "include" / "dash_legacy_speed.h"
 MAIN = ROOT / "src" / "main.cpp"
 VERSION = ROOT / "VERSION"
 CHANGELOG = ROOT / "CHANGELOG.md"
+README = ROOT / "README.md"
 TESTS_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 
@@ -27,6 +28,7 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.main = MAIN.read_text(encoding="utf-8")
         cls.version = VERSION.read_text(encoding="utf-8")
         cls.changelog = CHANGELOG.read_text(encoding="utf-8")
+        cls.readme = README.read_text(encoding="utf-8")
         cls.tests_workflow = TESTS_WORKFLOW.read_text(encoding="utf-8")
         cls.release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
 
@@ -187,6 +189,52 @@ class DashboardApiContractTests(unittest.TestCase):
         for route in expected_routes:
             with self.subTest(route=route):
                 self.assertIn(route, self.dash)
+
+    def test_bus2_diagnostics_are_exposed_in_status(self) -> None:
+        """Dual-CAN builds should expose CAN2 RX/TX/TXErr/EFLG separately from CAN1."""
+        self.assertIn('uint32_t t2canBus2RxCount(void);', self.dash)
+        self.assertIn('uint32_t t2canBus2TxCount(void);', self.dash)
+        self.assertIn('uint32_t t2canBus2TxErrCount(void);', self.dash)
+        self.assertIn('uint8_t t2canBus2Eflg(void);', self.dash)
+        self.assertIn(',\\"can2\\":{\\"rx\\":', self.dash)
+        self.assertIn('t2canBus2TxCount()', self.dash)
+        self.assertIn('t2canBus2TxErrCount()', self.dash)
+        self.assertIn('t2canBus2Eflg()', self.dash)
+        self.assertIn('id="b2-tx"', self.ui)
+        self.assertIn('id="b2-txerr"', self.ui)
+        self.assertIn('id="b2-eflg"', self.ui)
+
+    def test_service_mode_uses_vcsec_four_frame_pulse(self) -> None:
+        """Service mode should send spec-correct 0x339 pulses, not continuous 0xE0 spam."""
+        self.assertIn('g_svcBurstRemaining = 4;', self.main)
+        self.assertIn('g_svcBurstValue = on ? 0x80 : 0x00;', self.main)
+        self.assertIn('f.data[5] = g_svcBurstValue;', self.main)
+        self.assertIn('t2canTxSecondaryCounted(f);', self.main)
+        self.assertNotIn('f.data[5] = 0xE0;', self.main)
+        self.assertIn('VCSEC_serviceDiagnosticRequest', self.readme)
+        self.assertIn('00 00 00 00 00 80 00 00', self.readme)
+        self.assertIn('00 00 00 00 00 00 00 00', self.readme)
+        self.assertIn('四帧脉冲', self.ui)
+
+    def test_mcp2515_bus2_spi_and_filter_support(self) -> None:
+        """MCP2515 driver should support returning from accept-all to filtered mode and use 10MHz SPI."""
+        mcp = (ROOT / "include" / "drivers" / "espidf_mcp2515.h").read_text(encoding="utf-8")
+        self.assertIn('void setReceiveAllMode()', mcp)
+        self.assertIn('void setUseFiltersMode()', mcp)
+        self.assertIn('RXBnCTRL_RXM_STDEXT', mcp)
+        self.assertIn('dev.clock_speed_hz = 10000000', mcp)
+
+    def test_high_beam_shared_bus_limit_is_documented(self) -> None:
+        """README should record that shared-bus injection cannot force high-beam during FSD."""
+        for token in [
+            '0x3F5 byte1 bit7',
+            '0x3F5 byte3',
+            '0x293 byte2 bit6',
+            'inline MITM',
+            'shared-bus injection cannot override',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.readme)
 
     def test_all_panel_endpoints_have_matching_backend_routes(self) -> None:
         routes = set()

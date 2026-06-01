@@ -1633,6 +1633,14 @@ static void dashCheckBusHealth()
 #endif
 static WebServer server(80);
 
+#ifdef DRIVER_T2CAN_DUAL
+// CAN2 (bus B / MCP2515, X197 pin 9/10) traffic counters — defined in main.cpp.
+uint32_t t2canBus2RxCount(void);
+uint32_t t2canBus2TxCount(void);
+uint32_t t2canBus2TxErrCount(void);
+uint8_t t2canBus2Eflg(void);
+#endif
+
 static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxValue, uint8_t &out)
 {
     if (!server.hasArg(name))
@@ -1928,6 +1936,17 @@ static void handleStatus()
              ",\"err\":" + String(muxErr[i]) + "}";
     }
     j += "]";
+#ifdef DRIVER_T2CAN_DUAL
+    j += ",\"can2\":{\"rx\":";
+    j += t2canBus2RxCount();
+    j += ",\"tx\":";
+    j += t2canBus2TxCount();
+    j += ",\"txerr\":";
+    j += t2canBus2TxErrCount();
+    j += ",\"eflg\":";
+    j += t2canBus2Eflg();
+    j += "}";
+#endif
     // ── Phase 1 新增状态字段 ──────────────────────────────────────────
     j += ",\"vehicleOta\":";
     j += vehicleOtaActive ? "true" : "false";
@@ -2931,6 +2950,10 @@ static void handleRecStatus()
 void t2canSetServiceMode(bool on);
 bool t2canGetServiceMode(void);
 uint16_t t2canBus2IdCount(void);
+uint32_t t2canBus2RxCount(void);
+uint32_t t2canBus2TxCount(void);
+uint32_t t2canBus2TxErrCount(void);
+uint8_t t2canBus2Eflg(void);
 bool t2canBus2IdAt(uint16_t i, uint16_t *id, uint8_t *dlc, uint8_t *data, uint32_t *count);
 void t2canStalkTest(uint8_t status, uint16_t durationMs); // status 1=PULL flash, 2=PUSH high beam
 

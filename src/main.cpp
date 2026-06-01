@@ -94,6 +94,20 @@ static bool appTwaiGpioValid(gpio_num_t pin, bool tx)
 #ifdef DRIVER_T2CAN_DUAL
 static std::unique_ptr<ESP32_MCP2515Driver> appDriverSecondary;
 static volatile uint32_t t2canSecondaryRxCount = 0;
+static volatile uint32_t t2canSecondaryTxCount = 0;
+static volatile uint32_t t2canSecondaryTxErrCount = 0;
+static volatile uint8_t t2canSecondaryEflg = 0;
+
+static bool t2canTxSecondaryCounted(const CanFrame &f)
+{
+    if (!appDriverSecondary)
+        return false;
+    bool ok = appDriverSecondary->send(f);
+    t2canSecondaryTxCount = t2canSecondaryTxCount + 1;
+    if (!ok)
+        t2canSecondaryTxErrCount = t2canSecondaryTxErrCount + 1;
+    return ok;
+}
 
 static void t2canSetupSecondary()
 {
@@ -124,7 +138,7 @@ bool t2canSendSecondary(const CanFrame &frame)
         return false;
     CanFrame f = frame;
     f.bus = T2CAN_SECONDARY_BUS;
-    return appDriverSecondary->send(f);
+    return t2canTxSecondaryCounted(f);
 }
 
 // ── bus2 discovered-ID table (X197 9/10) — for serial log + dashboard /bus2_ids ──
@@ -174,6 +188,10 @@ static void t2canRecordBus2(const CanFrame &f)
 
 // Accessors used by the dashboard /bus2_ids handler.
 uint16_t t2canBus2IdCount(void) { return g_bus2IdCount; }
+uint32_t t2canBus2RxCount(void) { return t2canSecondaryRxCount; }
+uint32_t t2canBus2TxCount(void) { return t2canSecondaryTxCount; }
+uint32_t t2canBus2TxErrCount(void) { return t2canSecondaryTxErrCount; }
+uint8_t t2canBus2Eflg(void) { return t2canSecondaryEflg; }
 bool t2canBus2IdAt(uint16_t i, uint16_t *id, uint8_t *dlc, uint8_t data[8], uint32_t *count)
 {
     if (i >= g_bus2IdCount)
@@ -213,17 +231,27 @@ static void t2canDrainSecondary()
     }
 }
 
-// ── Service mode (X197 pin 9/10 / bus B): periodic 0x339 injection ──
-// Owner-provided frame {00,00,00,00,00,E0,00,00}. RAM-only flag, OFF on boot;
-// injects only while explicitly enabled via the dashboard /service_mode toggle.
+// ── Service mode (BODY bus / bus B): VCSEC_serviceDiagnosticRequest 0x339 ──
+// Spec 2.4.1: send 4 frames at 10ms spacing on the BODY bus. The signal lives at
+// start bit 47 (Intel) = byte5 bit7: 1 = enter service mode, 0 = exit.
+//   activate   -> 00 00 00 00 00 80 00 00
+//   deactivate -> 00 00 00 00 00 00 00 00
+// RAM-only flag, OFF on boot; each dashboard /service_mode toggle fires one burst.
 static volatile bool g_t2canServiceMode = false;
+static volatile uint8_t g_svcBurstRemaining = 0;
+static volatile uint8_t g_svcBurstValue = 0;
 
-void t2canSetServiceMode(bool on) { g_t2canServiceMode = on; }
+void t2canSetServiceMode(bool on)
+{
+    g_t2canServiceMode = on;
+    g_svcBurstValue = on ? 0x80 : 0x00;
+    g_svcBurstRemaining = 4;
+}
 bool t2canGetServiceMode(void) { return g_t2canServiceMode; }
 
 static void t2canServiceModeTick()
 {
-    if (!g_t2canServiceMode || !appDriverSecondary)
+    if (g_svcBurstRemaining == 0 || !appDriverSecondary)
         return;
     static uint32_t last = 0;
     uint32_t now = millis();
@@ -233,9 +261,10 @@ static void t2canServiceModeTick()
     CanFrame f = {};
     f.id = 0x339;
     f.dlc = 8;
-    f.data[5] = 0xE0;
+    f.data[5] = g_svcBurstValue;
     f.bus = T2CAN_SECONDARY_BUS;
-    appDriverSecondary->send(f);
+    t2canTxSecondaryCounted(f);
+    g_svcBurstRemaining = g_svcBurstRemaining - 1;
 }
 
 // ── Stalk injection test (0x249 SCCMLeftStalk on bus B / X197 9/10) ──
@@ -262,6 +291,18 @@ void t2canStalkTest(uint8_t status, uint16_t durationMs)
     g_stalkInjUntil = millis() + durationMs;
 }
 
+static void t2canBus2HealthTick()
+{
+    if (!appDriverSecondary)
+        return;
+    static uint32_t last = 0;
+    uint32_t now = millis();
+    if (now - last < 500)
+        return;
+    last = now;
+    t2canSecondaryEflg = appDriverSecondary->mcp().getErrorFlags();
+}
+
 static void t2canStalkInjectTick()
 {
     if (!appDriverSecondary || g_stalkInjStatus == 0)
@@ -286,7 +327,7 @@ static void t2canStalkInjectTick()
     f.data[2] = 0;
     f.data[3] = 0;
     f.bus = T2CAN_SECONDARY_BUS;
-    appDriverSecondary->send(f);
+    t2canTxSecondaryCounted(f);
 #ifdef ESP32_DASHBOARD
     dashRecordCanFrame(f, 'T');
 #endif
@@ -303,7 +344,7 @@ static void t2canSendFogFrame(const uint8_t data[8])
     f.dlc = 8;
     memcpy(f.data, data, 8);
     f.bus = T2CAN_SECONDARY_BUS;
-    appDriverSecondary->send(f);
+    t2canTxSecondaryCounted(f);
 #ifdef ESP32_DASHBOARD
     dashRecordCanFrame(f, 'T');
 #endif
@@ -378,7 +419,7 @@ static void t2canWheelDndTick()
         f.dlc = 8;
         memcpy(f.data, data, 8);
         f.bus = T2CAN_SECONDARY_BUS;
-        appDriverSecondary->send(f);
+        t2canTxSecondaryCounted(f);
 #ifdef ESP32_DASHBOARD
         dashRecordCanFrame(f, 'T');
 #endif
@@ -483,6 +524,7 @@ static void app_can_task(void *)
 #ifdef DRIVER_T2CAN_DUAL
         t2canDrainSecondary();
         t2canServiceModeTick();
+        t2canBus2HealthTick();
         t2canStalkInjectTick();
         t2canFogLightTick();
         t2canWheelDndTick();

@@ -821,6 +821,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <div class="stats">
   <div class="stat"><div class="stat-lbl">CAN2 状态</div><div class="stat-val v-dim" id="b2-status">Offline</div></div>
   <div class="stat"><div class="stat-lbl">CAN2 RX</div><div class="stat-val v-info" id="b2-rx">0</div></div>
+  <div class="stat"><div class="stat-lbl">CAN2 TX</div><div class="stat-val v-info" id="b2-tx">0</div></div>
+  <div class="stat"><div class="stat-lbl">CAN2 TXErr</div><div class="stat-val v-dim" id="b2-txerr">0</div></div>
+  <div class="stat"><div class="stat-lbl">CAN2 EFLG</div><div class="stat-val v-dim" id="b2-eflg">0x00</div></div>
   <div class="stat"><div class="stat-lbl">已发现 ID</div><div class="stat-val v-acc" id="b2-ids">0</div></div>
 </div>
 
@@ -888,7 +891,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">Service Mode</div>
-      <div class="setting-desc">启用 0x339 持续注入 CAN2</div>
+      <div class="setting-desc">按 VCSEC 规格发送 0x339 四帧脉冲到 CAN2（byte5 bit7）</div>
     </div>
     <label class="tgl">
       <input type="checkbox" id="svc-mode-tgl" onchange="toggleServiceMode()">
@@ -1765,6 +1768,11 @@ async function poll(){
   setText('s-can',d.can?'Online':'Offline');
   setText('s-rx',(d.rx||0)+'/'+(d.tx||0));
   setText('s-tx',d.tx||0);
+  if(d.can2){
+    setText('b2-tx',d.can2.tx||0);
+    setText('b2-txerr',d.can2.txerr||0);
+    setText('b2-eflg','0x'+toHex(d.can2.eflg||0,2));
+  }
   setText('s-fps',d.fps.toFixed(1)+' Hz');
   setText('s-hw',(d.hwName||hwLabel(d.hw)));
   setText('s-soff',d.soff||0);
@@ -2183,6 +2191,12 @@ async function pollCAN2(){
   setCls('b2-status','stat-val '+(d.count>0?'v-ok':'v-dim'));
   setText('b2-status',d.count>0?'Online':'Idle');
   setText('b2-rx',d.rx_total||0);
+  var c2=d.can2||{};
+  setText('b2-tx',c2.tx||0);
+  setText('b2-txerr',c2.txerr||0);
+  setText('b2-eflg','0x'+toHex(c2.eflg||0,2));
+  setCls('b2-txerr','stat-val '+((c2.txerr||0)>0?'v-warn':'v-dim'));
+  setCls('b2-eflg','stat-val '+((c2.eflg||0)>0?'v-err':'v-dim'));
   setText('b2-ids',d.count||0);
   setText('b2-count','('+d.count+')');
   setCls('s-can2','stat-val '+(d.count>0?'v-ok':'v-dim'));
