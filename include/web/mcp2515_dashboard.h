@@ -1760,6 +1760,27 @@ static void serviceDiagJson(String &j, unsigned long now)
     appendServiceDiagJson(j, now);
 }
 
+static void appendWheelDndDiagJson(String &j, unsigned long now)
+{
+    j += R"JSON(,"wheelDndDiag":{"enabled":)JSON";
+    j += dashDefenseEnabled ? "true" : "false";
+    j += R"JSON(,"volume":)JSON";
+    j += dashDndVolume ? "true" : "false";
+    j += R"JSON(,"speed":)JSON";
+    j += dashDndSpeed ? "true" : "false";
+    j += R"JSON(,"native3c2Seen":)JSON";
+    j += dashWheelDndCtrl.diag.native3c2Seen ? "true" : "false";
+    j += R"JSON(,"native3c2AgeMs":)JSON";
+    j += dashWheelDndCtrl.diag.native3c2Ms ? String(now - dashWheelDndCtrl.diag.native3c2Ms) : String(-1);
+    j += R"JSON(,"baseFrameMode":")JSON";
+    j += dashWheelDndCtrl.diag.baseFrameMode;
+    j += R"JSON(","sequenceState":")JSON";
+    j += dashWheelDndCtrl.diag.sequenceState;
+    j += R"JSON(","tx":)JSON";
+    appendTxEvidenceJson(j, dashWheelDndCtrl.diag.tx, now);
+    j += "}";
+}
+
 static void appendFsdMuxDiagJson(String &j, const char *name, const FsdMuxDiag &mux, bool enabled, unsigned long now)
 {
     j += ",\"";
@@ -2094,6 +2115,7 @@ static void handleStatus()
     j += "}";
 #endif
     appendServiceDiagJson(j, now);
+    appendWheelDndDiagJson(j, now);
     // ── Phase 1 新增状态字段 ──────────────────────────────────────────
     j += ",\"vehicleOta\":";
     j += vehicleOtaActive ? "true" : "false";

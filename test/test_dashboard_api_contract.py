@@ -128,6 +128,20 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.main + self.dash)
 
+    def test_wheel_dnd_uses_native_3c2_and_exposes_diag(self) -> None:
+        for token in [
+            'recordNative3c2',
+            'native3c2Fresh',
+            'DashWheelDndDiag',
+            '"wheelDndDiag"',
+            '"native3c2Seen"',
+            '"baseFrameMode"',
+            '"waiting_native"',
+            't2canWheelDndRecordNative',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.main + self.dash + self.ui + self.handlers + self.legacy_speed + (ROOT / "include" / "dash_wheel_dnd.h").read_text(encoding="utf-8"))
+
     def test_legacy_fsd_config_accepts_get_emitted_policy_names(self) -> None:
         """POST /legacy_fsd_config must round-trip policy strings emitted by GET."""
         handler = re.search(r"static void handleLegacyFsdConfig\(\).*?server\.send\(200, \"application/json\", j\);", self.dash, re.S)

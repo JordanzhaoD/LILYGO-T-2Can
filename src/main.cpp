@@ -160,6 +160,11 @@ static volatile uint16_t g_bus2IdCount = 0;
 // injected test frame can ride just after it with the next counter value.
 static volatile uint8_t g_stalkLastCounter = 0;
 
+static void t2canWheelDndRecordNative(const CanFrame &f)
+{
+    dashWheelDndCtrl.recordNative3c2(f.data, millis());
+}
+
 static void t2canRecordBus2(const CanFrame &f)
 {
     if (f.id & 0x80000000UL)
@@ -167,6 +172,8 @@ static void t2canRecordBus2(const CanFrame &f)
     uint16_t sid = (uint16_t)(f.id & 0x7FF);
     if (sid == 0x249 && f.dlc >= 2)
         g_stalkLastCounter = f.data[1] & 0x0F; // track real stalk counter
+    if (sid == 0x3C2 && f.dlc >= 8)
+        t2canWheelDndRecordNative(f);
     uint16_t n = g_bus2IdCount;
     for (uint16_t i = 0; i < n; i++)
     {
@@ -437,9 +444,12 @@ static void t2canWheelDndTick()
         f.dlc = 8;
         memcpy(f.data, data, 8);
         f.bus = T2CAN_SECONDARY_BUS;
-        t2canTxSecondaryCounted(f);
+        dashWheelDndCtrl.diag.tx.recordAttempt(f.id, f.bus, f.dlc, f.data, millis());
+        bool ok = t2canTxSecondaryCounted(f);
+        dashWheelDndCtrl.diag.tx.recordResult(ok);
+        dashWheelDndCtrl.diag.sequenceState = ok ? "sent" : "failed";
 #ifdef ESP32_DASHBOARD
-        dashRecordCanFrame(f, 'T');
+        dashRecordCanFrame(f, ok ? 'T' : 'E');
 #endif
     }
 }
