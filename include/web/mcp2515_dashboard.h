@@ -2751,7 +2751,7 @@ static void handleDefenseConfig()
 
 static void handleLegacyFsdConfig()
 {
-    if (server.method() == HTTP_POST)
+    if (server.hasArg("policy") || server.hasArg("mux1") || server.hasArg("profile") || server.hasArg("vision"))
     {
         if (server.hasArg("policy"))
         {
