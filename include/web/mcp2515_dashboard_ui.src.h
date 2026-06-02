@@ -1417,6 +1417,58 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
     </div>
 
+<!-- Legacy Real Wiring Truth Cards -->
+<div class="card" id="legacy-runtime-card">
+  <div class="card-title">Legacy Runtime Matrix <span class="tag">Read-only / unsupported</span></div>
+  <div class="list-row"><span>Selected HW</span><b id="legacy-selected-hw">--</b></div>
+  <div class="list-row"><span>Effective Handler</span><b id="legacy-effective-handler">--</b></div>
+  <div class="list-row"><span>Detected HW</span><b id="legacy-detected-hw">--</b></div>
+  <div class="list-row"><span>AP Gate</span><b id="legacy-ap-gate">--</b></div>
+  <div class="list-row"><span>OTA Guard</span><b id="legacy-ota-guard">--</b></div>
+</div>
+
+<div class="card" id="legacy-fsd-card">
+  <div class="card-title">Legacy FSD Stable <span class="tag">Arm injection</span></div>
+  <p class="hint">Stable mode uses mux0 bit46-only and keeps mux1 disabled to reduce FSD UI flicker.</p>
+  <div class="seg">
+    <button onclick="setLegacyFsdPolicy('stable')">Legacy Stable</button>
+    <button onclick="setLegacyFsdPolicy('experimental')">Experimental</button>
+  </div>
+  <div class="list-row"><span>Strategy</span><b id="legacy-fsd-strategy">mux0 bit46-only / mux1 disabled</b></div>
+  <div class="list-row"><span>mux0</span><b id="legacy-fsd-mux0">--</b></div>
+  <div class="list-row"><span>mux1</span><b id="legacy-fsd-mux1">--</b></div>
+  <div class="list-row"><span>Trigger</span><b id="legacy-fsd-trigger">--</b></div>
+  <label><input type="checkbox" id="legacy-fsd-mux1" onchange="saveLegacyFsdExperimental()"> Enable mux1 injection</label>
+  <label><input type="checkbox" id="legacy-fsd-profile" onchange="saveLegacyFsdExperimental()"> Write speed profile in mux0</label>
+  <label><input type="checkbox" id="legacy-fsd-vision" onchange="saveLegacyFsdExperimental()"> Clear vision speed-limit bit</label>
+</div>
+
+<div class="card" id="service-evidence-card">
+  <div class="card-title">Service 0x339 <span class="tag">Send now</span></div>
+  <p class="hint">Burst sent only proves module TX. Vehicle response remains unknown until observed.</p>
+  <div class="list-row"><span>Burst sent</span><b id="service-burst-state">--</b></div>
+  <div class="list-row"><span>Last Data</span><b id="service-last-data">--</b></div>
+  <div class="list-row"><span>TX</span><b id="service-tx-evidence">--</b></div>
+</div>
+
+<div class="card" id="wheel-dnd-evidence-card">
+  <div class="card-title">Wheel DND 0x3C2 <span class="tag">Send now</span></div>
+  <p class="hint">Waiting for native 0x3C2 before sending avoids blind synthetic frames.</p>
+  <div class="list-row"><span>Native 0x3C2</span><b id="wheel-native-3c2">Waiting for native 0x3C2</b></div>
+  <div class="list-row"><span>Base Frame</span><b id="wheel-base-frame">--</b></div>
+  <div class="list-row"><span>Sequence</span><b id="wheel-sequence-state">--</b></div>
+</div>
+
+<div class="card" id="legacy-unsupported-card">
+  <div class="card-title">Legacy Support Matrix <span class="tag">Read-only / unsupported</span></div>
+  <div class="list-row"><span>Bionic Steering</span><b>Unsupported on Legacy</b></div>
+  <div class="list-row"><span>Ban Shield</span><b>Unsupported on Legacy</b></div>
+  <div class="list-row"><span>Legacy MPP Custom</span><b>Not wired</b></div>
+  <div class="list-row"><span>Gear Assist</span><b>Not implemented</b></div>
+  <p class="hint">Save config means persisted only. Arm injection waits for CAN. Send now starts a CAN action.</p>
+  <span class="tag">Save config</span><span class="tag">Arm injection</span><span class="tag">Send now</span><span class="tag">Read-only / unsupported</span>
+</div>
+
   </div>
 </div>
 
@@ -1811,6 +1863,9 @@ async function poll(){
 
   // Defense page
   updateDefensePage(d);
+
+  // Legacy Real Wiring truth cards
+  renderLegacyTruth(d);
 
   // CAN controller sub-page
   updateCanController(d);
@@ -2959,6 +3014,50 @@ async function pollGearAssist(){
   setText('shift-brake',d.brake?(T('踩下')||'ON'):(d.brake_seen?(T('未踩')||'OFF'):'--'));
   setText('shift-fsd',d.can_online?'CAN Online':'CAN Offline');
   setCls('shift-fsd','v-dim '+(d.can_online?'v-ok':'v-err'));
+}
+
+// ── Legacy Real Wiring Truth Cards ────────────────────────
+async function setLegacyFsdPolicy(policy){
+  await postForm('/legacy_fsd_config',{policy:policy});
+  showToast(policy==='stable'?'Legacy Stable':'Experimental');
+  poll();
+}
+async function saveLegacyFsdExperimental(){
+  var mux1=document.getElementById('legacy-fsd-mux1');
+  var profile=document.getElementById('legacy-fsd-profile');
+  var vision=document.getElementById('legacy-fsd-vision');
+  await postForm('/legacy_fsd_config',{
+    policy:'experimental',
+    mux1:mux1&&mux1.checked?'1':'0',
+    profile:profile&&profile.checked?'1':'0',
+    vision:vision&&vision.checked?'1':'0'
+  });
+  showToast('Experimental FSD config saved');
+  poll();
+}
+function renderLegacyTruth(d){
+  var set=function(id,v){var e=document.getElementById(id); if(e)e.innerText=v;};
+  set('legacy-selected-hw',hwLabel(d.hw));
+  set('legacy-effective-handler',d.hwName||hwLabel(d.effectiveHw));
+  set('legacy-detected-hw',hwLabel(d.hwDetected||0));
+  set('legacy-ap-gate',d.apGateOpen?'Open':'Closed');
+  set('legacy-ota-guard',d.vehicleOta?'Blocked':'Allowed');
+  var fsd=d.fsdDiag||{};
+  var m0=fsd.mux0||{};
+  var m1=fsd.mux1||{};
+  set('legacy-fsd-strategy',(fsd.policy==='legacy_experimental')?'Experimental':'mux0 bit46-only / mux1 disabled');
+  set('legacy-fsd-mux0','RX '+(m0.rx||0)+' / TX '+(m0.tx||0)+' / '+(m0.lastSkip||'none'));
+  set('legacy-fsd-mux1','RX '+(m1.rx||0)+' / TX '+(m1.tx||0)+' / '+(m1.lastSkip||'none'));
+  set('legacy-fsd-trigger',fsd.triggerSource||'unknown');
+  var svc=d.serviceDiag||{};
+  var svctx=svc.tx||{};
+  set('service-burst-state',(svc.lastCommand||'none')+' / '+(svc.remaining||0)+' remaining');
+  set('service-last-data',svctx.lastData||'--');
+  set('service-tx-evidence','OK '+(svctx.txOk||0)+' / ERR '+(svctx.txErr||0));
+  var wd=d.wheelDndDiag||{};
+  set('wheel-native-3c2',wd.native3c2Seen?'Seen '+(wd.native3c2AgeMs||0)+'ms ago':'Waiting for native 0x3C2');
+  set('wheel-base-frame',wd.baseFrameMode||'waiting_native');
+  set('wheel-sequence-state',wd.sequenceState||'idle');
 }
 
 // ── Temp from system_status ────────────────────────────────
