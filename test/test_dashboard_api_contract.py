@@ -95,6 +95,35 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("d.hwName||hwLabel(d.hw)", self.ui)
         self.assertIn("d.uiBuildUtc||d.uiBuildId||d.buildEnv", self.ui)
 
+    def test_legacy_fsd_diag_and_config_are_exposed(self) -> None:
+        for token in [
+            '"fsdDiag"',
+            'legacyFsdPolicyName',
+            'fsdTriggerSourceName',
+            'fsdSkipReasonName',
+            '"mux0"',
+            '"mux1"',
+            '"triggerSource"',
+            '"forceRuntime"',
+            'server.on("/legacy_fsd_config", HTTP_GET, handleLegacyFsdConfig);',
+            'server.on("/legacy_fsd_config", HTTP_POST, handleLegacyFsdConfig);',
+            'prefs.putUChar("lfsd_pol"',
+            'prefs.getUChar("lfsd_pol"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+    def test_legacy_fsd_config_accepts_get_emitted_policy_names(self) -> None:
+        """POST /legacy_fsd_config must round-trip policy strings emitted by GET."""
+        handler = re.search(r"static void handleLegacyFsdConfig\(\).*?server\.send\(200, \"application/json\", j\);", self.dash, re.S)
+        self.assertIsNotNone(handler)
+        body = handler.group(0)
+        self.assertIn('p == "legacy_experimental"', body)
+        self.assertIn('p == "legacy_stable"', body)
+        self.assertIn('p == "experimental"', body)
+        self.assertIn('p == "1"', body)
+        self.assertLess(body.index('p == "legacy_stable"'), body.index('dashLegacyFsdPolicy = LegacyFsdPolicy::Stable'))
+
     def test_uptime_and_fsd_boot_persistence_are_wired(self) -> None:
         """Running time and FSD boot/default state must round-trip through /status and /config.
 

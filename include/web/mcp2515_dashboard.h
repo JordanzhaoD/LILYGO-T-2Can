@@ -166,6 +166,10 @@ static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行
 static bool dashDndSpeed = false;       // 速度滚轮DND（Phase 3实现执行逻辑）
 static bool dashBionicDisabled = false; // bionic auto-disabled after 3 failures
 static bool dashApEapCompatible = true;
+static LegacyFsdPolicy dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
+static bool dashLegacyFsdMux1Enable = false;
+static bool dashLegacyFsdProfileWriteEnable = false;
+static bool dashLegacyFsdVisionLimitClearEnable = false;
 
 // HW3 slew limiter constants/state moved to include/dash_hw3_speed.h so
 // HW3Handler can call dashApplyHw3OffsetSlew directly.
@@ -1103,6 +1107,10 @@ static void dashApplyRuntimeState()
         dashHandler->emergencyVehicleDetection = nvsEmergencyVehicleDetection;
         dashHandler->hw4OffsetRaw = nvsHw4OffsetRaw;
         dashHandler->autoModeEnabled = nvsAutoModeEnabled;
+        dashHandler->legacyFsdDiag.policy = dashLegacyFsdPolicy;
+        dashHandler->legacyFsdDiag.mux1Enable = dashLegacyFsdMux1Enable;
+        dashHandler->legacyFsdDiag.profileWriteEnable = dashLegacyFsdProfileWriteEnable;
+        dashHandler->legacyFsdDiag.visionLimitClearEnable = dashLegacyFsdVisionLimitClearEnable;
         dashApplySpeedProfileState();
         if (!canActive)
         {
@@ -1147,6 +1155,10 @@ static void dashSavePrefs()
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
     prefs.putBool("def_apeap", dashApEapCompatible);
+    prefs.putUChar("lfsd_pol", dashLegacyFsdPolicy == LegacyFsdPolicy::Experimental ? 1 : 0);
+    prefs.putBool("lfsd_m1", dashLegacyFsdMux1Enable);
+    prefs.putBool("lfsd_prof", dashLegacyFsdProfileWriteEnable);
+    prefs.putBool("lfsd_vis", dashLegacyFsdVisionLimitClearEnable);
     prefs.putBool("eprn", dashHandler ? (bool)dashHandler->enablePrint : true);
     prefs.putBool("h3_slw", hw3OffsetSlew);
     prefs.putUChar("h3_srt", hw3SlewRate);
@@ -1344,6 +1356,10 @@ static void dashLoadPrefs()
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
     dashApEapCompatible = prefs.getBool("def_apeap", true);
+    dashLegacyFsdPolicy = prefs.getUChar("lfsd_pol", 0) == 1 ? LegacyFsdPolicy::Experimental : LegacyFsdPolicy::Stable;
+    dashLegacyFsdMux1Enable = prefs.getBool("lfsd_m1", false);
+    dashLegacyFsdProfileWriteEnable = prefs.getBool("lfsd_prof", false);
+    dashLegacyFsdVisionLimitClearEnable = prefs.getBool("lfsd_vis", false);
     hw3OffsetSlew = prefs.getBool("h3_slw", false);
     hw3SlewRate = dashLoadHw3SlewRate(prefs.getUChar("h3_srt", kHw3SlewRateDefault));
     // HW3 custom speed-limit boost
@@ -1680,6 +1696,85 @@ static void handleRoot()
 #endif
 }
 
+static void appendHexBytesJson(String &j, const uint8_t data[8])
+{
+    static const char *hex = "0123456789ABCDEF";
+    j += "\"";
+    for (uint8_t i = 0; i < 8; ++i)
+    {
+        if (i) j += " ";
+        uint8_t b = data[i];
+        j += hex[(b >> 4) & 0x0F];
+        j += hex[b & 0x0F];
+    }
+    j += "\"";
+}
+
+static void appendFsdMuxDiagJson(String &j, const char *name, const FsdMuxDiag &mux, bool enabled, unsigned long now)
+{
+    j += ",\"";
+    j += name;
+    j += "\":{\"enabled\":";
+    j += enabled ? "true" : "false";
+    j += ",\"rx\":";
+    j += mux.rx;
+    j += ",\"tx\":";
+    j += mux.tx;
+    j += ",\"err\":";
+    j += mux.err;
+    j += ",\"lastRxAgeMs\":";
+    j += mux.lastRxMs ? String(now - mux.lastRxMs) : String(-1);
+    j += ",\"lastTxAgeMs\":";
+    j += mux.lastTxMs ? String(now - mux.lastTxMs) : String(-1);
+    j += ",\"lastSkip\":\"";
+    j += fsdSkipReasonName(mux.lastSkip);
+    j += "\",\"before\":";
+    appendHexBytesJson(j, mux.before);
+    j += ",\"after\":";
+    appendHexBytesJson(j, mux.after);
+    j += "}";
+}
+
+static void appendFsdDiagJson(String &j, unsigned long now)
+{
+    LegacyFsdDiag diag{};
+    bool parked = false;
+    bool apActive = false;
+    bool summoning = false;
+    if (dashHandler)
+    {
+        diag = dashHandler->legacyFsdDiag;
+        parked = (bool)dashHandler->Parked;
+        apActive = (bool)dashHandler->APActive;
+        summoning = (bool)dashHandler->Summoning;
+    }
+    j += R"JSON(,"fsdDiag":{"policy":")JSON";
+    j += legacyFsdPolicyName(diag.policy);
+    j += "\",\"triggered\":";
+    j += diag.triggered ? "true" : "false";
+    j += R"JSON(,"triggerSource":")JSON";
+    j += fsdTriggerSourceName(diag.triggerSource);
+    j += R"JSON(","forceRuntime":)JSON";
+    j += diag.forceRuntime ? "true" : "false";
+    appendFsdMuxDiagJson(j, "mux0", diag.mux0, true, now);
+    appendFsdMuxDiagJson(j, "mux1", diag.mux1, diag.policy == LegacyFsdPolicy::Experimental && diag.mux1Enable, now);
+    j += ",\"gate\":{\"canActive\":";
+    j += canActive ? "true" : "false";
+    j += ",\"otaAllowed\":";
+    j += dashOtaGuardAllowInjection() ? "true" : "false";
+    j += ",\"apGateEnabled\":";
+    j += apInjectionGate ? "true" : "false";
+    j += ",\"apGateOpen\":";
+    j += dashApInjectionAllowed() ? "true" : "false";
+    j += ",\"parked\":";
+    j += parked ? "true" : "false";
+    j += ",\"apActive\":";
+    j += apActive ? "true" : "false";
+    j += ",\"summoning\":";
+    j += summoning ? "true" : "false";
+    j += "}}";
+}
+
 static void handleStatus()
 {
     if (canOnline && millis() - lastFrameMs > 10000)
@@ -1826,6 +1921,7 @@ static void handleStatus()
     // --- FSD runtime state fields (runtime switches) ---
     j += ",\"fsdTriggered\":";
     j += dashHandler ? ((bool)dashHandler->fsdTriggered ? "true" : "false") : "false";
+    appendFsdDiagJson(j, now);
     j += ",\"hwDetected\":";
     j += dashHandler ? (int)dashHandler->hwDetected : 0;
     j += ",\"autoMode\":";
@@ -2552,6 +2648,39 @@ static void handleDefenseConfig()
         dashLog("[CFG] /defense_config saved");
     }
     server.send(200, "application/json", dashDefenseConfigJson());
+}
+
+static void handleLegacyFsdConfig()
+{
+    if (server.method() == HTTP_POST)
+    {
+        if (server.hasArg("policy"))
+        {
+            String p = server.arg("policy");
+            if (p == "experimental" || p == "legacy_experimental" || p == "1")
+                dashLegacyFsdPolicy = LegacyFsdPolicy::Experimental;
+            else if (p == "legacy_stable")
+                dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
+            else
+                dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
+        }
+        if (server.hasArg("mux1")) dashLegacyFsdMux1Enable = server.arg("mux1") == "1";
+        if (server.hasArg("profile")) dashLegacyFsdProfileWriteEnable = server.arg("profile") == "1";
+        if (server.hasArg("vision")) dashLegacyFsdVisionLimitClearEnable = server.arg("vision") == "1";
+        dashApplyRuntimeState();
+        dashSavePrefs();
+    }
+
+    String j = "{\"policy\":\"";
+    j += legacyFsdPolicyName(dashLegacyFsdPolicy);
+    j += "\",\"mux1\":";
+    j += dashLegacyFsdMux1Enable ? "true" : "false";
+    j += ",\"profile\":";
+    j += dashLegacyFsdProfileWriteEnable ? "true" : "false";
+    j += ",\"vision\":";
+    j += dashLegacyFsdVisionLimitClearEnable ? "true" : "false";
+    j += "}";
+    server.send(200, "application/json", j);
 }
 
 // ── Phase 1 新增端点 ──────────────────────────────────────────────
@@ -5814,6 +5943,10 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->legacyOffset = nvsLegacyOffset;
         handlerPool[i]->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         handlerPool[i]->overrideSpeedLimit = nvsOverrideSpeedLimit;
+        handlerPool[i]->legacyFsdDiag.policy = dashLegacyFsdPolicy;
+        handlerPool[i]->legacyFsdDiag.mux1Enable = dashLegacyFsdMux1Enable;
+        handlerPool[i]->legacyFsdDiag.profileWriteEnable = dashLegacyFsdProfileWriteEnable;
+        handlerPool[i]->legacyFsdDiag.visionLimitClearEnable = dashLegacyFsdVisionLimitClearEnable;
     }
 }
 
@@ -5885,6 +6018,8 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/lighting_config", HTTP_POST, handleLightingConfig);
     server.on("/defense_config", HTTP_GET, handleDefenseConfig);
     server.on("/defense_config", HTTP_POST, handleDefenseConfig);
+    server.on("/legacy_fsd_config", HTTP_GET, handleLegacyFsdConfig);
+    server.on("/legacy_fsd_config", HTTP_POST, handleLegacyFsdConfig);
     server.on("/gear_assist_status", HTTP_GET, handleGearAssistStatus);
     // Phase 1 新增端点
     server.on("/power_mgmt",       HTTP_GET,  handlePowerMgmt);
