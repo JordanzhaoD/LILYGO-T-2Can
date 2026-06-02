@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <cstring>
 #include "can_frame_types.h"
 #include "drivers/can_driver.h"
 #include "can_helpers.h"
@@ -27,6 +28,7 @@ void setUp()
     customPct[3] = 10;
     smoothedOffset = 0.0f;
     actualOffset = 0.0f;
+    forceActivateRuntime = false;
 }
 
 void tearDown() {}
@@ -111,15 +113,31 @@ void test_legacy_AD_sets_bit46()
     TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
 }
 
-void test_legacy_AD_applies_selected_speed_profile_bits()
+void test_legacy_stable_mux0_sets_bit46_only()
 {
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::Stable;
     handler.speedProfile = 2;
+
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00;
     f.data[4] = 0x40;
     f.data[6] = 0x02;
+    uint8_t before[8];
+    memcpy(before, f.data, 8);
+
     handler.handleMessage(f, mock);
-    TEST_ASSERT_EQUAL_HEX8(0x04, mock.sent[0].data[6] & 0x06);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
+    TEST_ASSERT_EQUAL_HEX8(before[6], mock.sent[0].data[6]);
+    for (int i = 0; i < 8; ++i)
+    {
+        if (i == 5)
+            continue;
+        TEST_ASSERT_EQUAL_HEX8(before[i], mock.sent[0].data[i]);
+    }
+    TEST_ASSERT_EQUAL(FsdSkipReason::Sent, handler.legacyFsdDiag.mux0.lastSkip);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacyFsdDiag.mux0.tx);
 }
 
 void test_legacy_checkAD_blocks_mux0_send()
@@ -148,21 +166,85 @@ void test_legacy_fsdTriggered_set_on_mux0()
 
 // --- Nag suppression (mux 1) ---
 
-void test_legacy_nag_suppression_clears_bit19_on_mux1()
+void test_legacy_stable_mux1_is_disabled()
 {
-    // First activate FSD via mux 0
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::Stable;
+
     CanFrame f0 = {.id = 1006};
     f0.data[0] = 0x00;
     f0.data[4] = 0x40;
     handler.handleMessage(f0, mock);
 
-    // Then send mux 1
+    CanFrame f1 = {.id = 1006};
+    f1.data[0] = 0x01;
+    setBit(f1, 19, true);
+    handler.handleMessage(f1, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacyFsdDiag.mux1.rx);
+    TEST_ASSERT_EQUAL_UINT32(0, handler.legacyFsdDiag.mux1.tx);
+    TEST_ASSERT_EQUAL(FsdSkipReason::DisabledInStable, handler.legacyFsdDiag.mux1.lastSkip);
+}
+
+void test_legacy_experimental_mux0_can_write_speed_profile()
+{
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::Experimental;
+    handler.legacyFsdDiag.profileWriteEnable = true;
+    handler.speedProfile = 2;
+
     CanFrame f = {.id = 1006};
-    f.data[0] = 0x01;    // mux 1
-    setBit(f, 19, true); // pre-set nag bit
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    f.data[6] = 0x02;
     handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x04, mock.sent[0].data[6] & 0x06);
+}
+
+void test_legacy_experimental_mux1_can_clear_bit19()
+{
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::Experimental;
+    handler.legacyFsdDiag.mux1Enable = true;
+
+    CanFrame f0 = {.id = 1006};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+
+    CanFrame f1 = {.id = 1006};
+    f1.data[0] = 0x01;
+    setBit(f1, 19, true);
+    handler.handleMessage(f1, mock);
+
     TEST_ASSERT_EQUAL(2, mock.sent.size());
     TEST_ASSERT_FALSE((mock.sent[1].data[2] >> 3) & 0x01);
+    TEST_ASSERT_EQUAL(FsdSkipReason::Sent, handler.legacyFsdDiag.mux1.lastSkip);
+}
+
+void test_legacy_trigger_source_force_vs_ui_bit_vs_false()
+{
+    forceActivateRuntime = true;
+    CanFrame forced = {.id = 1006};
+    forced.data[0] = 0x00;
+    forced.data[4] = 0x00;
+    handler.handleMessage(forced, mock);
+    TEST_ASSERT_EQUAL(FsdTriggerSource::Force, handler.legacyFsdDiag.triggerSource);
+
+    setUp();
+    CanFrame ui = {.id = 1006};
+    ui.data[0] = 0x00;
+    ui.data[4] = 0x40;
+    handler.handleMessage(ui, mock);
+    TEST_ASSERT_EQUAL(FsdTriggerSource::UiBit, handler.legacyFsdDiag.triggerSource);
+
+    setUp();
+    CanFrame none = {.id = 1006};
+    none.data[0] = 0x00;
+    none.data[4] = 0x00;
+    handler.handleMessage(none, mock);
+    TEST_ASSERT_EQUAL(FsdTriggerSource::FalseSource, handler.legacyFsdDiag.triggerSource);
+    TEST_ASSERT_EQUAL(FsdSkipReason::NotTriggered, handler.legacyFsdDiag.mux0.lastSkip);
 }
 
 // --- CAN 760 offset write ---
@@ -342,11 +424,14 @@ int main()
     RUN_TEST(test_legacy_AD_enabled_on_mux0);
     RUN_TEST(test_legacy_no_send_when_AD_disabled);
     RUN_TEST(test_legacy_AD_sets_bit46);
-    RUN_TEST(test_legacy_AD_applies_selected_speed_profile_bits);
+    RUN_TEST(test_legacy_stable_mux0_sets_bit46_only);
     RUN_TEST(test_legacy_checkAD_blocks_mux0_send);
     RUN_TEST(test_legacy_fsdTriggered_set_on_mux0);
 
-    RUN_TEST(test_legacy_nag_suppression_clears_bit19_on_mux1);
+    RUN_TEST(test_legacy_stable_mux1_is_disabled);
+    RUN_TEST(test_legacy_experimental_mux0_can_write_speed_profile);
+    RUN_TEST(test_legacy_experimental_mux1_can_clear_bit19);
+    RUN_TEST(test_legacy_trigger_source_force_vs_ui_bit_vs_false);
 
     RUN_TEST(test_legacy_can760_writes_offset);
     RUN_TEST(test_legacy_can760_skips_when_offset_zero);

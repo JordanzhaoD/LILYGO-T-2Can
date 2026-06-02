@@ -10,6 +10,7 @@
 #include "dash_hw3_speed.h"
 #include "dash_legacy_speed.h"
 #include "dash_bionic_steer.h"
+#include "dash_fsd_diag.h"
 
 #ifndef DASH_FSD_252_COMPAT
 #define DASH_FSD_252_COMPAT 0
@@ -60,6 +61,7 @@ struct CarManagerBase
     // --- FSD activation state (from tesla-fsd-controller verified logic) ---
     Shared<bool> fsdTriggered{false};
     Shared<bool> removeVisionSpeedLimit{true};
+    LegacyFsdDiag legacyFsdDiag{};
     Shared<int> legacyOffset{0};
     Shared<bool> overrideSpeedLimit{false};
     Shared<bool> tlsscBypass{false};
@@ -324,32 +326,81 @@ struct LegacyHandler : public CarManagerBase
         // 0x3EE (1006) — FSD activation frame (mux 0/1)
         if (frame.id == 1006)
         {
+            uint32_t nowMs = dashDiagNowMs();
             if (frame.dlc < 8)
+            {
+                legacyFsdDiag.mux0.lastSkip = FsdSkipReason::DlcShort;
                 return;
+            }
+
             auto index = readMuxID(frame);
-            // Mux 0: detect FSD selection and activate
             if (index == 0)
             {
-                fsdTriggered = (bool)forceActivateRuntime || isFSDSelectedInUI(frame);
+                legacyFsdDiag.mux0.recordRx(nowMs);
+                bool forced = (bool)forceActivateRuntime;
+                bool uiSelected = isFSDSelectedInUI(frame);
+                fsdTriggered = forced || uiSelected;
                 ADEnabled = (bool)fsdTriggered;
-            }
-            if (index == 0 && (bool)fsdTriggered && injectionAllowed())
-            {
+                legacyFsdDiag.triggered = (bool)fsdTriggered;
+                legacyFsdDiag.forceRuntime = forced;
+                legacyFsdDiag.triggerSource = forced ? FsdTriggerSource::Force : (uiSelected ? FsdTriggerSource::UiBit : FsdTriggerSource::FalseSource);
+
+                if (!(bool)fsdTriggered)
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::NotTriggered;
+                    return;
+                }
+                if (!injectionAllowed())
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::CheckAdFalse;
+                    return;
+                }
+
+                legacyFsdDiag.mux0.recordBefore(frame.data);
                 setBit(frame, 46, true);
-                setSpeedProfileV12V13(frame, speedProfile);
+                if (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental && legacyFsdDiag.profileWriteEnable)
+                    setSpeedProfileV12V13(frame, speedProfile);
+                legacyFsdDiag.mux0.recordAfter(frame.data);
                 framesSent++;
-                driver.send(frame);
-                if (onSend) onSend(0, true);
+                bool ok = driver.send(frame);
+                legacyFsdDiag.mux0.recordTx(ok, nowMs);
+                if (onSend) onSend(0, ok);
             }
-            // Mux 1: nag suppression + optional vision speed limit removal
-            if (index == 1 && (bool)fsdTriggered && injectionAllowed())
+            else if (index == 1)
             {
+                legacyFsdDiag.mux1.recordRx(nowMs);
+                if (legacyFsdDiag.policy == LegacyFsdPolicy::Stable)
+                {
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::DisabledInStable;
+                    return;
+                }
+                if (!legacyFsdDiag.mux1Enable)
+                {
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::DisabledByPolicy;
+                    return;
+                }
+                if (!(bool)fsdTriggered)
+                {
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::NotTriggered;
+                    return;
+                }
+                if (!injectionAllowed())
+                {
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::CheckAdFalse;
+                    return;
+                }
+
+                legacyFsdDiag.mux1.recordBefore(frame.data);
                 setBit(frame, 19, false);
-                if ((bool)removeVisionSpeedLimit) setBit(frame, 48, false);
+                if (legacyFsdDiag.visionLimitClearEnable)
+                    setBit(frame, 48, false);
+                legacyFsdDiag.mux1.recordAfter(frame.data);
                 framesSent++;
-                driver.send(frame);
-                if (onSend) onSend(1, true);
+                bool ok = driver.send(frame);
+                legacyFsdDiag.mux1.recordTx(ok, nowMs);
+                if (onSend) onSend(1, ok);
             }
+
             if (index == 0 && enablePrint)
             {
                 char buf[LogRingBuffer::kMaxMsgLen];
