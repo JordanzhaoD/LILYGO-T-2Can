@@ -23,6 +23,7 @@
 #endif
 
 #include "app.h"
+#include "dash_tx_evidence.h"
 
 #ifdef DRIVER_T2CAN_DUAL
 #include "drivers/esp32_mcp2515_driver.h"
@@ -97,6 +98,8 @@ static volatile uint32_t t2canSecondaryRxCount = 0;
 static volatile uint32_t t2canSecondaryTxCount = 0;
 static volatile uint32_t t2canSecondaryTxErrCount = 0;
 static volatile uint8_t t2canSecondaryEflg = 0;
+static DashTxEvidence serviceTxEvidence;
+static volatile uint8_t g_svcLastCommand = 0; // 0=none, 1=enter, 2=exit
 
 static bool t2canTxSecondaryCounted(const CanFrame &f)
 {
@@ -192,6 +195,8 @@ uint32_t t2canBus2RxCount(void) { return t2canSecondaryRxCount; }
 uint32_t t2canBus2TxCount(void) { return t2canSecondaryTxCount; }
 uint32_t t2canBus2TxErrCount(void) { return t2canSecondaryTxErrCount; }
 uint8_t t2canBus2Eflg(void) { return t2canSecondaryEflg; }
+const DashTxEvidence &t2canServiceTxEvidence(void) { return serviceTxEvidence; }
+uint8_t t2canServiceLastCommand(void) { return g_svcLastCommand; }
 bool t2canBus2IdAt(uint16_t i, uint16_t *id, uint8_t *dlc, uint8_t data[8], uint32_t *count)
 {
     if (i >= g_bus2IdCount)
@@ -244,10 +249,20 @@ static volatile uint8_t g_svcBurstValue = 0;
 void t2canSetServiceMode(bool on)
 {
     g_t2canServiceMode = on;
+    g_svcLastCommand = on ? 1 : 2;
     g_svcBurstValue = on ? 0x80 : 0x00;
     g_svcBurstRemaining = 4;
 }
 bool t2canGetServiceMode(void) { return g_t2canServiceMode; }
+uint8_t t2canServiceBurstRemaining(void) { return g_svcBurstRemaining; }
+
+static bool recordServiceTxEvidence(const CanFrame &f, uint32_t now)
+{
+    serviceTxEvidence.recordAttempt(f.id, f.bus, f.dlc, f.data, now);
+    bool ok = t2canTxSecondaryCounted(f);
+    serviceTxEvidence.recordResult(ok);
+    return ok;
+}
 
 static void t2canServiceModeTick()
 {
@@ -263,7 +278,10 @@ static void t2canServiceModeTick()
     f.dlc = 8;
     f.data[5] = g_svcBurstValue;
     f.bus = T2CAN_SECONDARY_BUS;
-    t2canTxSecondaryCounted(f);
+    bool ok = recordServiceTxEvidence(f, now);
+#ifdef ESP32_DASHBOARD
+    dashRecordCanFrame(f, ok ? 'T' : 'E');
+#endif
     g_svcBurstRemaining = g_svcBurstRemaining - 1;
 }
 

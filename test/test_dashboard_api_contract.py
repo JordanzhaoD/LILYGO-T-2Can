@@ -113,6 +113,21 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.dash)
 
+    def test_service_diag_evidence_is_exposed(self) -> None:
+        for token in [
+            '#include "dash_tx_evidence.h"',
+            'DashTxEvidence serviceTxEvidence',
+            'recordServiceTxEvidence',
+            '"serviceDiag"',
+            '"lastCommand"',
+            '"burstFrames"',
+            '"lastData"',
+            '"vehicleResponse":"unknown"',
+            'serviceDiagJson',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.main + self.dash)
+
     def test_legacy_fsd_config_accepts_get_emitted_policy_names(self) -> None:
         """POST /legacy_fsd_config must round-trip policy strings emitted by GET."""
         handler = re.search(r"static void handleLegacyFsdConfig\(\).*?server\.send\(200, \"application/json\", j\);", self.dash, re.S)

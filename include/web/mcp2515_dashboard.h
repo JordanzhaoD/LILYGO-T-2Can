@@ -46,6 +46,7 @@
 #include "dash_power_mgmt.h"
 #include "dash_fog_light.h"
 #include "dash_wheel_dnd.h"
+#include "dash_tx_evidence.h"
 
 #ifndef DASH_SSID
 #error "Define -DDASH_SSID in build_flags (e.g. -DDASH_SSID=\\\"ADUnlock-1234\\\")"
@@ -1655,6 +1656,10 @@ uint32_t t2canBus2RxCount(void);
 uint32_t t2canBus2TxCount(void);
 uint32_t t2canBus2TxErrCount(void);
 uint8_t t2canBus2Eflg(void);
+const DashTxEvidence &t2canServiceTxEvidence(void);
+uint8_t t2canServiceLastCommand(void);
+uint8_t t2canServiceBurstRemaining(void);
+bool t2canGetServiceMode(void);
 #endif
 
 static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxValue, uint8_t &out)
@@ -1708,6 +1713,51 @@ static void appendHexBytesJson(String &j, const uint8_t data[8])
         j += hex[b & 0x0F];
     }
     j += "\"";
+}
+
+static void appendTxEvidenceJson(String &j, const DashTxEvidence &ev, unsigned long now)
+{
+    j += R"JSON({"id":)JSON";
+    j += ev.id;
+    j += R"JSON(,"bus":)JSON";
+    j += ev.bus;
+    j += R"JSON(,"dlc":)JSON";
+    j += ev.dlc;
+    j += R"JSON(,"lastData":)JSON";
+    appendHexBytesJson(j, ev.data);
+    j += R"JSON(,"txOk":)JSON";
+    j += ev.txOk;
+    j += R"JSON(,"txErr":)JSON";
+    j += ev.txErr;
+    j += R"JSON(,"lastTxAgeMs":)JSON";
+    j += ev.lastTxMs ? String(now - ev.lastTxMs) : String(-1);
+    j += R"JSON(,"lastError":")JSON";
+    j += dashTxErrorName(ev.lastError);
+    j += "\"}";
+}
+
+static void appendServiceDiagJson(String &j, unsigned long now)
+{
+#ifdef DRIVER_T2CAN_DUAL
+    const DashTxEvidence &ev = t2canServiceTxEvidence();
+    uint8_t cmd = t2canServiceLastCommand();
+    j += R"JSON(,"serviceDiag":{"state":)JSON";
+    j += t2canGetServiceMode() ? "true" : "false";
+    j += R"JSON(,"lastCommand":")JSON";
+    j += cmd == 1 ? "enter" : (cmd == 2 ? "exit" : "none");
+    j += R"JSON(","burstFrames":4,"burstIntervalMs":10,"remaining":)JSON";
+    j += t2canServiceBurstRemaining();
+    j += R"JSON(,"tx":)JSON";
+    appendTxEvidenceJson(j, ev, now);
+    j += R"JSON(,"vehicleResponse":"unknown"})JSON";
+#else
+    j += R"JSON(,"serviceDiag":{"state":false,"lastCommand":"none","vehicleResponse":"unknown"})JSON";
+#endif
+}
+
+static void serviceDiagJson(String &j, unsigned long now)
+{
+    appendServiceDiagJson(j, now);
 }
 
 static void appendFsdMuxDiagJson(String &j, const char *name, const FsdMuxDiag &mux, bool enabled, unsigned long now)
@@ -2043,6 +2093,7 @@ static void handleStatus()
     j += t2canBus2Eflg();
     j += "}";
 #endif
+    appendServiceDiagJson(j, now);
     // ── Phase 1 新增状态字段 ──────────────────────────────────────────
     j += ",\"vehicleOta\":";
     j += vehicleOtaActive ? "true" : "false";
@@ -3083,6 +3134,9 @@ uint32_t t2canBus2RxCount(void);
 uint32_t t2canBus2TxCount(void);
 uint32_t t2canBus2TxErrCount(void);
 uint8_t t2canBus2Eflg(void);
+const DashTxEvidence &t2canServiceTxEvidence(void);
+uint8_t t2canServiceLastCommand(void);
+uint8_t t2canServiceBurstRemaining(void);
 bool t2canBus2IdAt(uint16_t i, uint16_t *id, uint8_t *dlc, uint8_t *data, uint32_t *count);
 void t2canStalkTest(uint8_t status, uint16_t durationMs); // status 1=PULL flash, 2=PUSH high beam
 
@@ -3090,8 +3144,11 @@ static void handleServiceMode()
 {
     if (server.hasArg("on"))
         t2canSetServiceMode(server.arg("on") == "1");
-    server.send(200, "application/json",
-                String("{\"service_mode\":") + (t2canGetServiceMode() ? "true" : "false") + "}");
+    String j = "{\"ok\":true,\"service_mode\":";
+    j += t2canGetServiceMode() ? "true" : "false";
+    appendServiceDiagJson(j, millis());
+    j += "}";
+    server.send(200, "application/json", j);
 }
 
 // Inject a short 0x249 stalk burst on bus B to test manual lighting:
