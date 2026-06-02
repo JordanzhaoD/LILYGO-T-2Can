@@ -47,6 +47,7 @@
 #include "dash_fog_light.h"
 #include "dash_wheel_dnd.h"
 #include "dash_tx_evidence.h"
+#include "dash_capabilities.h"
 
 #ifndef DASH_SSID
 #error "Define -DDASH_SSID in build_flags (e.g. -DDASH_SSID=\\\"ADUnlock-1234\\\")"
@@ -1781,6 +1782,27 @@ static void appendWheelDndDiagJson(String &j, unsigned long now)
     j += "}";
 }
 
+static void appendCapabilitiesJson(String &j, uint8_t selectedHw, uint8_t effectiveHw)
+{
+    j += ",\"cap\":{\"handler\":\"";
+    j += effectiveHw == 0 ? "LEGACY" : (effectiveHw == 1 ? "HW3" : "HW4");
+    j += "\",\"selectedHw\":";
+    j += selectedHw;
+    j += ",\"effectiveHw\":";
+    j += effectiveHw;
+    j += ",\"legacyFsd\":\"";
+    j += dashCapabilityLegacyFsd(effectiveHw);
+    j += "\",\"legacySpeedOffset\":\"";
+    j += effectiveHw == 0 ? "supported" : "unsupported_on_legacy";
+    j += "\",\"serviceMode\":\"can_b_direct\",\"wheelDnd\":\"can_b_direct\",\"fogLight\":\"can_b_direct\",\"stalkTest\":\"can_b_direct\",\"bionicSteering\":\"";
+    j += dashCapabilityBionicSteering(effectiveHw);
+    j += "\",\"banShield\":\"";
+    j += dashCapabilityBanShield(effectiveHw);
+    j += "\",\"legacyMppCustom\":\"";
+    j += dashCapabilityLegacyMppCustom(effectiveHw);
+    j += "\",\"gearAssist\":\"not_implemented\"}";
+}
+
 static void appendFsdMuxDiagJson(String &j, const char *name, const FsdMuxDiag &mux, bool enabled, unsigned long now)
 {
     j += ",\"";
@@ -1875,6 +1897,9 @@ static void handleStatus()
         hwName = "HW3";
     else if (effectiveHw == 2)
         hwName = "HW4";
+
+    // Capability matrix will be appended later after Phase 1 fields.
+    // (we need effectiveHw which is computed here)
 
     String j = "{\"hw\":";
     j += hwMode;
@@ -2131,6 +2156,7 @@ static void handleStatus()
     j += dashDndVolume ? "true" : "false";
     j += ",\"dndSpeed\":";
     j += dashDndSpeed ? "true" : "false";
+    appendCapabilitiesJson(j, hwMode, effectiveHw);
     j += "}";
     server.send(200, "application/json", j);
 }
@@ -3218,6 +3244,15 @@ static void handleBus2Ids()
     j += n;
     j += ",\"service_mode\":";
     j += t2canGetServiceMode() ? "true" : "false";
+    j += ",\"can2\":{\"rx\":";
+    j += t2canBus2RxCount();
+    j += ",\"tx\":";
+    j += t2canBus2TxCount();
+    j += ",\"txerr\":";
+    j += t2canBus2TxErrCount();
+    j += ",\"eflg\":";
+    j += t2canBus2Eflg();
+    j += "}";
     j += ",\"ids\":[";
     for (uint16_t i = 0; i < n; i++)
     {

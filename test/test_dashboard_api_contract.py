@@ -1093,6 +1093,40 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("--driver DRIVER_T2CAN_DUAL", self.tests_workflow)
         self.assertIn("--driver DRIVER_T2CAN_DUAL", self.release_workflow)
 
+    def test_capability_matrix_and_bus2_can2_are_exposed(self) -> None:
+        combined = self.dash
+        # ── Source-level tokens: include, function name, capability helpers ──
+        for token in [
+            '#include "dash_capabilities.h"',
+            'appendCapabilitiesJson',
+            '\\"cap\\"',
+            'dashCapabilityLegacyFsd',
+            'dashCapabilityBionicSteering',
+            'dashCapabilityBanShield',
+            'dashCapabilityLegacyMppCustom',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, combined)
+        # ── Composed JSON tokens from appendCapabilitiesJson string literals ──
+        # These verify the C++ source contains the exact JSON key-value fragments
+        # that will appear in the HTTP response (with C++ escaped quotes as read by Python).
+        for token in [
+            ',\\"legacyFsd\\":\\"',       # j += ",\"legacyFsd\":\""
+            ',\\"serviceMode\\":\\"can_b_direct\\"',  # inline composed
+            ',\\"bionicSteering\\":\\"',   # j += ",\"bionicSteering\":\""
+            ',\\"legacyMppCustom\\":\\"',  # j += ",\"legacyMppCustom\":\""
+            ',\\"gearAssist\\":\\"not_implemented\\"}',  # inline composed, closes cap object
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, combined)
+        # bus2_ids endpoint must include all four can2 diagnostic counters
+        bus2 = re.search(r"static void handleBus2Ids\(\).*?server\.send", combined, re.S)
+        self.assertIsNotNone(bus2)
+        bus2_body = bus2.group(0)
+        for token in ['t2canBus2RxCount()', 't2canBus2TxCount()', 't2canBus2TxErrCount()', 't2canBus2Eflg()']:
+            with self.subTest(token=token):
+                self.assertIn(token, bus2_body)
+
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
         self.assertEqual("4.0.2", self.version.strip())

@@ -99,6 +99,10 @@ static volatile uint32_t t2canSecondaryTxCount = 0;
 static volatile uint32_t t2canSecondaryTxErrCount = 0;
 static volatile uint8_t t2canSecondaryEflg = 0;
 static DashTxEvidence serviceTxEvidence;
+static DashTxEvidence fogTxEvidence;
+static DashTxEvidence stalkTxEvidence;
+const DashTxEvidence &t2canFogTxEvidence(void) { return fogTxEvidence; }
+const DashTxEvidence &t2canStalkTxEvidence(void) { return stalkTxEvidence; }
 static volatile uint8_t g_svcLastCommand = 0; // 0=none, 1=enter, 2=exit
 
 static bool t2canTxSecondaryCounted(const CanFrame &f)
@@ -352,9 +356,11 @@ static void t2canStalkInjectTick()
     f.data[2] = 0;
     f.data[3] = 0;
     f.bus = T2CAN_SECONDARY_BUS;
-    t2canTxSecondaryCounted(f);
+    stalkTxEvidence.recordAttempt(f.id, f.bus, f.dlc, f.data, now);
+    bool ok = t2canTxSecondaryCounted(f);
+    stalkTxEvidence.recordResult(ok);
 #ifdef ESP32_DASHBOARD
-    dashRecordCanFrame(f, 'T');
+    dashRecordCanFrame(f, ok ? 'T' : 'E');
 #endif
 }
 
@@ -369,9 +375,12 @@ static void t2canSendFogFrame(const uint8_t data[8])
     f.dlc = 8;
     memcpy(f.data, data, 8);
     f.bus = T2CAN_SECONDARY_BUS;
-    t2canTxSecondaryCounted(f);
+    uint32_t now = millis();
+    fogTxEvidence.recordAttempt(f.id, f.bus, f.dlc, f.data, now);
+    bool ok = t2canTxSecondaryCounted(f);
+    fogTxEvidence.recordResult(ok);
 #ifdef ESP32_DASHBOARD
-    dashRecordCanFrame(f, 'T');
+    dashRecordCanFrame(f, ok ? 'T' : 'E');
 #endif
 }
 
