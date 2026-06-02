@@ -60,6 +60,7 @@ void test_dashboard_legacy_mux0_fsd_selected_injects_activation()
 
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00;
+    f.data[6] = 0x02; // simulate original speed profile byte from bus
     markFsdSelectedInUI(f);
 
     handler.handleMessage(f, mock);
@@ -70,6 +71,7 @@ void test_dashboard_legacy_mux0_fsd_selected_injects_activation()
     TEST_ASSERT_EQUAL_UINT32(1, handler.framesSent);
     TEST_ASSERT_EQUAL_UINT8(1, onSendCount);
     TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
+    // Stable policy: byte 6 speed profile bits must remain unchanged
     TEST_ASSERT_EQUAL_HEX8(0x02, mock.sent[0].data[6] & 0x06);
 }
 
@@ -82,6 +84,7 @@ void test_dashboard_legacy_manual_profile_injects_mux0()
 
     CanFrame f = {.id = 1006};
     f.data[0] = 0x00;
+    f.data[6] = 0x00; // original bus data has no profile bits
     markFsdSelectedInUI(f);
 
     handler.handleMessage(f, mock);
@@ -91,7 +94,8 @@ void test_dashboard_legacy_manual_profile_injects_mux0()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(1, handler.framesSent);
     TEST_ASSERT_EQUAL_UINT8(1, onSendCount);
-    TEST_ASSERT_EQUAL_HEX8(0x04, mock.sent[0].data[6] & 0x06);
+    // Stable policy: byte 6 speed profile bits must remain unchanged
+    TEST_ASSERT_EQUAL_HEX8(0x00, mock.sent[0].data[6] & 0x06);
 }
 
 void test_dashboard_legacy_mux1_does_not_inject_nag_suppression()
