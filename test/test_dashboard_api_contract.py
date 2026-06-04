@@ -1129,17 +1129,17 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_ui_explains_legacy_real_wiring_states(self) -> None:
         for token in [
-            "Legacy Stable",
-            "mux0 bit46-only",
-            "mux1 disabled",
-            "Service 0x339",
-            "Burst sent",
-            "Waiting for native 0x3C2",
-            "Unsupported on Legacy",
-            "Save config",
-            "Arm injection",
-            "Send now",
-            "Read-only / unsupported",
+            "Legacy 运行时状态",
+            "FSD 注入策略",
+            "稳定模式",
+            "实验模式",
+            "维修模式 0x339",
+            "方向盘免打扰 0x3C2",
+            "Legacy 功能支持矩阵",
+            "仿生转向",
+            "不支持",
+            "未接线",
+            "未实现",
             "/legacy_fsd_config",
             "fsdDiag",
             "serviceDiag",
@@ -1150,7 +1150,7 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
-        self.assertEqual("4.0.2", self.version.strip())
+        self.assertEqual("4.1.0", self.version.strip())
         self.assertIn("## [4.0.2] - 2026-05-31", self.changelog)
         self.assertIn("lilygo_t2can_dual", self.tests_workflow)
         self.assertIn("lilygo_t2can_dual", self.release_workflow)
