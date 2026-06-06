@@ -163,6 +163,7 @@ static volatile uint16_t g_bus2IdCount = 0;
 // Latest rolling counter seen on the real 0x249 SCCMLeftStalk stream, so an
 // injected test frame can ride just after it with the next counter value.
 static volatile uint8_t g_stalkLastCounter = 0;
+static void t2canBurstCheckTrigger(uint8_t status, uint32_t now);
 
 static void t2canWheelDndRecordNative(const CanFrame &f)
 {
@@ -175,7 +176,11 @@ static void t2canRecordBus2(const CanFrame &f)
         return; // standard 11-bit IDs only (Tesla lighting/stalk are standard)
     uint16_t sid = (uint16_t)(f.id & 0x7FF);
     if (sid == 0x249 && f.dlc >= 2)
+    {
         g_stalkLastCounter = f.data[1] & 0x0F; // track real stalk counter
+        uint8_t status = (f.data[1] >> 4) & 0x07;
+        t2canBurstCheckTrigger(status, millis());
+    }
     if (sid == 0x3C2 && f.dlc >= 8)
         t2canWheelDndRecordNative(f);
     uint16_t n = g_bus2IdCount;
@@ -314,8 +319,170 @@ static inline uint8_t t2canStalkCrc(uint8_t counter, uint8_t status)
 static volatile uint8_t g_stalkInjStatus = 0;  // 0=off, 1=PULL, 2=PUSH
 static volatile uint32_t g_stalkInjUntil = 0;  // millis() deadline
 
+// ── Flash Burst (real double-PULL trigger) ───────────────────────
+// RAM-only and OFF on boot. When enabled, two real 0x249 PULL edges within
+// 2 seconds arm a firmware-timed PULL burst that reuses t2canStalkInjectTick().
+static volatile bool g_burstEnabled = false;
+static volatile uint8_t g_burstCount = 3;
+static volatile uint16_t g_burstOnMs = 180;
+static volatile uint16_t g_burstOffMs = 180;
+static volatile uint32_t g_burstLastPullMs = 0;
+static volatile uint32_t g_burstLastTriggerMs = 0;
+static volatile uint8_t g_burstPrevStatus = 0;
+static volatile uint8_t g_burstPhasesLeft = 0;
+static volatile bool g_burstOnPhase = false;
+static volatile bool g_burstPhaseActive = false;
+static volatile uint32_t g_burstPhaseEnd = 0;
+static volatile bool g_burstOwnsStalk = false;
+
+static constexpr uint32_t kBurstDoublePullWindowMs = 2000;
+static constexpr uint8_t kBurstMinCount = 1;
+static constexpr uint8_t kBurstMaxCount = 20;
+static constexpr uint16_t kBurstMinPhaseMs = 80;
+static constexpr uint16_t kBurstMaxPhaseMs = 1000;
+
+static void t2canBurstStop(bool clearOwnedStalk)
+{
+    g_burstPhasesLeft = 0;
+    g_burstOnPhase = false;
+    g_burstPhaseActive = false;
+    g_burstPhaseEnd = 0;
+    g_burstLastPullMs = 0;
+    if (clearOwnedStalk && g_burstOwnsStalk && g_stalkInjStatus == 1)
+    {
+        g_stalkInjStatus = 0;
+        g_stalkInjUntil = 0;
+    }
+    g_burstOwnsStalk = false;
+}
+
+void t2canSetBurstEnabled(bool on)
+{
+    g_burstEnabled = on;
+    if (!on)
+        t2canBurstStop(true);
+}
+
+bool t2canGetBurstEnabled(void) { return g_burstEnabled; }
+
+void t2canSetBurstParams(uint8_t count, uint16_t onMs, uint16_t offMs)
+{
+    if (count < kBurstMinCount)
+        count = kBurstMinCount;
+    if (count > kBurstMaxCount)
+        count = kBurstMaxCount;
+    if (onMs < kBurstMinPhaseMs)
+        onMs = kBurstMinPhaseMs;
+    if (onMs > kBurstMaxPhaseMs)
+        onMs = kBurstMaxPhaseMs;
+    if (offMs < kBurstMinPhaseMs)
+        offMs = kBurstMinPhaseMs;
+    if (offMs > kBurstMaxPhaseMs)
+        offMs = kBurstMaxPhaseMs;
+    g_burstCount = count;
+    g_burstOnMs = onMs;
+    g_burstOffMs = offMs;
+}
+
+uint8_t t2canGetBurstCount(void) { return g_burstCount; }
+uint16_t t2canGetBurstOnMs(void) { return g_burstOnMs; }
+uint16_t t2canGetBurstOffMs(void) { return g_burstOffMs; }
+bool t2canBurstIsRunning(void) { return g_burstPhaseActive || g_burstPhasesLeft > 0; }
+uint8_t t2canBurstPhasesLeft(void) { return g_burstPhasesLeft; }
+uint32_t t2canBurstLastPullMs(void) { return g_burstLastPullMs; }
+uint32_t t2canBurstLastTriggerMs(void) { return g_burstLastTriggerMs; }
+uint8_t t2canBurstPrevStatus(void) { return g_burstPrevStatus; }
+
+static void t2canBurstStart(uint32_t now)
+{
+    t2canBurstStop(true);
+    g_burstLastTriggerMs = now;
+    g_burstPhasesLeft = static_cast<uint8_t>(g_burstCount * 2);
+    g_burstOnPhase = false;
+    g_burstPhaseActive = false;
+    g_burstPhaseEnd = now;
+}
+
+static void t2canBurstCheckTrigger(uint8_t status, uint32_t now)
+{
+    if (!g_burstEnabled)
+    {
+        g_burstPrevStatus = status;
+        g_burstLastPullMs = 0;
+        return;
+    }
+    bool pullEdge = g_burstPrevStatus != 1 && status == 1;
+    g_burstPrevStatus = status;
+    if (!pullEdge || t2canBurstIsRunning())
+        return;
+    if (g_burstLastPullMs != 0 && (uint32_t)(now - g_burstLastPullMs) <= kBurstDoublePullWindowMs)
+    {
+        t2canBurstStart(now);
+        g_burstLastPullMs = 0;
+        return;
+    }
+    g_burstLastPullMs = now;
+}
+
+static void t2canBurstTick()
+{
+    if (!g_burstEnabled || (!g_burstPhaseActive && g_burstPhasesLeft == 0))
+    {
+        if (!g_burstEnabled)
+            t2canBurstStop(true);
+        return;
+    }
+    uint32_t now = millis();
+    if (g_burstPhaseActive && (int32_t)(now - g_burstPhaseEnd) < 0)
+    {
+        if (g_burstOnPhase)
+        {
+            g_stalkInjStatus = 1;
+            g_stalkInjUntil = g_burstPhaseEnd + 30;
+            g_burstOwnsStalk = true;
+        }
+        return;
+    }
+    if (g_burstPhaseActive)
+    {
+        if (g_burstOnPhase && g_burstOwnsStalk && g_stalkInjStatus == 1)
+        {
+            g_stalkInjStatus = 0;
+            g_stalkInjUntil = 0;
+            g_burstOwnsStalk = false;
+        }
+        g_burstPhaseActive = false;
+        if (g_burstPhasesLeft == 0)
+        {
+            g_burstOnPhase = false;
+            return;
+        }
+    }
+    g_burstOnPhase = !g_burstOnPhase;
+    g_burstPhaseActive = true;
+    g_burstPhasesLeft = g_burstPhasesLeft - 1;
+    if (g_burstOnPhase)
+    {
+        g_stalkInjStatus = 1;
+        g_burstPhaseEnd = now + g_burstOnMs;
+        g_stalkInjUntil = g_burstPhaseEnd + 30;
+        g_burstOwnsStalk = true;
+    }
+    else
+    {
+        if (g_burstOwnsStalk && g_stalkInjStatus == 1)
+        {
+            g_stalkInjStatus = 0;
+            g_stalkInjUntil = 0;
+        }
+        g_burstOwnsStalk = false;
+        g_burstPhaseEnd = now + g_burstOffMs;
+    }
+}
+
 void t2canStalkTest(uint8_t status, uint16_t durationMs)
 {
+    t2canBurstStop(true);
     g_stalkInjStatus = status;
     g_stalkInjUntil = millis() + durationMs;
 }
@@ -562,6 +729,7 @@ static void app_can_task(void *)
         t2canDrainSecondary();
         t2canServiceModeTick();
         t2canBus2HealthTick();
+        t2canBurstTick();
         t2canStalkInjectTick();
         t2canFogLightTick();
         t2canWheelDndTick();

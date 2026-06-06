@@ -3187,6 +3187,17 @@ uint8_t t2canServiceLastCommand(void);
 uint8_t t2canServiceBurstRemaining(void);
 bool t2canBus2IdAt(uint16_t i, uint16_t *id, uint8_t *dlc, uint8_t *data, uint32_t *count);
 void t2canStalkTest(uint8_t status, uint16_t durationMs); // status 1=PULL flash, 2=PUSH high beam
+void t2canSetBurstEnabled(bool on);
+bool t2canGetBurstEnabled(void);
+void t2canSetBurstParams(uint8_t count, uint16_t onMs, uint16_t offMs);
+uint8_t t2canGetBurstCount(void);
+uint16_t t2canGetBurstOnMs(void);
+uint16_t t2canGetBurstOffMs(void);
+bool t2canBurstIsRunning(void);
+uint8_t t2canBurstPhasesLeft(void);
+uint32_t t2canBurstLastPullMs(void);
+uint32_t t2canBurstLastTriggerMs(void);
+uint8_t t2canBurstPrevStatus(void);
 
 static void handleServiceMode()
 {
@@ -3234,6 +3245,48 @@ static void handleStalkTest()
                     ",\"duration_ms\":" + String(dur) +
                     (status ? "" : ",\"error\":\"invalid mode\"") +
                     "}");
+}
+
+static void handleBurst()
+{
+    if (server.hasArg("enabled") || server.hasArg("on"))
+    {
+        String v = server.hasArg("enabled") ? server.arg("enabled") : server.arg("on");
+        t2canSetBurstEnabled(v == "1" || v == "true" || v == "on");
+    }
+    if (server.hasArg("count") || server.hasArg("on_ms") || server.hasArg("off_ms"))
+    {
+        int count = t2canGetBurstCount();
+        int onMs = t2canGetBurstOnMs();
+        int offMs = t2canGetBurstOffMs();
+        if (server.hasArg("count"))
+            count = server.arg("count").toInt();
+        if (server.hasArg("on_ms"))
+            onMs = server.arg("on_ms").toInt();
+        if (server.hasArg("off_ms"))
+            offMs = server.arg("off_ms").toInt();
+        t2canSetBurstParams(static_cast<uint8_t>(count), static_cast<uint16_t>(onMs), static_cast<uint16_t>(offMs));
+    }
+    String j = "{\"ok\":true,\"enabled\":";
+    j += t2canGetBurstEnabled() ? "true" : "false";
+    j += ",\"count\":";
+    j += t2canGetBurstCount();
+    j += ",\"on_ms\":";
+    j += t2canGetBurstOnMs();
+    j += ",\"off_ms\":";
+    j += t2canGetBurstOffMs();
+    j += ",\"running\":";
+    j += t2canBurstIsRunning() ? "true" : "false";
+    j += ",\"phases_left\":";
+    j += t2canBurstPhasesLeft();
+    j += ",\"last_pull_ms\":";
+    j += t2canBurstLastPullMs();
+    j += ",\"last_trigger_ms\":";
+    j += t2canBurstLastTriggerMs();
+    j += ",\"prev_status\":";
+    j += t2canBurstPrevStatus();
+    j += "}";
+    server.send(200, "application/json", j);
 }
 
 static void handleBus2Ids()
@@ -6159,6 +6212,8 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/service_mode", HTTP_GET, handleServiceMode);
     server.on("/service_mode", HTTP_POST, handleServiceMode);
     server.on("/stalk_test", HTTP_GET, handleStalkTest);
+    server.on("/burst", HTTP_GET, handleBurst);
+    server.on("/burst", HTTP_POST, handleBurst);
     server.on("/bus2_ids", HTTP_GET, handleBus2Ids);
 #endif
     server.on("/rec_download", HTTP_GET, handleRecDownload);

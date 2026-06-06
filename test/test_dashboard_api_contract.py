@@ -53,6 +53,7 @@ class DashboardApiContractTests(unittest.TestCase):
             "/speed_custom",
             "/defense_config",
             "/fog_light",
+            "/burst",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui_gen)
@@ -243,6 +244,7 @@ class DashboardApiContractTests(unittest.TestCase):
             'server.on("/reset_stats", HTTP_POST, handleResetStats);',
             'server.on("/reboot", HTTP_POST, handleReboot);',
             'server.on("/service_mode", HTTP_POST, handleServiceMode);',
+            'server.on("/burst", HTTP_POST, handleBurst);',
         ]
         for route in expected_routes:
             with self.subTest(route=route):
@@ -306,6 +308,7 @@ class DashboardApiContractTests(unittest.TestCase):
             ("GET", "/frames"),
             ("GET", "/bus2_ids"),
             ("GET", "/stalk_test"),
+            ("GET", "/burst"),
             ("GET", "/ota_creds"),
             ("GET", "/wifi_scan"),
             ("GET", "/wifi_status"),
@@ -338,6 +341,7 @@ class DashboardApiContractTests(unittest.TestCase):
             ("POST", "/reset_stats"),
             ("POST", "/reboot"),
             ("POST", "/service_mode"),
+            ("POST", "/burst"),
             ("POST", "/wifi_config"),
             ("POST", "/wifi_connect"),
             ("POST", "/wifi_delete"),
@@ -398,6 +402,45 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("duration_ms", self.ui)
         self.assertIn('server.hasArg("dur")', self.dash)
         self.assertIn('",\\"duration_ms\\":"', self.dash)
+
+    def test_flash_burst_double_pull_is_wired(self) -> None:
+        """Flash Burst should be firmware-timed, default-off, and controlled via /burst."""
+        for token in [
+            'static volatile bool g_burstEnabled = false;',
+            't2canBurstCheckTrigger',
+            't2canBurstTick',
+            'uint8_t status = (f.data[1] >> 4) & 0x07;',
+            'kBurstDoublePullWindowMs = 2000',
+            'g_burstPrevStatus != 1 && status == 1',
+            't2canSetBurstEnabled',
+            't2canSetBurstParams',
+            't2canBurstIsRunning',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.main)
+        task = re.search(r"static void app_can_task\(void \*\).*?appCanTaskLoops", self.main, re.S)
+        self.assertIsNotNone(task)
+        self.assertLess(task.group(0).index('t2canBurstTick();'), task.group(0).index('t2canStalkInjectTick();'))
+        for token in [
+            'server.on("/burst", HTTP_GET, handleBurst);',
+            'server.on("/burst", HTTP_POST, handleBurst);',
+            'static void handleBurst()',
+            '\\"phases_left\\"',
+            '\\"last_trigger_ms\\"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        for token in [
+            '双拨爆闪',
+            '启用双拨触发',
+            '/burst',
+            'loadBurstConfig',
+            'setBurstPreset',
+            'BURST_PRESETS',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+                self.assertIn(token if token != '双拨爆闪' else '/burst', self.ui_gen)
 
     def test_gateway_profile_and_poll_interval_are_functional(self) -> None:
         self.assertIn("var DNS_PROFILES = {", self.ui)

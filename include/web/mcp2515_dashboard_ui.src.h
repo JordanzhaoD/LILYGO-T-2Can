@@ -977,6 +977,33 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 
+<!-- Double Pull Flash Burst -->
+<div class="card">
+  <div class="card-title">双拨爆闪 <span class="exp-badge">实验</span></div>
+  <div class="card-subtitle">2秒内两次真实 PULL 触发固件侧 0x249 PULL burst，默认关闭</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">启用双拨触发</div>
+      <div class="setting-desc">开启后，真实超车闪双拨才会自动执行预设爆闪</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="burst-enabled-tgl" onchange="toggleBurst(this)">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+  <div class="sel-cards c4" id="burst-preset" style="margin-bottom:10px">
+    <div class="sel-card" onclick="setBurstPreset('A')"><div class="sel-lbl">A 短促</div><div class="sel-name">2× 250ms</div></div>
+    <div class="sel-card active" onclick="setBurstPreset('B')"><div class="sel-lbl">B 标准</div><div class="sel-name">3× 180ms</div></div>
+    <div class="sel-card" onclick="setBurstPreset('C')"><div class="sel-lbl">C 明显</div><div class="sel-name">5× 150ms</div></div>
+    <div class="sel-card" onclick="setBurstPreset('D')"><div class="sel-lbl">D 长闪</div><div class="sel-name">7× 200ms</div></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-lbl">双拨状态</div><div class="stat-val v-dim" id="burst-status">关闭</div></div>
+    <div class="stat"><div class="stat-lbl">当前参数</div><div class="stat-val v-info" id="burst-params">3× 180/180ms</div></div>
+    <div class="stat"><div class="stat-lbl">剩余相位</div><div class="stat-val v-dim" id="burst-phases">0</div></div>
+  </div>
+</div>
+
 <!-- Service Mode -->
 <div class="card">
   <div class="setting-row">
@@ -1032,6 +1059,26 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <option value="1" selected>中速</option>
       <option value="2">快速</option>
     </select>
+  </div>
+</div>
+<div class="card">
+  <div class="card-title">双拨超车闪 <span class="exp-badge">实验</span></div>
+  <div class="card-subtitle">真实拨杆 2 秒内双 PULL 后，固件自动发送 0x249 PULL burst</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">启用双拨爆闪</div>
+      <div class="setting-desc" id="burst-status-strobe">关闭</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="burst-enabled-tgl-strobe" onchange="toggleBurst(this)">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+  <div class="sel-cards c4" id="burst-preset-strobe" style="margin-bottom:10px">
+    <div class="sel-card" onclick="setBurstPreset('A')"><div class="sel-lbl">A 短促</div><div class="sel-name">2×</div></div>
+    <div class="sel-card active" onclick="setBurstPreset('B')"><div class="sel-lbl">B 标准</div><div class="sel-name">3×</div></div>
+    <div class="sel-card" onclick="setBurstPreset('C')"><div class="sel-lbl">C 明显</div><div class="sel-name">5×</div></div>
+    <div class="sel-card" onclick="setBurstPreset('D')"><div class="sel-lbl">D 长闪</div><div class="sel-name">7×</div></div>
   </div>
 </div>
 <div class="card">
@@ -1545,6 +1592,13 @@ var canTab = 'sniffer';
 var lightPreset = 3;
 var lightFrequency = 'medium';
 var rearFogStrategy = 'off';
+var burstPreset = 'B';
+var BURST_PRESETS = {
+  A:{count:2,on_ms:250,off_ms:250,label:'A 短促'},
+  B:{count:3,on_ms:180,off_ms:180,label:'B 标准'},
+  C:{count:5,on_ms:150,off_ms:150,label:'C 明显'},
+  D:{count:7,on_ms:200,off_ms:200,label:'D 长闪'}
+};
 var DNS_PROFILES = {
   conservative: {
     blacklist: 'api-prd.vn.cloud.tesla.cn\nhermes-x2-api.prd.vn.cloud.tesla.cn\nsignaling.vn.cloud.tesla.cn\nhermes-prd.vn.cloud.tesla.cn\nhermes-stream-prd.vn.cloud.tesla.cn\ntelemetry-prd.vn.cloud.tesla.cn\ntelemetry.tesla.cn\napigateway-x2-trigger.tesla.cn\nfleet-api.prd.cn.vn.cloud.tesla.cn\nfirmware.tesla.cn\nlog.tesla.cn\nvehicle-files.prd.cnn1.vn.cloud.tesla.cn',
@@ -1736,7 +1790,9 @@ function showPage(pageId){
   if(pageId==='pg-drive')loadDriveProfile();
   if(pageId==='pg-bus2')pollCAN2();
   if(pageId==='pg-bus2')loadLightingConfig();
+  if(pageId==='pg-bus2')loadBurstConfig();
   if(pageId==='pg-strobe')loadStrobePage();
+  if(pageId==='pg-strobe')loadBurstConfig();
   if(pageId==='pg-speed')loadSpeedStrategy();
   if(pageId==='pg-defense')loadDefenseConfig();
   if(pageId==='pg-shift')pollGearAssist();
@@ -2299,6 +2355,7 @@ async function pollCAN2(){
   setText('ov-can',(sCan&&sCan.textContent==='Online'?'CAN1 Online':'CAN1 Offline')+' / '+(d.count>0?'CAN2 Online':'CAN2 Idle'));
   var svc=$('svc-mode-tgl');
   if(svc)svc.checked=!!d.service_mode;
+  loadBurstConfig();
   setStatusTriplet('light',
     ($('light-enabled-tgl')&&$('light-enabled-tgl').checked)?'爆闪 ON':'爆闪 OFF',
     '规则 '+(lightPreset||3)+'x '+(lightFrequency||'medium'),
@@ -2341,6 +2398,61 @@ function updateLightOptionCards(id,active,values){
   if(!cards)return;
   var items=cards.querySelectorAll('.sel-card');
   for(var i=0;i<items.length;i++)items[i].classList.toggle('active',values[i]===active);
+}
+
+function detectBurstPreset(d){
+  for(var k in BURST_PRESETS){var p=BURST_PRESETS[k];if(p.count===d.count&&p.on_ms===d.on_ms&&p.off_ms===d.off_ms)return k}
+  return burstPreset||'B';
+}
+function updateBurstPresetCards(){
+  ['burst-preset','burst-preset-strobe'].forEach(function(id){
+    var cards=$(id);if(!cards)return;
+    var items=cards.querySelectorAll('.sel-card');
+    var keys=['A','B','C','D'];
+    for(var i=0;i<items.length;i++)items[i].classList.toggle('active',keys[i]===burstPreset);
+  });
+}
+function updateBurstUi(d){
+  if(!d)return;
+  burstPreset=detectBurstPreset(d);
+  updateBurstPresetCards();
+  var enabled=!!d.enabled;
+  var t=$('burst-enabled-tgl');if(t)t.checked=enabled;
+  var ts=$('burst-enabled-tgl-strobe');if(ts)ts.checked=enabled;
+  var running=!!d.running;
+  var status=enabled?(running?'运行中':'等待双拨'):'关闭';
+  setText('burst-status',status);
+  setText('burst-status-strobe',status);
+  setText('burst-params',(d.count||0)+'× '+(d.on_ms||0)+'/'+(d.off_ms||0)+'ms');
+  setText('burst-phases',d.phases_left||0);
+  setCls('burst-status','stat-val '+(running?'v-warn':(enabled?'v-ok':'v-dim')));
+  setCls('burst-phases','stat-val '+((d.phases_left||0)>0?'v-warn':'v-dim'));
+}
+async function loadBurstConfig(){
+  var d=await fetchJson('/burst');
+  if(d)updateBurstUi(d);
+}
+async function saveBurstConfig(enabled){
+  var p=BURST_PRESETS[burstPreset]||BURST_PRESETS.B;
+  try{
+    var d=await postForm('/burst',{enabled:enabled?'1':'0',count:String(p.count),on_ms:String(p.on_ms),off_ms:String(p.off_ms)});
+    if(d)updateBurstUi(d);
+  }catch(e){}
+}
+function toggleBurst(src){
+  var t=$('burst-enabled-tgl');
+  var ts=$('burst-enabled-tgl-strobe');
+  var enabled=src?!!src.checked:!!((t&&t.checked)||(ts&&ts.checked));
+  if(t)t.checked=enabled;
+  if(ts)ts.checked=enabled;
+  saveBurstConfig(enabled);
+}
+function setBurstPreset(id){
+  if(!BURST_PRESETS[id])id='B';
+  burstPreset=id;
+  updateBurstPresetCards();
+  var enabled=(($('burst-enabled-tgl')&&$('burst-enabled-tgl').checked)||($('burst-enabled-tgl-strobe')&&$('burst-enabled-tgl-strobe').checked));
+  saveBurstConfig(enabled);
 }
 
 async function loadLightingConfig(){
