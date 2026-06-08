@@ -30,6 +30,18 @@ static const char DASH_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   --border: #4b5563;
   --header-bg: #111827;
   --sidebar-w: 220px;
+  --cockpit-bg: #05070b;
+  --cockpit-panel: rgba(15,23,42,0.82);
+  --cockpit-panel-strong: #101827;
+  --cockpit-soft: rgba(30,41,59,0.62);
+  --cockpit-stroke: rgba(148,163,184,0.20);
+  --cockpit-stroke-strong: rgba(148,163,184,0.36);
+  --cockpit-muted: #8d9bb4;
+  --cockpit-dim: #66748c;
+  --cockpit-cyan: #38bdf8;
+  --cockpit-radius-xl: 28px;
+  --cockpit-radius-lg: 20px;
+  --cockpit-shadow: 0 24px 64px rgba(0,0,0,0.35);
 }
 /* === Reset & Base === */
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -313,6 +325,77 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
   z-index: 150; }
 .overlay.active { display: block; }
+
+/* === Atlas driving-first redesign === */
+.cockpit-home { display: grid; gap: 16px; }
+.cockpit-status-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.cockpit-title small { display: block; color: var(--cockpit-muted); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.cockpit-title h2 { margin: 4px 0 0; font-size: 30px; line-height: 1; letter-spacing: -0.04em; }
+.cockpit-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.cockpit-chip { border: 1px solid var(--cockpit-stroke); border-radius: 999px; padding: 8px 12px; background: rgba(15,23,42,.62); color: var(--tx3); font-size: 12px; font-weight: 800; }
+.cockpit-chip.ok { color: var(--ok); border-color: rgba(74,222,128,.35); background: rgba(74,222,128,.08); }
+.cockpit-chip.warn { color: var(--warn); border-color: rgba(251,191,36,.35); background: rgba(251,191,36,.08); }
+.cockpit-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(320px, .88fr); gap: 16px; }
+.cockpit-primary { min-height: 340px; border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-xl); padding: 24px; background: radial-gradient(circle at 85% 0%, rgba(124,58,237,.18), transparent 32%), linear-gradient(145deg, rgba(15,23,42,.92), rgba(8,13,24,.78)); box-shadow: var(--cockpit-shadow); display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
+.cockpit-state-label { color: var(--cockpit-muted); font-size: 12px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
+.cockpit-state { font-size: clamp(74px, 11vw, 132px); line-height: .82; font-weight: 900; letter-spacing: -.09em; margin: 16px 0 8px; color: var(--err); text-shadow: 0 0 26px rgba(248,113,113,.18); }
+.cockpit-state.on { color: var(--ok); text-shadow: 0 0 30px rgba(74,222,128,.22); }
+.cockpit-state-desc { color: var(--tx2); font-size: 14px; line-height: 1.55; max-width: 520px; }
+.cockpit-hold { width: 100%; min-height: 68px; margin-top: 18px; border: none; border-radius: 22px; background: linear-gradient(135deg, #991b1b, #ef4444); color: white; font-size: 16px; font-weight: 900; letter-spacing: .04em; cursor: pointer; box-shadow: 0 16px 36px rgba(239,68,68,.20); }
+.cockpit-hold.on { background: linear-gradient(135deg, #047857, #22c55e); box-shadow: 0 16px 36px rgba(34,197,94,.20); }
+.cockpit-metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+.cockpit-metric { min-height: 92px; border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-lg); background: rgba(15,23,42,.58); padding: 14px; }
+.cockpit-metric .lbl { color: var(--cockpit-muted); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.cockpit-metric .val { margin-top: 8px; color: var(--tx1); font-size: 24px; font-weight: 900; letter-spacing: -0.04em; overflow-wrap: anywhere; }
+.cockpit-metric .hint { margin-top: 4px; color: var(--cockpit-dim); font-size: 11px; }
+.cockpit-vehicle { border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-xl); background: linear-gradient(145deg, rgba(15,23,42,.68), rgba(8,13,24,.86)); padding: 20px; box-shadow: var(--cockpit-shadow); }
+.cockpit-mode-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin-top: 14px; }
+.cockpit-mode { border: 1px solid var(--cockpit-stroke); border-radius: 18px; background: rgba(15,23,42,.55); padding: 14px; }
+.cockpit-mode.active { border-color: rgba(124,58,237,.58); background: rgba(124,58,237,.16); }
+.cockpit-mode strong { display: block; margin-top: 5px; font-size: 16px; }
+.cockpit-mode span { display: block; margin-top: 4px; color: var(--tx3); font-size: 11px; line-height: 1.35; }
+.cockpit-warning { border: 1px solid rgba(251,191,36,.35); border-radius: 18px; background: rgba(251,191,36,.08); padding: 14px; color: var(--tx2); font-size: 13px; line-height: 1.45; }
+.mobile-remote { display: none; }
+.mobile-primary-card { border-radius: 26px; padding: 20px; color: #fff; background: radial-gradient(circle at 82% 0%, rgba(96,165,250,.32), transparent 34%), linear-gradient(145deg, #111827, #312e81); box-shadow: 0 18px 42px rgba(49,46,129,.28); }
+.mobile-primary-card .mobile-state { font-size: 58px; line-height: .9; font-weight: 900; letter-spacing: -.08em; margin: 12px 0 4px; color: #fecaca; }
+.mobile-primary-card .mobile-state.on { color: #bbf7d0; }
+.mobile-primary-card p { color: #cbd5e1; font-size: 13px; line-height: 1.45; margin: 0; }
+.mobile-hold { width: 100%; min-height: 54px; margin-top: 14px; border: none; border-radius: 18px; background: #ef4444; color: white; font-weight: 900; }
+.mobile-hold.on { background: #16a34a; }
+.mobile-remote-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; margin-top: 12px; }
+.mobile-remote-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 18px; padding: 12px; }
+.mobile-remote-card .lbl { color: var(--tx3); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.mobile-remote-card .val { margin-top: 7px; font-size: 20px; font-weight: 900; overflow-wrap: anywhere; }
+.mobile-alert-card { margin-top: 12px; border: 1px solid rgba(251,191,36,.35); border-radius: 18px; background: rgba(251,191,36,.08); padding: 12px; color: var(--tx2); font-size: 12px; line-height: 1.45; }
+.diag-shell { display: grid; grid-template-columns: 260px minmax(0,1fr); gap: 14px; }
+.diag-kpi-rail { display: grid; gap: 10px; }
+.diag-kpi { border: 1px solid var(--border); border-radius: 16px; background: var(--card-bg); padding: 13px; }
+.diag-kpi .lbl { color: var(--tx3); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.diag-kpi .val { margin-top: 7px; font-size: 22px; font-weight: 900; overflow-wrap: anywhere; }
+.diag-main-panel { min-width: 0; }
+.diag-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+.diag-toolbar .inp { flex: 1; }
+.diag-table-shell { max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: 16px; }
+.diag-table-shell .tbl th { position: sticky; top: 0; background: var(--card-bg); z-index: 1; }
+.diag-row-warn { background: rgba(251,191,36,.08); }
+.diag-row-error { background: rgba(248,113,113,.10); }
+@media (max-width: 900px) {
+  .cockpit-grid { grid-template-columns: 1fr; }
+  .cockpit-metrics { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .diag-shell { grid-template-columns: 1fr; }
+}
+@media (max-width: 768px) {
+  .desktop-home { display: none; }
+  .mobile-remote { display: block; }
+  .cockpit-title h2 { font-size: 22px; }
+  .cockpit-status-bar { align-items: flex-start; }
+  .cockpit-chip-row { width: 100%; }
+  .cockpit-primary { min-height: 0; padding: 18px; border-radius: 22px; }
+  .cockpit-state { font-size: 62px; }
+  .cockpit-hold { min-height: 56px; border-radius: 18px; font-size: 14px; }
+  .cockpit-mode-grid { grid-template-columns: 1fr; }
+  .diag-toolbar { flex-direction: column; }
+}
 
 /* === Scrollbar === */
 ::-webkit-scrollbar { width: 6px; }
