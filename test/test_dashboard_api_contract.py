@@ -1282,16 +1282,16 @@ class DashboardApiContractTests(unittest.TestCase):
         for token in [
             "'灯光特技':'Light Show'",
             "'自动换挡':'Auto Shift'",
-            "'驾驶状态':'Drive Status'",
-            "'硬件模式':'Hardware Mode'",
-            "'驾驶风格':'Drive Style'",
-            "'速度策略':'Speed Strategy'",
-            "'CAN 诊断':'CAN Diagnostics'",
-            "'FSD 防护':'FSD Guard'",
+            "'模块配置':'Module'",
+            "'激活模式':'Activation Mode'",
+            "'驾驶模式':'Drive Mode'",
+            "'速度偏移':'Speed Offset'",
+            "'CAN工具':'CAN Tools'",
+            "'FSD防御':'FSD Defense'",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
-        self.assertIn("'驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动换挡'", self.ui)
+        self.assertIn("'模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','灯光特技','FSD防御','OTA升级','网络设置','CAN工具','自动换挡'", self.ui)
         self.assertIn("d&&(d.firmware||d.version)", self.ui)
         self.assertIn("setText('s-ver',d.firmware||d.version);", self.ui)
 
@@ -1360,17 +1360,23 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
 
-    def test_atlas_redesign_chinese_default_copy_is_precise(self) -> None:
-        """Driving-first redesign must use precise Chinese for default visible UI copy."""
+    def test_atlas_redesign_default_design_language_copy_is_stable(self) -> None:
+        """Driving-first redesign should keep the default design-language labels after Task 4 rollback."""
         required_copy = [
+            "模块配置",
+            "激活模式",
+            "驾驶模式",
+            "速度偏移",
+            "CAN2控制",
+            "FSD防御",
+            "OTA升级",
+            "CAN工具",
+            "破解模式",
+            "FSD 智能破解模式",
             "驾驶状态中心",
             "FSD 注入",
             "长按 2 秒启用 FSD 注入",
             "长按 2 秒关闭 FSD 注入",
-            "硬件模式",
-            "驾驶风格",
-            "速度策略",
-            "FSD 防护",
             "现场遥控",
             "连接到设备热点",
             "长按启用",
@@ -1396,8 +1402,6 @@ class DashboardApiContractTests(unittest.TestCase):
             "Hold to Enable",
             "Hold to Disable",
             "PRIMARY",
-            "破解模式",
-            "FSD 智能破解模式",
             "防封",
         ]
         for token in forbidden_default_copy:

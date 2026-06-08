@@ -9,9 +9,9 @@ The dashboard is available on ESP32 builds that include `ESP32_DASHBOARD`. It ru
 
 The dashboard is organized around three usage surfaces:
 
-- **驾驶状态**: the default driving-first home page. It shows the FSD injection state, CAN health, hardware mode, drive style, speed strategy, runtime, firmware version, and safety warnings without exposing dense debug tables.
+- **模块配置 / 驾驶状态中心**: the default driving-first home page. It shows the FSD injection state, CAN health, hardware mode, drive style, speed strategy, runtime, firmware version, and safety warnings without exposing dense debug tables.
 - **现场遥控**: the mobile layout for hotspot use from a phone. It keeps the primary FSD injection action large, moves risky operations away from the first screen, and keeps status cards short enough for one-handed use.
-- **CAN 诊断**: the engineering mode for live frames, recording, controller status, debug logs, and last-write checks. This is where high-density CAN data belongs.
+- **CAN工具 / CAN 诊断**: the engineering mode for live frames, recording, controller status, debug logs, and last-write checks. This is where high-density CAN data belongs.
 
 ## CAN Tools
 
@@ -49,4 +49,4 @@ The dashboard is organized around three usage surfaces:
 
 ## UI Copy Notes
 
-The default dashboard UI uses Chinese labels for all user-facing controls. Technical acronyms such as FSD, CAN, HW, NVS, OTA, TX/RX, EFLG, DBC, and GPIO are intentionally kept in English because they are standard protocol or firmware terms.
+The dashboard keeps the default design-language labels from the existing firmware UI, including established labels such as `模块配置`, `激活模式`, `驾驶模式`, `速度偏移`, `CAN工具`, and `FSD防御`. Technical acronyms such as FSD, CAN, HW, NVS, OTA, TX/RX, EFLG, DBC, and GPIO are intentionally kept in English because they are standard protocol or firmware terms.
