@@ -1467,6 +1467,10 @@ class DashboardApiContractTests(unittest.TestCase):
             'id="ctrl-txerr"',
             'id="lw-injected"',
             'id="lw-match"',
+            'diag-rxtx',
+            'diag-eflg',
+            'diag-txerr',
+            'diag-last-write',
             '错误优先',
             '帧筛选',
         ]:

@@ -1908,6 +1908,12 @@ async function poll(){
   setText('s-soff',d.soff||0);
   // Temp from /system_status is separate; use eflg field as proxy
   setText('s-txerr',d.txerr||0);
+  setText('diag-rxtx',((d.rxCount||d.rx||0)+' / '+(d.txCount||d.tx||0)));
+  setText('diag-txerr',(d.txErr||d.txerr||(d.can2&&d.can2.txerr)||d.can2TxErr||0));
+  var diagEflg=(d.can2Eflg!==undefined)?d.can2Eflg:((d.can2&&d.can2.eflg!==undefined)?d.can2.eflg:undefined);
+  var diagEflgNum=Number(diagEflg);
+  var diagEflgValid=(typeof Number.isFinite==='function')?Number.isFinite(diagEflgNum):(typeof diagEflgNum==='number'&&isFinite(diagEflgNum));
+  setText('diag-eflg',diagEflgValid?('0x'+diagEflgNum.toString(16).padStart(2,'0').toUpperCase()):'0x00');
   setText('s-fd',d.fd||0);
   setStatusTriplet('module',d.ci?'FSD ON':'FSD OFF','启动保存: '+((d.bootCan!==undefined?d.bootCan:d.ci)?'ON':'OFF'),d.can?'CAN Online':'CAN Offline',d.can?'ok':'err');
   setStatusTriplet('hw',(d.hwName||hwLabel(d.hw)),'mode_hw: '+(d.hwName||hwLabel(d.hw)),(d.can?'CAN运行 / ':'CAN离线 / ')+(d.hwName||hwLabel(d.hw)),d.can?'ok':'warn');
@@ -3134,6 +3140,8 @@ async function pollLastWrite(){
   var stateNames=['Idle','Pending','Match','Different','Failed'];
   setText('lw-match',stateNames[p.state]||'--');
   setText('lw-age',p.txa?p.txa+'ms':'--');
+  var lwMatchText=($('lw-match')&&$('lw-match').textContent)?$('lw-match').textContent:'--';
+  setText('diag-last-write',lwMatchText);
 }
 
 // ── CAN Pins ───────────────────────────────────────────────
