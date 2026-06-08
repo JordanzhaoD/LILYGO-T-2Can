@@ -514,298 +514,141 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 1: Overview -->
     <div class="page active" id="pg-overview">
-<div class="page-title">模块配置</div>
-<div class="status-triplet">
-  <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-module-ui">待同步</div></div>
-  <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-module-nvs">读取中</div></div>
-  <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-module-run">待检测</div></div>
-</div>
-<div class="hero-status">
-  <div class="stat"><div class="stat-lbl">FSD-V14 <span class="exp-badge">实验</span></div><div class="stat-val v-dim" id="ov-v14">待机</div></div>
-  <div class="stat"><div class="stat-lbl">HW Auto</div><div class="stat-val v-acc" id="ov-hw">Auto</div></div>
-  <div class="stat"><div class="stat-lbl">CAN1 / CAN2</div><div class="stat-val v-dim" id="ov-can">--</div></div>
-  <div class="stat"><div class="stat-lbl">运行时间</div><div class="stat-val v-info" id="ov-up">00:00:00</div></div>
-</div>
-<div class="mobile-home">
-  <div class="card">
-    <div class="card-title">状态</div>
-    <div class="stats">
-      <div class="stat"><div class="stat-lbl">CAN1</div><div class="stat-val v-dim" id="m-can">--</div></div>
-      <div class="stat"><div class="stat-lbl">CAN2</div><div class="stat-val v-dim" id="m-can2">--</div></div>
-      <div class="stat"><div class="stat-lbl">FSD</div><div class="stat-val v-dim" id="m-fsd">OFF</div></div>
-      <div class="stat"><div class="stat-lbl">帧率</div><div class="stat-val v-info" id="m-fps">0.0 Hz</div></div>
-      <div class="stat"><div class="stat-lbl">Rx / Tx</div><div class="stat-val v-info" id="m-rxtx">0 / 0</div></div>
-      <div class="stat"><div class="stat-lbl">运行</div><div class="stat-val v-info" id="m-up">00:00:00</div></div>
-    </div>
-  </div>
-  <div class="card">
-    <div class="setting-row">
-      <div>
-        <div class="setting-name">FSD 总开关</div>
-        <div class="setting-desc">开启前需要二次确认</div>
+      <div class="desktop-home">
+        <div class="cockpit-home">
+        <div class="cockpit-status-bar">
+          <div class="cockpit-title">
+            <small>ATLAS T-2CAN</small>
+            <h2>驾驶状态中心</h2>
+          </div>
+          <div class="cockpit-chip-row">
+            <span class="cockpit-chip" id="st-module-ui">UI 待同步</span>
+            <span class="cockpit-chip" id="st-module-nvs">NVS 读取中</span>
+            <span class="cockpit-chip" id="st-module-run">运行状态待检测</span>
+          </div>
+        </div>
+
+        <div class="cockpit-grid">
+          <div class="cockpit-home-main">
+            <div class="cockpit-primary">
+              <div>
+                <div class="cockpit-state-label">FSD 注入</div>
+                <div class="cockpit-state" id="fsd-label">已关闭</div>
+                <div class="cockpit-state-desc" id="ov-fsd-desc">模块总开关关闭；启用前请确认车辆处于安全状态。</div>
+              </div>
+              <button class="cockpit-hold" id="fsd-toggle" onclick="toggleFsd()">长按 2 秒启用 FSD 注入</button>
+            </div>
+
+            <div class="cockpit-metrics">
+              <div class="cockpit-metric"><div class="lbl">硬件模式</div><div class="val" id="ov-hw">Auto</div><div class="hint">自动识别</div></div>
+              <div class="cockpit-metric"><div class="lbl">驾驶风格</div><div class="val" id="m-drive">Normal</div><div class="hint">均衡响应</div></div>
+              <div class="cockpit-metric"><div class="lbl">速度策略</div><div class="val" id="m-speed">auto</div><div class="hint">自动偏移</div></div>
+              <div class="cockpit-metric"><div class="lbl">运行时间</div><div class="val" id="ov-up">00:00:00</div><div class="hint" id="m-up">设备在线</div></div>
+            </div>
+
+            <div class="cockpit-metrics">
+              <div class="cockpit-metric"><div class="lbl">CAN1</div><div class="val" id="s-can">Offline</div><div class="hint">--</div></div>
+              <div class="cockpit-metric"><div class="lbl">CAN2</div><div class="val" id="s-can2">Idle</div><div class="hint">--</div></div>
+              <div class="cockpit-metric"><div class="lbl">帧率</div><div class="val" id="s-fps">0.0 Hz</div><div class="hint">0.0 Hz</div></div>
+              <div class="cockpit-metric"><div class="lbl">芯片温度</div><div class="val" id="s-temp">--</div><div class="hint">高于 60°C 标红</div></div>
+            </div>
+          </div>
+
+          <div class="cockpit-vehicle">
+            <div class="cockpit-status-bar">
+              <div class="cockpit-title">
+                <small>车辆与防护</small>
+                <h2>现场状态</h2>
+              </div>
+              <span class="cockpit-chip warn" id="tb-fsd-local">FSD 防护</span>
+            </div>
+            <div class="cockpit-mode-grid">
+              <div class="cockpit-mode active"><div>🎯</div><strong id="ov-drive-current">Normal</strong><span>当前驾驶风格</span></div>
+              <div class="cockpit-mode"><div>🛡️</div><strong id="m-defense">防护中</strong><span>FSD 防护状态</span></div>
+              <div class="cockpit-mode"><div>↗</div><strong id="s-soff">0</strong><span>速度偏移</span></div>
+            </div>
+            <div class="cockpit-mode-grid">
+              <div class="cockpit-mode"><div>⚙</div><strong id="s-hw">--</strong><span>实际硬件模式</span></div>
+              <div class="cockpit-mode"><div>📦</div><strong id="s-ver">--</strong><span>固件版本</span></div>
+              <div class="cockpit-mode"><div>📡</div><strong id="m-rxtx">0 / 0</strong><span>RX / TX</span></div>
+            </div>
+            <div class="cockpit-warning" id="m-alert">暂无异常。实验功能请在停车和安全环境下验证。</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">核心开关</div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-name">FSD-V14 模式 <span class="exp-badge">实验</span></div>
+              <div class="setting-desc">独立切换 MAX/V14 实验 profile，不影响模块总开关。</div>
+            </div>
+            <label class="tgl"><input type="checkbox" id="ov-fsd-tgl" onchange="toggleV14Mode()"><div class="tgl-track"></div></label>
+          </div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-name">模块总开关</div>
+              <div class="setting-desc">控制当前 FSD 注入模块启停；状态会同步保存。</div>
+            </div>
+            <label class="tgl"><input type="checkbox" id="ov-master-tgl" onchange="toggleFsd()"><div class="tgl-track"></div></label>
+          </div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-name">开机自动启用</div>
+              <div class="setting-desc">设备重启后按保存值恢复 FSD 注入。</div>
+            </div>
+            <label class="tgl"><input type="checkbox" id="fsd-boot-tgl" onchange="saveConfig()"><div class="tgl-track"></div></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">设备信息</div>
+          <div class="stats">
+            <div class="stat"><div class="stat-lbl">FSD-V14</div><div class="stat-val v-dim" id="ov-v14">待机</div></div>
+            <div class="stat"><div class="stat-lbl">CAN1 RX/TX</div><div class="stat-val v-info" id="s-rx">0/0</div></div>
+            <div class="stat"><div class="stat-lbl">TX Errors</div><div class="stat-val v-dim" id="s-txerr">0</div></div>
+            <div class="stat"><div class="stat-lbl">跟随距离</div><div class="stat-val v-dim" id="s-fd">--</div></div>
+            <div class="stat"><div class="stat-lbl">车辆 OTA</div><div class="stat-val v-acc" id="s-vota">正常</div></div>
+            <div class="stat"><div class="stat-lbl">OTA 确认</div><div class="stat-val v-dim" id="s-vota-cnt">0</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">功耗管理</div>
+          <div class="setting-row">
+            <div><div class="setting-name">自动关机</div><div class="setting-desc">5 分钟无 CAN 数据自动休眠。</div></div>
+            <label class="tgl"><input type="checkbox" id="ov-auto-shutdown" onchange="toggleAutoShutdown(this.checked)"><div class="tgl-track"></div></label>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-name">WiFi 自动关闭</div><div class="setting-desc">5 分钟无操作关闭网络中转。</div></div>
+            <label class="tgl"><input type="checkbox" id="ov-wifi-auto-off" onchange="toggleWifiAutoOff(this.checked)"><div class="tgl-track"></div></label>
+          </div>
+        </div>
+        </div>
       </div>
-      <label class="tgl">
-        <input type="checkbox" id="m-fsd-tgl" onchange="toggleFsd()">
-        <div class="tgl-track"></div>
-      </label>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-title">当前模式</div>
-    <div class="diag-grid">
-      <div class="diag-item"><span class="lbl">破解</span><span class="v-acc" id="m-hw">--</span></div>
-      <div class="diag-item"><span class="lbl">驾驶</span><span class="v-acc" id="m-drive">--</span></div>
-      <div class="diag-item"><span class="lbl">速度</span><span class="v-dim" id="m-speed">--</span></div>
-      <div class="diag-item"><span class="lbl">防御</span><span class="v-dim" id="m-defense">--</span></div>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-title">异常告警</div>
-    <div class="setting-desc" id="m-alert">暂无异常</div>
-  </div>
-  <div class="card">
-    <div class="card-title">未验证 / 实验功能</div>
-    <div class="setting-desc">自动换挡、灯光连续爆闪、MAX/V14 模式、AP/EAP 免打扰、FSD 注入增强项。建议优先使用 Auto/HW3/Normal/auto 速度策略。</div>
-  </div>
-</div>
-<!-- Quick Actions -->
-<div class="quick-actions">
-  <button class="qa-btn qa-fsd" id="qa-fsd" onclick="toggleFsd()">
-    <div class="qa-icon" id="qa-fsd-icon">⚡</div>
-    <div class="qa-label">FSD 注入</div>
-    <div class="qa-status" id="qa-fsd-st">OFF</div>
-  </button>
-  <button class="qa-btn" onclick="resetStats()">
-    <div class="qa-icon">🔄</div>
-    <div class="qa-label">重置计数</div>
-    <div class="qa-status">RX/TX</div>
-  </button>
-  <button class="qa-btn qa-danger" onclick="rebootDevice()">
-    <div class="qa-icon">🔁</div>
-    <div class="qa-label">重启设备</div>
-    <div class="qa-status">Reboot</div>
-  </button>
-</div>
-<!-- FSD Quick Toggle -->
-<div class="card">
-  <div class="card-title">核心激活程序</div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">FSD-V14 模式</div>
-      <div class="setting-desc" id="ov-fsd-desc">独立切换 MAX/V14 实验 profile，不影响模块总开关</div>
-    </div>
-    <label class="tgl">
-      <input type="checkbox" id="ov-fsd-tgl" onchange="toggleV14Mode()">
-      <div class="tgl-track"></div>
-    </label>
-  </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">模块总开关</div>
-      <div class="setting-desc">控制当前 FSD 注入模块启停</div>
-    </div>
-    <label class="tgl">
-      <input type="checkbox" id="ov-master-tgl" onchange="toggleFsd()">
-      <div class="tgl-track"></div>
-    </label>
-  </div>
-</div>
 
-<div class="card">
-  <div class="big-toggle off" id="fsd-toggle" onclick="toggleFsd()">
-    <div class="card-title">FSD 注入控制</div>
-    <div class="setting-desc" style="margin-bottom:12px">启用后设备将注入 CAN 帧到车辆总线；状态会保存到 NVS 并作为开机默认值</div>
-    <div class="toggle-visual"><div class="thumb"></div></div>
-    <div class="toggle-label" id="fsd-label">已关闭</div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">开机自动启用</div>
-      <div class="setting-desc">设备重启后按此保存值恢复 FSD 注入</div>
-    </div>
-    <label class="tgl">
-      <input type="checkbox" id="fsd-boot-tgl" onchange="saveConfig()">
-      <div class="tgl-track"></div>
-    </label>
-  </div>
-</div>
-
-<!-- Stats Grid -->
-<div class="card">
-<div class="card-title">系统状态</div>
-<div class="stats">
-  <div class="stat"><div class="stat-lbl">CAN1</div><div class="stat-val v-dim" id="s-can">Offline</div></div>
-  <div class="stat"><div class="stat-lbl">CAN2</div><div class="stat-val v-dim" id="s-can2">Idle</div></div>
-  <div class="stat"><div class="stat-lbl">CAN1 RX/TX</div><div class="stat-val v-info" id="s-rx">0/0</div></div>
-  <div class="stat"><div class="stat-lbl">帧率</div><div class="stat-val v-info" id="s-fps">0.0 Hz</div></div>
-  <div class="stat"><div class="stat-lbl">硬件版本</div><div class="stat-val v-acc" id="s-hw">--</div></div>
-  <div class="stat"><div class="stat-lbl">速度偏移</div><div class="stat-val v-dim" id="s-soff">0</div></div>
-</div>
-</div>
-
-<!-- Secondary Stats -->
-<div class="card">
-<div class="card-title">设备信息</div>
-<div class="stats">
-  <div class="stat"><div class="stat-lbl">芯片温度</div><div class="stat-val" id="s-temp">--</div></div>
-  <div class="stat"><div class="stat-lbl">固件版本</div><div class="stat-val v-info" id="s-ver">--</div></div>
-  <div class="stat"><div class="stat-lbl">TX Errors</div><div class="stat-val v-dim" id="s-txerr">0</div></div>
-  <div class="stat"><div class="stat-lbl">跟随距离</div><div class="stat-val v-dim" id="s-fd">--</div></div>
-</div>
-</div>
-
-	<!-- Phase 1: 车辆OTA状态 -->
-	<div class="card">
-	<div class="card-title">车辆 OTA 状态</div>
-	<div class="stats">
-	  <div class="stat"><div class="stat-lbl">OTA 状态</div><div class="stat-val v-acc" id="s-vota">正常</div></div>
-	  <div class="stat"><div class="stat-lbl">OTA 确认次数</div><div class="stat-val v-dim" id="s-vota-cnt">0</div></div>
-	</div>
-	</div>
-
-	<!-- Phase 1: 功耗管理 -->
-	<div class="card">
-	<div class="card-title">功耗管理</div>
-	  <div class="setting-row">
-	    <div>
-	      <div class="setting-name">自动关机</div>
-	      <div class="setting-desc">5分钟无CAN数据自动休眠</div>
-	    </div>
-	    <label class="tgl">
-	      <input type="checkbox" id="ov-auto-shutdown" onchange="toggleAutoShutdown(this.checked)">
-	      <div class="tgl-track"></div>
-	    </label>
-	  </div>
-	  <div class="setting-row">
-	    <div>
-	      <div class="setting-name">WiFi 自动关闭</div>
-	      <div class="setting-desc">5分钟无操作关闭网络中转</div>
-	    </div>
-	    <label class="tgl">
-	      <input type="checkbox" id="ov-wifi-auto-off" onchange="toggleWifiAutoOff(this.checked)">
-	      <div class="tgl-track"></div>
-	    </label>
-	  </div>
-	</div>
-
-	<!-- Legacy 运行时状态 -->
-	<div class="card">
-	<div class="card-title">Legacy 运行时状态</div>
-	<div class="stats">
-	  <div class="stat"><div class="stat-lbl">当前 HW</div><div class="stat-val v-acc" id="legacy-selected-hw">--</div></div>
-	  <div class="stat"><div class="stat-lbl">生效模式</div><div class="stat-val v-acc" id="legacy-effective-handler">--</div></div>
-	  <div class="stat"><div class="stat-lbl">检测 HW</div><div class="stat-val v-dim" id="legacy-detected-hw">--</div></div>
-	  <div class="stat"><div class="stat-lbl">AP 门控</div><div class="stat-val v-dim" id="legacy-ap-gate">--</div></div>
-	  <div class="stat"><div class="stat-lbl">OTA 看守</div><div class="stat-val v-dim" id="legacy-ota-guard">--</div></div>
-	</div>
-	</div>
-
-	<!-- Legacy FSD 策略 -->
-	<div class="card">
-	<div class="card-title">FSD 注入策略</div>
-	<div class="setting-desc" style="margin-bottom:10px">稳定模式仅注入 mux0 bit46，禁用 mux1；Tesla Controller 对齐模式用于受控 A/B 测试</div>
-	<div class="sel-cards c3" id="legacy-fsd-policy-cards" style="margin-bottom:12px">
-	  <div class="sel-card active" data-policy="stable" onclick="setLegacyFsdPolicy('stable')">
-	    <div class="sel-lbl">推荐</div>
-	    <div class="sel-name">稳定模式</div>
-	  </div>
-	  <div class="sel-card" data-policy="experimental" onclick="setLegacyFsdPolicy('experimental')">
-	    <div class="sel-lbl">A/B</div>
-	    <div class="sel-name">实验模式</div>
-	  </div>
-	  <div class="sel-card" data-policy="legacy_tesla_parity" onclick="setLegacyFsdPolicy('legacy_tesla_parity')">
-	    <div class="sel-lbl">对齐</div>
-	    <div class="sel-name">Tesla Controller 对齐模式</div>
-	  </div>
-	</div>
-	<div class="stats">
-	  <div class="stat"><div class="stat-lbl">当前策略</div><div class="stat-val v-acc" id="legacy-fsd-strategy">稳定</div></div>
-	  <div class="stat"><div class="stat-lbl">mux0</div><div class="stat-val v-dim" id="legacy-fsd-mux0">--</div></div>
-	  <div class="stat"><div class="stat-lbl">mux1</div><div class="stat-val v-dim" id="legacy-fsd-mux1">--</div></div>
-	  <div class="stat"><div class="stat-lbl">触发源</div><div class="stat-val v-dim" id="legacy-fsd-trigger">--</div></div>
-	</div>
-	  <div class="setting-row">
-	    <div>
-	      <div class="setting-name">启用 mux1 注入</div>
-	      <div class="setting-desc">实验模式：注入 mux1 帧</div>
-	    </div>
-	    <label class="tgl">
-	      <input type="checkbox" id="legacy-fsd-mux1-tgl" onchange="saveLegacyFsdExperimental()">
-	      <div class="tgl-track"></div>
-	    </label>
-	  </div>
-	  <div class="setting-row">
-	    <div>
-	      <div class="setting-name">写入速度 Profile</div>
-	      <div class="setting-desc">实验模式：mux0 写入速度档位</div>
-	    </div>
-	    <label class="tgl">
-	      <input type="checkbox" id="legacy-fsd-profile" onchange="saveLegacyFsdExperimental()">
-	      <div class="tgl-track"></div>
-	    </label>
-	  </div>
-	  <div class="setting-row">
-	    <div>
-	      <div class="setting-name">清除视觉限速</div>
-	      <div class="setting-desc">实验模式：清除视觉限速位</div>
-	    </div>
-	    <label class="tgl">
-	      <input type="checkbox" id="legacy-fsd-vision" onchange="saveLegacyFsdExperimental()">
-	      <div class="tgl-track"></div>
-	    </label>
-	  </div>
-	</div>
-
-	<!-- Legacy CAN-A 健康诊断 -->
-	<div class="card">
-	<div class="card-title">Legacy CAN-A 诊断</div>
-	<div class="stats">
-	  <div class="stat"><div class="stat-lbl">0x3EE mux0</div><div class="stat-val v-dim" id="legacy-health-mux0">--</div></div>
-	  <div class="stat"><div class="stat-lbl">0x3EE mux1</div><div class="stat-val v-dim" id="legacy-health-mux1">--</div></div>
-	  <div class="stat"><div class="stat-lbl">TWAI 状态</div><div class="stat-val v-dim" id="legacy-health-twai">--</div></div>
-	  <div class="stat"><div class="stat-lbl">TEC/REC</div><div class="stat-val v-dim" id="legacy-health-tec-rec">--</div></div>
-	  <div class="stat"><div class="stat-lbl">TX失败</div><div class="stat-val v-dim" id="legacy-health-tx-failed">0</div></div>
-	  <div class="stat"><div class="stat-lbl">RX丢失</div><div class="stat-val v-dim" id="legacy-health-rx-missed">0</div></div>
-	  <div class="stat"><div class="stat-lbl">健康状态</div><div class="stat-val v-dim" id="legacy-health-state">--</div></div>
-	  <div class="stat"><div class="stat-lbl">最后阻止原因</div><div class="stat-val v-dim" id="legacy-health-blocked">--</div></div>
-	</div>
-	</div>
-
-	<!-- Service 维修模式 -->
-	<div class="card">
-	<div class="card-title">维修模式 0x339</div>
-	<div class="setting-desc" style="margin-bottom:8px">突发发送仅证明模块 TX，车辆响应未知</div>
-	<div class="stats">
-	  <div class="stat"><div class="stat-lbl">突发状态</div><div class="stat-val v-dim" id="service-burst-state">--</div></div>
-	  <div class="stat"><div class="stat-lbl">最后数据</div><div class="stat-val v-dim" id="service-last-data">--</div></div>
-	  <div class="stat"><div class="stat-lbl">发送统计</div><div class="stat-val v-dim" id="service-tx-evidence">--</div></div>
-	</div>
-	</div>
-
-	<!-- Wheel DND -->
-	<div class="card">
-	<div class="card-title">方向盘免打扰 0x3C2</div>
-	<div class="setting-desc" style="margin-bottom:8px">等待原生 0x3C2 帧后再发送，避免盲发合成帧</div>
-	<div class="stats">
-	  <div class="stat"><div class="stat-lbl">原生帧</div><div class="stat-val v-dim" id="wheel-native-3c2">等待原生帧</div></div>
-	  <div class="stat"><div class="stat-lbl">基帧来源</div><div class="stat-val v-dim" id="wheel-base-frame">--</div></div>
-	  <div class="stat"><div class="stat-lbl">序列状态</div><div class="stat-val v-dim" id="wheel-sequence-state">--</div></div>
-	</div>
-	</div>
-
-	<!-- Legacy 不支持功能 -->
-	<div class="card">
-	<div class="card-title">Legacy 功能支持矩阵</div>
-	<div class="stats">
-	  <div class="stat"><div class="stat-lbl">仿生转向</div><div class="stat-val" style="color:var(--tx3)">不支持</div></div>
-	  <div class="stat"><div class="stat-lbl">Ban Shield</div><div class="stat-val" style="color:var(--tx3)">不支持</div></div>
-	  <div class="stat"><div class="stat-lbl">MPP 自定义</div><div class="stat-val" style="color:var(--tx3)">未接线</div></div>
-	  <div class="stat"><div class="stat-lbl">换挡辅助</div><div class="stat-val" style="color:var(--tx3)">未实现</div></div>
-	</div>
-	</div>
+      <div class="mobile-remote">
+        <div class="cockpit-status-bar">
+          <div class="cockpit-title">
+            <small>ATLAS REMOTE</small>
+            <h2>现场遥控</h2>
+          </div>
+          <span class="cockpit-chip ok">连接到设备热点</span>
+        </div>
+        <div class="mobile-primary-card">
+          <div class="cockpit-state-label">FSD 注入</div>
+          <div class="mobile-state" id="m-fsd">OFF</div>
+          <p>普通点击不会触发危险动作；请长按确认后再启用模块。</p>
+          <button id="m-fsd-tgl" class="mobile-hold" onclick="toggleFsd()">长按启用</button>
+        </div>
+        <div class="mobile-remote-grid">
+          <div class="mobile-remote-card"><div class="lbl">CAN1</div><div class="val" id="m-can">--</div></div>
+          <div class="mobile-remote-card"><div class="lbl">CAN2</div><div class="val" id="m-can2">--</div></div>
+          <div class="mobile-remote-card"><div class="lbl">硬件模式</div><div class="val" id="m-hw">Auto</div></div>
+          <div class="mobile-remote-card"><div class="lbl">帧率</div><div class="val" id="m-fps">0.0 Hz</div></div>
+        </div>
+        <div class="mobile-alert-card">底部导航保留常用入口；重启、爆闪、维修模式等危险操作移入 More 和二级页面。</div>
+      </div>
     </div>
 
     <!-- Page 2: Hardware Config -->
@@ -1984,7 +1827,11 @@ async function poll(){
   var bootTgl=$('fsd-boot-tgl');
   if(bootTgl)bootTgl.checked=!!(d.bootCan!==undefined?d.bootCan:d.ci);
   var mFsdTgl=$('m-fsd-tgl');
-  if(mFsdTgl)mFsdTgl.checked=!!d.ci;
+  if(mFsdTgl){
+    if(mFsdTgl.type==='checkbox')mFsdTgl.checked=!!d.ci;
+    else if(mFsdTgl.classList&&mFsdTgl.classList.contains('mobile-hold'))mFsdTgl.className='mobile-hold '+(d.ci?'on':'');
+    else if(mFsdTgl.classList)mFsdTgl.classList.toggle('on',!!d.ci);
+  }
   setCls('ov-v14','stat-val '+(S.driveProfile===5?'v-warn':'v-dim'));
   setText('ov-v14',S.driveProfile===5?'MAX/V14':'待机');
   var hwText=d.hwName||hwLabel(d.hw);
@@ -1992,12 +1839,14 @@ async function poll(){
   setCls('ov-can','stat-val '+(d.can?'v-ok':'v-err'));
   setText('ov-can',(d.can?'CAN1 Online':'CAN1 Offline')+' / '+($('s-can2')&&$('s-can2').textContent?$('s-can2').textContent:'CAN2 --'));
   setText('ov-up',fmtUp(uptime));
-  setCls('m-can','stat-val '+(d.can?'v-ok':'v-err'));
-  setText('m-can',d.can?'Online':'Offline');
-  setCls('m-can2','stat-val '+(($('s-can2')&&$('s-can2').textContent==='Online')?'v-ok':'v-dim'));
-  setText('m-can2',($('s-can2')&&$('s-can2').textContent)?$('s-can2').textContent:'--');
-  setCls('m-fsd','stat-val '+(d.ci?'v-ok':'v-dim'));
-  setText('m-fsd',d.ci?'ON':'OFF');
+  var mCan=$('m-can');
+  if(mCan){mCan.className=(mCan.classList&&mCan.classList.contains('val')?'val ':'stat-val ')+(d.can?'v-ok':'v-err');mCan.textContent=d.can?'Online':'Offline';}
+  var mCan2=$('m-can2');
+  var can2Online=($('s-can2')&&$('s-can2').textContent==='Online');
+  var can2Text=($('s-can2')&&$('s-can2').textContent)?$('s-can2').textContent:'--';
+  if(mCan2){mCan2.className=(mCan2.classList&&mCan2.classList.contains('val')?'val ':'stat-val ')+(can2Online?'v-ok':'v-dim');mCan2.textContent=can2Text;}
+  var mFsd=$('m-fsd');
+  if(mFsd){mFsd.className=(mFsd.classList&&mFsd.classList.contains('mobile-state'))?('mobile-state '+(d.ci?'on':'')):('stat-val '+(d.ci?'v-ok':'v-dim'));mFsd.textContent=d.ci?'ON':'OFF';}
   setText('m-fps',d.fps.toFixed(1)+' Hz');
   setText('m-rxtx',(d.rx||0)+' / '+(d.tx||0));
   setText('m-up',fmtUp(uptime));
@@ -2075,8 +1924,11 @@ async function poll(){
 function updateFsdToggle(ci){
   var tgl=$('fsd-toggle');
   if(!tgl)return;
-  if(ci){tgl.className='big-toggle on';setText('fsd-label',T('已开启'))}
-  else{tgl.className='big-toggle off';setText('fsd-label',T('已关闭'))}
+  if(tgl.classList.contains('cockpit-hold')){
+    tgl.classList.toggle('on',!!ci);
+  }else if(ci){tgl.className='big-toggle on'}
+  else{tgl.className='big-toggle off'}
+  setText('fsd-label',T(ci?'已开启':'已关闭'));
 }
 
 function updateHwCards(hw){
@@ -2236,7 +2088,11 @@ async function toggleFsd(){
   var masterTgl=$('ov-master-tgl');
   if(masterTgl)masterTgl.checked=S.ci;
   var mFsdTgl=$('m-fsd-tgl');
-  if(mFsdTgl)mFsdTgl.checked=S.ci;
+  if(mFsdTgl){
+    if(mFsdTgl.type==='checkbox')mFsdTgl.checked=S.ci;
+    else if(mFsdTgl.classList&&mFsdTgl.classList.contains('mobile-hold'))mFsdTgl.className='mobile-hold '+(S.ci?'on':'');
+    else if(mFsdTgl.classList)mFsdTgl.classList.toggle('on',S.ci);
+  }
   var bootTgl=$('fsd-boot-tgl');
   if(bootTgl)bootTgl.checked=S.bootCan;
   updateFsdToggle(S.ci);
