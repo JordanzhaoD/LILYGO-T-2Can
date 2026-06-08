@@ -37,6 +37,7 @@ class SimState:
         self.hw = 1
         self.sp = 1
         self.sp_auto = True
+        self.drive_profile = 0
         self.can = True
         self.injection = True
         self.ad = False
@@ -45,6 +46,30 @@ class SimState:
         self.txerr = 0
         self.follow_dist = 3
         self.gateway_ap = 1
+        self.vehicle_ota = False
+        self.ota_confirm_count = 0
+        self.ota_clear_count = 0
+        self.auto_shutdown = False
+        self.wifi_auto_off = False
+        self.speed_strategy = "auto"
+        self.speed_custom = {"manualPct": 0, "autoMinPct": -5, "autoMaxPct": 15, "cp1": 0, "cp2": 0, "cp3": 0, "cp4": 0}
+        self.light_enabled = False
+        self.light_count = 3
+        self.light_frequency = "medium"
+        self.rear_fog_value = 0
+        self.burst_enabled = False
+        self.burst_count = 3
+        self.burst_on_ms = 120
+        self.burst_off_ms = 120
+        self.defense_enabled = True
+        self.bionic_steering = False
+        self.dnd_volume = True
+        self.dnd_speed = True
+        self.ap_eap_compatible = False
+        self.legacy_fsd_policy = "legacy_stable"
+        self.legacy_fsd_mux1 = False
+        self.legacy_fsd_profile = False
+        self.legacy_fsd_vision = False
         self.hw3_offset_slew = True
         self.hw3_slew_rate = 5
         self.hw3_offset_target = 0
@@ -98,6 +123,35 @@ class SimState:
             "[GW] STA-AP NAT enabled, DNS filter active",
         ]
 
+    def uptime(self) -> int:
+        return int(time.monotonic() - self.started)
+
+    def legacy_fsd_config(self) -> dict[str, Any]:
+        return {
+            "policy": self.legacy_fsd_policy,
+            "mux1": self.legacy_fsd_mux1,
+            "profile": self.legacy_fsd_profile,
+            "vision": self.legacy_fsd_vision,
+        }
+
+    def mode_hw_config(self) -> dict[str, Any]:
+        options = ["Auto", "legacy", "HW3", "HW4"]
+        value = max(0, min(3, int(self.hw)))
+        return {"ok": True, "mode": options[value], "value": value, "options": options}
+
+    def drive_profile_config(self) -> dict[str, Any]:
+        options = ["Auto", "Sloth", "Chill", "Normal", "Hurry", "MAX"]
+        value = max(0, min(5, int(self.drive_profile)))
+        effective = 0 if self.sp_auto else self.sp
+        return {
+            "ok": True,
+            "profile": options[value],
+            "value": value,
+            "speed_profile_auto": self.sp_auto,
+            "speed_profile": self.sp,
+            "effective_speed_profile": effective,
+            "options": options,
+        }
 
     def status(self) -> dict[str, Any]:
         self.rx += random.randint(3, 18)
@@ -111,6 +165,13 @@ class SimState:
             "spAuto": self.sp_auto,
             "soff": self.hw3_offset_last,
             "gtwap": self.gateway_ap,
+            "vehicleOta": self.vehicle_ota,
+            "autoShutdown": self.auto_shutdown,
+            "wifiAutoOff": self.wifi_auto_off,
+            "fogStrategy": self.rear_fog_value,
+            "strobeCont": False,
+            "dndVolume": self.dnd_volume,
+            "dndSpeed": self.dnd_speed,
             "AD": self.ad,
             "eprn": self.enable_print,
             "ia": self.injection,
@@ -301,16 +362,113 @@ class Handler(BaseHTTPRequestHandler):
         parsed = parse_qs(raw, keep_blank_values=True)
         return {k: v[-1] if v else "" for k, v in parsed.items()}
 
+    @staticmethod
+    def form_bool(value: Any) -> bool:
+        return str(value).lower() in ("1", "true", "yes", "on")
+
     def do_GET(self) -> None:
         parsed_url = urlparse(self.path)
         path = parsed_url.path
         qs = parse_qs(parsed_url.query, keep_blank_values=True)
         if path == "/":
             self.send_text(HTML, "text/html; charset=utf-8")
+        elif path == "/favicon.ico":
+            self.send_text("", "image/x-icon")
         elif path == "/status":
             self.send_obj(STATE.status())
         elif path == "/frames":
             self.send_obj(STATE.frames())
+        elif path == "/legacy_fsd_config":
+            self.send_obj(STATE.legacy_fsd_config())
+        elif path == "/mode_hw":
+            self.send_obj(STATE.mode_hw_config())
+        elif path == "/drive_profile":
+            self.send_obj(STATE.drive_profile_config())
+        elif path == "/speed_strategy":
+            self.send_obj(
+                {
+                    "ok": True,
+                    "strategy": STATE.speed_strategy,
+                    "value": {"fixed": 0, "auto": 1, "custom": 2}.get(STATE.speed_strategy, 1),
+                    "speed_profile_auto": STATE.sp_auto,
+                    "hw3_custom_speed": STATE.speed_strategy == "custom",
+                    "legacy_custom_speed": STATE.speed_strategy == "custom",
+                    "options": ["fixed", "auto", "custom"],
+                }
+            )
+        elif path == "/speed_custom":
+            self.send_obj({"ok": True, **STATE.speed_custom})
+        elif path == "/power_mgmt":
+            self.send_obj({"autoShutdown": STATE.auto_shutdown, "wifiAutoOff": STATE.wifi_auto_off})
+        elif path == "/dns_rules":
+            blacklist = _dns_rules(STATE.gateway_blacklist)
+            whitelist = _dns_rules(STATE.gateway_whitelist)
+            self.send_obj(
+                {
+                    "blacklist": STATE.gateway_blacklist,
+                    "whitelist": STATE.gateway_whitelist,
+                    "black_count": len(blacklist),
+                    "white_count": len(whitelist),
+                    "mode": STATE.gateway_mode,
+                    "strict": STATE.gateway_strict,
+                    "enabled": STATE.gateway_enabled,
+                }
+            )
+        elif path == "/hotspot_config":
+            self.send_obj({"ssid": STATE.ap_ssid, "hidden": STATE.ap_hidden, "clients": STATE.ap_clients})
+        elif path == "/bus2_ids":
+            self.send_obj(
+                {
+                    "count": 2,
+                    "rx_total": STATE.rx // 2,
+                    "can2": {"tx": STATE.tx // 2, "txerr": 0, "eflg": 0},
+                    "service_mode": False,
+                    "ids": [0x339, 0x3C2],
+                }
+            )
+        elif path == "/lighting_config":
+            self.send_obj(
+                {
+                    "enabled": STATE.light_enabled,
+                    "count": STATE.light_count,
+                    "frequency": STATE.light_frequency,
+                    "frequency_value": {"slow": 0, "medium": 1, "fast": 2}.get(STATE.light_frequency, 1),
+                    "rear_fog_strategy": ["off", "strobe", "f1", "continuous"][STATE.rear_fog_value],
+                    "rear_fog_value": STATE.rear_fog_value,
+                }
+            )
+        elif path == "/burst":
+            self.send_obj(
+                {
+                    "enabled": STATE.burst_enabled,
+                    "count": STATE.burst_count,
+                    "on_ms": STATE.burst_on_ms,
+                    "off_ms": STATE.burst_off_ms,
+                    "phases_left": 0,
+                    "running": False,
+                    "last_trigger_ms": 0,
+                }
+            )
+        elif path == "/defense_config":
+            self.send_obj(
+                {
+                    "enabled": STATE.defense_enabled,
+                    "bionic_steering": STATE.bionic_steering,
+                    "dnd_volume": STATE.dnd_volume,
+                    "dnd_speed": STATE.dnd_speed,
+                    "ap_eap_compatible": STATE.ap_eap_compatible,
+                }
+            )
+        elif path == "/fog_light":
+            self.send_obj({"ok": True, "active": False, "reason": "idle", "strategy": STATE.rear_fog_value})
+        elif path == "/vehicle_ota_status":
+            self.send_obj(
+                {
+                    "vehicleOta": STATE.vehicle_ota,
+                    "otaConfirmCount": STATE.ota_confirm_count,
+                    "otaClearCount": STATE.ota_clear_count,
+                }
+            )
         elif path == "/gear_status":
             self.send_obj(
                 {
@@ -502,6 +660,122 @@ class Handler(BaseHTTPRequestHandler):
             if "hw3SlewRate" in form:
                 STATE.hw3_slew_rate = max(1, min(25, int(form["hw3SlewRate"] or 5)))
             self.send_obj({"ok": True})
+        elif path == "/legacy_fsd_config":
+            if "policy" in form:
+                policy = str(form.get("policy") or "legacy_stable")
+                if policy in ("legacy_tesla_parity", "tesla_parity", "2"):
+                    STATE.legacy_fsd_policy = "legacy_tesla_parity"
+                elif policy in ("experimental", "legacy_experimental", "1"):
+                    STATE.legacy_fsd_policy = "legacy_experimental"
+                elif policy in ("stable", "legacy_stable", "0"):
+                    STATE.legacy_fsd_policy = "legacy_stable"
+                else:
+                    STATE.legacy_fsd_policy = "legacy_stable"
+            if "mux1" in form:
+                STATE.legacy_fsd_mux1 = self.form_bool(form["mux1"])
+            if "profile" in form:
+                STATE.legacy_fsd_profile = self.form_bool(form["profile"])
+            if "vision" in form:
+                STATE.legacy_fsd_vision = self.form_bool(form["vision"])
+            self.send_obj(STATE.legacy_fsd_config())
+        elif path == "/mode_hw":
+            if "mode" in form:
+                mode = str(form["mode"])
+                if mode in ("Auto", "auto"):
+                    STATE.hw = 0
+                elif mode in ("legacy", "Legacy"):
+                    STATE.hw = 1
+                elif mode.upper() == "HW3":
+                    STATE.hw = 2
+                elif mode.upper() == "HW4":
+                    STATE.hw = 3
+            if "value" in form:
+                STATE.hw = max(0, min(3, int(form["value"] or 0)))
+            if "hw" in form:
+                STATE.hw = max(0, min(3, int(form["hw"] or 0)))
+            self.send_obj(STATE.mode_hw_config())
+        elif path == "/drive_profile":
+            if "profile" in form or "mode" in form:
+                profile = str(form.get("profile") or form.get("mode") or "Auto").lower()
+                profiles = {"auto": 0, "sloth": 1, "chill": 2, "normal": 3, "hurry": 4, "max": 5}
+                STATE.drive_profile = profiles.get(profile, 0)
+            if "value" in form:
+                STATE.drive_profile = max(0, min(5, int(form["value"] or 0)))
+            STATE.sp_auto = STATE.drive_profile == 0
+            self.send_obj(STATE.drive_profile_config())
+        elif path == "/speed_strategy":
+            if "strategy" in form:
+                strategy = str(form["strategy"])
+                STATE.speed_strategy = strategy if strategy in ("fixed", "auto", "custom") else "auto"
+            self.send_obj({"ok": True, "strategy": STATE.speed_strategy})
+        elif path == "/speed_custom":
+            for key in ("manualPct", "autoMinPct", "autoMaxPct", "cp1", "cp2", "cp3", "cp4"):
+                if key in form:
+                    STATE.speed_custom[key] = int(form[key] or 0)
+            self.send_obj({"ok": True, **STATE.speed_custom})
+        elif path == "/power_mgmt":
+            if "autoShutdown" in form:
+                STATE.auto_shutdown = self.form_bool(form["autoShutdown"])
+            if "wifiAutoOff" in form:
+                STATE.wifi_auto_off = self.form_bool(form["wifiAutoOff"])
+            self.send_obj({"autoShutdown": STATE.auto_shutdown, "wifiAutoOff": STATE.wifi_auto_off})
+        elif path == "/dns_rules":
+            if "enabled" in form:
+                STATE.gateway_enabled = self.form_bool(form["enabled"])
+            if "mode" in form:
+                STATE.gateway_mode = int(form.get("mode") or STATE.gateway_mode)
+            if "strict" in form:
+                STATE.gateway_strict = self.form_bool(form["strict"])
+            if "blacklist" in form:
+                STATE.gateway_blacklist = str(form["blacklist"])
+            if "whitelist" in form:
+                STATE.gateway_whitelist = str(form["whitelist"])
+            self.send_obj({"ok": True})
+        elif path == "/hotspot_config":
+            if form.get("ssid"):
+                STATE.ap_ssid = str(form["ssid"])[:32]
+            if "hidden" in form:
+                STATE.ap_hidden = self.form_bool(form["hidden"])
+            self.send_obj({"ok": True, "msg": "Saved in simulator"})
+        elif path == "/lighting_config":
+            if "enabled" in form:
+                STATE.light_enabled = self.form_bool(form["enabled"])
+            if "count" in form:
+                STATE.light_count = max(1, min(20, int(form["count"] or STATE.light_count)))
+            if "frequency" in form:
+                STATE.light_frequency = str(form["frequency"])
+            if "rear_fog_strategy" in form:
+                strategy = str(form["rear_fog_strategy"])
+                STATE.rear_fog_value = {"off": 0, "strobe": 1, "f1": 2, "continuous": 3}.get(strategy, int(strategy or 0) if strategy.isdigit() else 0)
+            self.send_obj({"ok": True})
+        elif path == "/burst":
+            if "enabled" in form:
+                STATE.burst_enabled = self.form_bool(form["enabled"])
+            if "count" in form:
+                STATE.burst_count = max(1, min(20, int(form["count"] or STATE.burst_count)))
+            if "on_ms" in form:
+                STATE.burst_on_ms = max(10, int(form["on_ms"] or STATE.burst_on_ms))
+            if "off_ms" in form:
+                STATE.burst_off_ms = max(10, int(form["off_ms"] or STATE.burst_off_ms))
+            self.send_obj({"ok": True, "enabled": STATE.burst_enabled, "phases_left": 0})
+        elif path == "/defense_config":
+            if "enabled" in form:
+                STATE.defense_enabled = self.form_bool(form["enabled"])
+            if "bionic_steering" in form:
+                STATE.bionic_steering = self.form_bool(form["bionic_steering"])
+            if "dnd_volume" in form:
+                STATE.dnd_volume = self.form_bool(form["dnd_volume"])
+            if "dnd_speed" in form:
+                STATE.dnd_speed = self.form_bool(form["dnd_speed"])
+            if "ap_eap_compatible" in form:
+                STATE.ap_eap_compatible = self.form_bool(form["ap_eap_compatible"])
+            self.send_obj({"ok": True})
+        elif path == "/fog_light":
+            if "fogStrategy" in form:
+                STATE.rear_fog_value = max(0, min(3, int(form["fogStrategy"] or 0)))
+            self.send_obj({"ok": True, "active": False, "reason": "idle"})
+        elif path == "/strobe_cont":
+            self.send_obj({"ok": True, "active": False})
         elif path == "/led_brightness":
             STATE.led_brightness = max(0, min(255, int(form.get("b", STATE.led_brightness) or 0)))
             self.send_obj({"ok": True})
