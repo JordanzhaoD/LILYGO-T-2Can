@@ -476,16 +476,16 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <p>T-2CAN 控制面板</p>
   </div>
   <div class="sidebar-nav">
-    <div class="nav-item active" data-page="pg-overview"><span class="nav-icon">▣</span>模块配置</div>
-    <div class="nav-item" data-page="pg-hardware"><span class="nav-icon">◇</span>激活模式</div>
-    <div class="nav-item" data-page="pg-drive"><span class="nav-icon">◉</span>驾驶模式</div>
-    <div class="nav-item" data-page="pg-speed"><span class="nav-icon">↗</span>速度偏移</div>
-    <div class="nav-item" data-page="pg-bus2"><span class="nav-icon">✦</span>CAN2控制</div>
+    <div class="nav-item active" data-page="pg-overview"><span class="nav-icon">▣</span>驾驶状态</div>
+    <div class="nav-item" data-page="pg-hardware"><span class="nav-icon">◇</span>硬件模式</div>
+    <div class="nav-item" data-page="pg-drive"><span class="nav-icon">◉</span>驾驶风格</div>
+    <div class="nav-item" data-page="pg-speed"><span class="nav-icon">↗</span>速度策略</div>
+    <div class="nav-item" data-page="pg-bus2"><span class="nav-icon">✦</span>CAN2 控制</div>
     <div class="nav-item" data-page="pg-strobe"><span class="nav-icon">⚡</span>灯光特技</div>
-    <div class="nav-item" data-page="pg-defense"><span class="nav-icon">◈</span>FSD防御</div>
-    <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA升级</div>
+    <div class="nav-item" data-page="pg-defense"><span class="nav-icon">◈</span>FSD 防护</div>
+    <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA 升级</div>
     <div class="nav-item" data-page="pg-network"><span class="nav-icon">◎</span>网络设置</div>
-    <div class="nav-item" data-page="pg-can"><span class="nav-icon">⌘</span>CAN工具</div>
+    <div class="nav-item" data-page="pg-can"><span class="nav-icon">⌘</span>CAN 诊断</div>
     <div class="nav-item" data-page="pg-shift"><span class="nav-icon">⚙</span>自动换挡</div>
   </div>
   <div class="sidebar-ft">
@@ -653,7 +653,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 2: Hardware Config -->
     <div class="page" id="pg-hardware">
-<div class="page-title">破解模式</div>
+<div class="page-title">硬件模式</div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-hw-ui">Auto</div></div>
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-hw-nvs">--</div></div>
@@ -661,8 +661,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 <!-- HW Version Selection -->
 <div class="card">
-  <div class="card-title">FSD 智能破解模式</div>
-  <div class="card-subtitle">选择车辆自动驾驶硬件版本，Auto 会交给固件现有探测逻辑</div>
+  <div class="card-title">FSD 硬件模式</div>
+  <div class="card-subtitle">选择车辆自动驾驶硬件版本；Auto 会使用固件现有探测逻辑。</div>
   <div class="sel-cards c4" id="hw-cards">
     <div class="sel-card active" onclick="setHW(3)">
       <div class="sel-lbl">推荐</div>
@@ -1606,10 +1606,10 @@ function fmtUp(sec){
 // ── I18N ───────────────────────────────────────────────────
 var I18N={
   // Sidebar
-  '模块配置':'Module','激活模式':'Activation Mode','驾驶模式':'Drive Mode',
-  '速度偏移':'Speed Offset','CAN2控制':'CAN2 Control','灯光特技':'Light Show',
-  'FSD防御':'FSD Defense','OTA升级':'OTA Update',
-  '网络设置':'Network','CAN工具':'CAN Tools','自动换挡':'Auto Shift',
+  '驾驶状态':'Drive Status','硬件模式':'Hardware Mode','驾驶风格':'Drive Style',
+  '速度策略':'Speed Strategy','CAN2 控制':'CAN2 Control','灯光特技':'Light Show',
+  'FSD 防护':'FSD Guard','OTA 升级':'OTA Update',
+  '网络设置':'Network','CAN 诊断':'CAN Diagnostics','自动换挡':'Auto Shift',
   // Top bar
   '已连接':'Connected','未连接':'Disconnected','连接丢失':'Connection Lost',
   // Overview
@@ -1683,7 +1683,7 @@ var I18N={
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
 function applyI18n(){
   var navs=document.querySelectorAll('.nav-item');
-  var zhTexts=['模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','灯光特技','FSD防御','OTA升级','网络设置','CAN工具','自动换挡'];
+  var zhTexts=['驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动换挡'];
   for(var i=0;i<navs.length;i++){
     var icon=navs[i].querySelector('.nav-icon');
     var iconHtml=icon?icon.outerHTML:'';
