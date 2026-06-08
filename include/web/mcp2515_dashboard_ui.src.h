@@ -1367,42 +1367,53 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 10: CAN Tools -->
     <div class="page" id="pg-can">
-<div class="page-title">工程模式</div>
-<!-- CAN Pin Config -->
-<div class="card">
-  <div class="card-title">CAN 引脚配置</div>
-  <div class="card-subtitle">CAN1 TWAI + CAN2 MCP2515 SPI</div>
-  <div class="diag-grid">
-    <div class="diag-item"><span class="lbl">CAN1 TX</span><span class="v-acc">GPIO 7</span></div>
-    <div class="diag-item"><span class="lbl">CAN1 RX</span><span class="v-acc">GPIO 6</span></div>
-    <div class="diag-item"><span class="lbl">CAN2 CS</span><span class="v-acc" id="can-cs">GPIO 10</span></div>
-    <div class="diag-item"><span class="lbl">SPI SCK</span><span class="v-acc" id="can-sck">GPIO 12</span></div>
-    <div class="diag-item"><span class="lbl">SPI MISO</span><span class="v-acc" id="can-miso">GPIO 13</span></div>
-    <div class="diag-item"><span class="lbl">SPI MOSI</span><span class="v-acc" id="can-mosi">GPIO 11</span></div>
-    <div class="diag-item"><span class="lbl">MCP RST</span><span class="v-acc" id="can-rst">GPIO 9</span></div>
-  </div>
-</div>
+<div class="page-title">CAN 诊断</div>
+<div class="diag-shell">
+  <aside class="diag-kpi-rail">
+    <div class="diag-kpi"><div class="lbl">CAN1 RX/TX</div><div class="val" id="diag-rxtx">0 / 0</div></div>
+    <div class="diag-kpi"><div class="lbl">CAN2 EFLG</div><div class="val" id="diag-eflg">0x00</div></div>
+    <div class="diag-kpi"><div class="lbl">发送错误</div><div class="val" id="diag-txerr">0</div></div>
+    <div class="diag-kpi"><div class="lbl">最近写入</div><div class="val" id="diag-last-write">--</div></div>
+    <div class="card">
+      <div class="card-title">CAN 引脚</div>
+      <div class="diag-grid">
+        <div class="diag-item"><span class="lbl">CAN1 TX</span><span class="v-acc">GPIO 7</span></div>
+        <div class="diag-item"><span class="lbl">CAN1 RX</span><span class="v-acc">GPIO 6</span></div>
+        <div class="diag-item"><span class="lbl">CAN2 CS</span><span class="v-acc" id="can-cs">GPIO 10</span></div>
+        <div class="diag-item"><span class="lbl">SPI SCK</span><span class="v-acc" id="can-sck">GPIO 12</span></div>
+        <div class="diag-item"><span class="lbl">SPI MISO</span><span class="v-acc" id="can-miso">GPIO 13</span></div>
+        <div class="diag-item"><span class="lbl">SPI MOSI</span><span class="v-acc" id="can-mosi">GPIO 11</span></div>
+        <div class="diag-item"><span class="lbl">MCP RST</span><span class="v-acc" id="can-rst">GPIO 9</span></div>
+      </div>
+    </div>
+  </aside>
 
-<!-- Sub-tabs -->
-<div class="sub-tabs">
-  <div class="sub-tab active" onclick="switchCanTab('sniffer')">实时帧</div>
-  <div class="sub-tab" onclick="switchCanTab('recorder')">记录器</div>
-  <div class="sub-tab" onclick="switchCanTab('controller')">控制器</div>
-  <div class="sub-tab" onclick="switchCanTab('debug')">调试</div>
-</div>
+  <section class="diag-main-panel">
+    <div class="card">
+      <div class="cockpit-status-bar">
+        <div class="cockpit-title"><small>工程模式</small><h2>错误优先的实时帧</h2></div>
+        <div class="cockpit-chip-row"><span class="cockpit-chip ok">实时</span><span class="cockpit-chip warn">错误优先</span><span class="cockpit-chip">DBC 可切换</span></div>
+      </div>
+      <div class="diag-toolbar">
+        <input class="inp" id="sniff-filter" placeholder="帧筛选：输入 ID、名称、TXERR 或 mux...">
+        <button class="btn btn-sm btn-outline" id="sniff-pause" onclick="toggleSniffPause()">暂停</button>
+      </div>
+      <div class="sub-tabs">
+        <div class="sub-tab active" onclick="switchCanTab('sniffer')">实时帧</div>
+        <div class="sub-tab" onclick="switchCanTab('recorder')">记录器</div>
+        <div class="sub-tab" onclick="switchCanTab('controller')">控制器</div>
+        <div class="sub-tab" onclick="switchCanTab('debug')">调试</div>
+      </div>
+    </div>
 
 <!-- Sniffer -->
 <div id="can-sniffer">
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <span style="font-weight:600">错误优先</span>
+      <span style="font-weight:800">实时帧</span>
       <span style="color:var(--tx3);font-size:11px" id="sniff-count">0 实时帧</span>
     </div>
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <input class="inp" id="sniff-filter" placeholder="帧筛选：ID 或名称..." style="flex:1">
-      <button class="btn btn-sm btn-outline" id="sniff-pause" onclick="toggleSniffPause()">⏸</button>
-    </div>
-    <div style="max-height:250px;overflow-y:auto">
+    <div class="diag-table-shell">
       <table class="tbl">
         <thead><tr><th>ID</th><th>Dir</th><th>数据</th><th>Age</th></tr></thead>
         <tbody id="sniff-rows"></tbody>
@@ -1414,9 +1425,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <!-- Recorder -->
 <div id="can-recorder" style="display:none">
   <div class="card">
-    <div class="card-title">记录器</div>
+    <div class="card-title">CAN 记录器</div>
     <div style="display:flex;gap:8px;margin-bottom:10px">
-      <button class="btn btn-sm" id="rec-start" onclick="startRec()">开始录制</button>
+      <button class="btn btn-sm" id="rec-start" onclick="startRec()">开始记录</button>
       <button class="btn btn-sm btn-outline" id="rec-stop" onclick="stopRec()" disabled>停止</button>
       <button class="btn btn-sm btn-outline" id="rec-dl" onclick="downloadRec()" disabled>下载 CSV</button>
     </div>
@@ -1434,11 +1445,11 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <!-- Controller -->
 <div id="can-controller" style="display:none">
   <div class="card">
-    <div class="card-title">控制器状态</div>
+    <div class="card-title">CAN 控制器状态</div>
     <div class="diag-grid">
       <div class="diag-item"><span class="lbl">EFLG</span><span class="v-dim" id="ctrl-eflg">0x00</span></div>
       <div class="diag-item"><span class="lbl">RX Errors</span><span class="v-dim" id="ctrl-rxerr">0</span></div>
-      <div class="diag-item"><span class="lbl">TX Errors</span><span class="v-dim" id="ctrl-txerr">0</span></div>
+      <div class="diag-item"><span class="lbl">发送错误</span><span class="v-dim" id="ctrl-txerr">0</span></div>
       <div class="diag-item"><span class="lbl">模式</span><span class="v-dim" id="ctrl-mode">--</span></div>
     </div>
     <div id="ctrl-mux" style="margin-top:8px"></div>
@@ -1458,7 +1469,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
   </div>
   <div class="card">
-    <div class="card-title">最近写入</div>
+    <div class="card-title">最近写入检查</div>
     <div class="diag-grid">
       <div class="diag-item"><span class="lbl">Injected</span><span class="v-acc" id="lw-injected">--</span></div>
       <div class="diag-item"><span class="lbl">Bus</span><span class="v-dim" id="lw-bus">--</span></div>
@@ -1466,6 +1477,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="diag-item"><span class="lbl">Age</span><span class="v-dim" id="lw-age">--</span></div>
     </div>
   </div>
+</div>
+  </section>
 </div>
     </div>
 
