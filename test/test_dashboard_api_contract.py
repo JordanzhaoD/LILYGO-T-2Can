@@ -1350,6 +1350,119 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
 
+    def test_atlas_redesign_chinese_default_copy_is_precise(self) -> None:
+        """Driving-first redesign must use precise Chinese for default visible UI copy."""
+        required_copy = [
+            "驾驶状态中心",
+            "FSD 注入",
+            "长按 2 秒启用 FSD 注入",
+            "长按 2 秒关闭 FSD 注入",
+            "硬件模式",
+            "驾驶风格",
+            "速度策略",
+            "FSD 防护",
+            "现场遥控",
+            "连接到设备热点",
+            "长按启用",
+            "长按关闭",
+            "工程模式",
+            "错误优先",
+            "帧筛选",
+            "实时帧",
+            "记录器",
+            "控制器",
+            "调试",
+            "最近写入",
+        ]
+        for token in required_copy:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+        forbidden_default_copy = [
+            "Cockpit Home",
+            "Remote Card",
+            "Engineering Mode",
+            "Drive Console",
+            "Hold to Enable",
+            "Hold to Disable",
+            "PRIMARY",
+            "破解模式",
+            "FSD 智能破解模式",
+            "防封",
+        ]
+        for token in forbidden_default_copy:
+            with self.subTest(token=token):
+                self.assertNotIn(token, self.ui)
+
+    def test_atlas_redesign_cockpit_home_structure_is_present(self) -> None:
+        """Overview page must become the driving-first cockpit home while preserving existing IDs."""
+        overview_page = re.search(r'id="pg-overview".*?id="pg-hardware"', self.ui, re.S)
+        self.assertIsNotNone(overview_page)
+        body = overview_page.group(0)
+        for token in [
+            'class="cockpit-home"',
+            'class="cockpit-primary"',
+            'id="fsd-toggle"',
+            'id="fsd-label"',
+            'id="ov-master-tgl"',
+            'id="ov-fsd-tgl"',
+            'id="fsd-boot-tgl"',
+            'id="s-can"',
+            'id="s-can2"',
+            'id="s-fps"',
+            'id="s-temp"',
+            'id="s-ver"',
+            'id="ov-hw"',
+            'id="m-hw"',
+            'id="m-drive"',
+            'id="m-speed"',
+            'id="m-defense"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, body)
+
+    def test_atlas_redesign_mobile_remote_structure_is_present(self) -> None:
+        """Mobile home must be a remote-control surface, not a compressed desktop stack."""
+        for token in [
+            'class="mobile-remote"',
+            'class="mobile-primary-card"',
+            'id="m-fsd-tgl"',
+            'id="m-can"',
+            'id="m-can2"',
+            'id="m-fsd"',
+            'id="m-fps"',
+            'id="m-alert"',
+            '现场遥控',
+            '底部导航',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_atlas_redesign_can_diagnostics_structure_is_present(self) -> None:
+        """CAN tools must expose engineering-mode hierarchy and preserve existing tabs/IDs."""
+        can_page = re.search(r'id="pg-can".*?id="pg-shift"', self.ui, re.S)
+        self.assertIsNotNone(can_page)
+        body = can_page.group(0)
+        for token in [
+            'class="diag-shell"',
+            'class="diag-kpi-rail"',
+            'id="sniff-filter"',
+            'id="sniff-pause"',
+            'id="sniff-rows"',
+            'id="can-recorder"',
+            'id="can-controller"',
+            'id="can-debug"',
+            'id="ctrl-eflg"',
+            'id="ctrl-rxerr"',
+            'id="ctrl-txerr"',
+            'id="lw-injected"',
+            'id="lw-match"',
+            '错误优先',
+            '帧筛选',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, body)
+
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
         self.assertEqual("4.1.0", self.version.strip())
