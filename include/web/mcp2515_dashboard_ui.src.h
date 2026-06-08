@@ -624,6 +624,88 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
             <label class="tgl"><input type="checkbox" id="ov-wifi-auto-off" onchange="toggleWifiAutoOff(this.checked)"><div class="tgl-track"></div></label>
           </div>
         </div>
+
+        <div class="card">
+          <div class="card-title">Legacy 运行时状态</div>
+          <div class="stats">
+            <div class="stat"><div class="stat-lbl">当前 HW</div><div class="stat-val v-acc" id="legacy-selected-hw">--</div></div>
+            <div class="stat"><div class="stat-lbl">生效模式</div><div class="stat-val v-acc" id="legacy-effective-handler">--</div></div>
+            <div class="stat"><div class="stat-lbl">检测 HW</div><div class="stat-val v-dim" id="legacy-detected-hw">--</div></div>
+            <div class="stat"><div class="stat-lbl">AP 门控</div><div class="stat-val v-dim" id="legacy-ap-gate">--</div></div>
+            <div class="stat"><div class="stat-lbl">OTA 看守</div><div class="stat-val v-dim" id="legacy-ota-guard">--</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">FSD 注入策略</div>
+          <div class="setting-desc" style="margin-bottom:10px">稳定模式仅注入 mux0 bit46，禁用 mux1；Tesla Controller 对齐模式用于受控 A/B 测试。</div>
+          <div class="sel-cards c3" id="legacy-fsd-policy-cards" style="margin-bottom:12px">
+            <div class="sel-card active" data-policy="stable" onclick="setLegacyFsdPolicy('stable')">
+              <div class="sel-lbl">推荐</div>
+              <div class="sel-name">稳定模式</div>
+            </div>
+            <div class="sel-card" data-policy="experimental" onclick="setLegacyFsdPolicy('experimental')">
+              <div class="sel-lbl">A/B</div>
+              <div class="sel-name">实验模式</div>
+            </div>
+            <div class="sel-card" data-policy="legacy_tesla_parity" onclick="setLegacyFsdPolicy('legacy_tesla_parity')">
+              <div class="sel-lbl">对齐</div>
+              <div class="sel-name">Tesla Controller 对齐模式</div>
+            </div>
+          </div>
+          <div class="stats">
+            <div class="stat"><div class="stat-lbl">当前策略</div><div class="stat-val v-acc" id="legacy-fsd-strategy">稳定</div></div>
+            <div class="stat"><div class="stat-lbl">mux0</div><div class="stat-val v-dim" id="legacy-fsd-mux0">--</div></div>
+            <div class="stat"><div class="stat-lbl">mux1</div><div class="stat-val v-dim" id="legacy-fsd-mux1">--</div></div>
+            <div class="stat"><div class="stat-lbl">触发源</div><div class="stat-val v-dim" id="legacy-fsd-trigger">--</div></div>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-name">启用 mux1 注入</div><div class="setting-desc">实验模式：注入 mux1 帧。</div></div>
+            <label class="tgl"><input type="checkbox" id="legacy-fsd-mux1-tgl" onchange="saveLegacyFsdExperimental()"><div class="tgl-track"></div></label>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-name">写入速度 Profile</div><div class="setting-desc">实验模式：mux0 写入速度档位。</div></div>
+            <label class="tgl"><input type="checkbox" id="legacy-fsd-profile" onchange="saveLegacyFsdExperimental()"><div class="tgl-track"></div></label>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-name">清除视觉限速</div><div class="setting-desc">实验模式：清除视觉限速位。</div></div>
+            <label class="tgl"><input type="checkbox" id="legacy-fsd-vision" onchange="saveLegacyFsdExperimental()"><div class="tgl-track"></div></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Legacy CAN-A 诊断</div>
+          <div class="stats">
+            <div class="stat"><div class="stat-lbl">0x3EE mux0</div><div class="stat-val v-dim" id="legacy-health-mux0">--</div></div>
+            <div class="stat"><div class="stat-lbl">0x3EE mux1</div><div class="stat-val v-dim" id="legacy-health-mux1">--</div></div>
+            <div class="stat"><div class="stat-lbl">TWAI 状态</div><div class="stat-val v-dim" id="legacy-health-twai">--</div></div>
+            <div class="stat"><div class="stat-lbl">TEC/REC</div><div class="stat-val v-dim" id="legacy-health-tec-rec">--</div></div>
+            <div class="stat"><div class="stat-lbl">TX失败</div><div class="stat-val v-dim" id="legacy-health-tx-failed">0</div></div>
+            <div class="stat"><div class="stat-lbl">RX丢失</div><div class="stat-val v-dim" id="legacy-health-rx-missed">0</div></div>
+            <div class="stat"><div class="stat-lbl">健康状态</div><div class="stat-val v-dim" id="legacy-health-state">--</div></div>
+            <div class="stat"><div class="stat-lbl">最后阻止原因</div><div class="stat-val v-dim" id="legacy-health-blocked">--</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">维修模式 0x339</div>
+          <div class="setting-desc" style="margin-bottom:8px">突发发送仅证明模块 TX，车辆响应未知。</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">方向盘免打扰 0x3C2</div>
+          <div class="setting-desc" style="margin-bottom:8px">等待原生 0x3C2 帧后再发送，避免盲发合成帧。</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Legacy 功能支持矩阵</div>
+          <div class="stats">
+            <div class="stat"><div class="stat-lbl">仿生转向</div><div class="stat-val" style="color:var(--tx3)">不支持</div></div>
+            <div class="stat"><div class="stat-lbl">Ban Shield</div><div class="stat-val" style="color:var(--tx3)">不支持</div></div>
+            <div class="stat"><div class="stat-lbl">MPP 自定义</div><div class="stat-val" style="color:var(--tx3)">未接线</div></div>
+            <div class="stat"><div class="stat-lbl">换挡辅助</div><div class="stat-val" style="color:var(--tx3)">未实现</div></div>
+          </div>
+        </div>
         </div>
       </div>
 
@@ -3168,6 +3250,7 @@ async function pollGearAssist(){
 }
 
 // ── Legacy Real Wiring Truth Cards ────────────────────────
+var legacyFsdConfigLoaded=false;
 function renderLegacyFsdPolicyCards(policy){
   var cards=document.getElementById('legacy-fsd-policy-cards');
   if(!cards)return;
@@ -3180,6 +3263,19 @@ function renderLegacyFsdPolicyCards(policy){
     item.classList.toggle('active',item.getAttribute('data-policy')===normalized);
   }
 }
+async function loadLegacyFsdConfig(){
+  var cfg=await fetchJson('/legacy_fsd_config');
+  if(!cfg){legacyFsdConfigLoaded=false;return false;}
+  var mux1=document.getElementById('legacy-fsd-mux1-tgl');
+  var profile=document.getElementById('legacy-fsd-profile');
+  var vision=document.getElementById('legacy-fsd-vision');
+  if(mux1)mux1.checked=!!cfg.mux1;
+  if(profile)profile.checked=!!cfg.profile;
+  if(vision)vision.checked=!!cfg.vision;
+  if(cfg.policy)renderLegacyFsdPolicyCards(cfg.policy);
+  legacyFsdConfigLoaded=true;
+  return true;
+}
 async function setLegacyFsdPolicy(policy){
   renderLegacyFsdPolicyCards(policy);
   await postForm('/legacy_fsd_config',{policy:policy});
@@ -3187,6 +3283,10 @@ async function setLegacyFsdPolicy(policy){
   poll();
 }
 async function saveLegacyFsdExperimental(){
+  if(!legacyFsdConfigLoaded){
+    await loadLegacyFsdConfig();
+    if(!legacyFsdConfigLoaded){showToast('配置未同步，请稍后再试');return;}
+  }
   var mux1=document.getElementById('legacy-fsd-mux1-tgl');
   var profile=document.getElementById('legacy-fsd-profile');
   var vision=document.getElementById('legacy-fsd-vision');
@@ -3319,6 +3419,7 @@ document.addEventListener('DOMContentLoaded',function(){
   // Load initial data
   loadFirmwareInfo();
   loadCanPins();
+  loadLegacyFsdConfig();
 
   // Start polling
   poll();
