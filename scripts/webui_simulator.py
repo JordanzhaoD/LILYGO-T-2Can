@@ -163,6 +163,8 @@ class SimState:
             "hw": self.hw,
             "sp": self.sp,
             "spAuto": self.sp_auto,
+            "driveProfile": self.drive_profile,
+            "driveProfileName": self.drive_profile_config()["profile"],
             "soff": self.hw3_offset_last,
             "gtwap": self.gateway_ap,
             "vehicleOta": self.vehicle_ota,
@@ -702,6 +704,12 @@ class Handler(BaseHTTPRequestHandler):
             if "value" in form:
                 STATE.drive_profile = max(0, min(5, int(form["value"] or 0)))
             STATE.sp_auto = STATE.drive_profile == 0
+            if STATE.drive_profile in (1, 2):
+                STATE.sp = 0
+            elif STATE.drive_profile in (4, 5):
+                STATE.sp = 2
+            elif STATE.drive_profile == 3:
+                STATE.sp = 1
             self.send_obj(STATE.drive_profile_config())
         elif path == "/speed_strategy":
             if "strategy" in form:

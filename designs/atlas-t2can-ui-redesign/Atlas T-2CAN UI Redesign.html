@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Atlas T-2CAN UI Redesign Concept</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2305070b'/%3E%3Cpath d='M32 10l20 38H12z' fill='%238b5cf6'/%3E%3C/svg%3E">
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #05070b;
+  --bg-2: #080d16;
+  --panel: rgba(15, 23, 42, 0.82);
+  --panel-strong: #101827;
+  --panel-soft: rgba(30, 41, 59, 0.62);
+  --stroke: rgba(148, 163, 184, 0.18);
+  --stroke-strong: rgba(148, 163, 184, 0.34);
+  --text: #eef4ff;
+  --muted: #8d9bb4;
+  --dim: #66748c;
+  --accent: #8b5cf6;
+  --accent-2: #38bdf8;
+  --ok: #5af793;
+  --warn: #fbbf24;
+  --danger: #ff5d6c;
+  --blue: #60a5fa;
+  --glass: blur(26px) saturate(1.18);
+  --radius-xl: 30px;
+  --radius-lg: 22px;
+  --radius-md: 16px;
+  --shadow: 0 26px 70px rgba(0, 0, 0, 0.36);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); }
+body {
+  background:
+    radial-gradient(circle at 12% -8%, rgba(139, 92, 246, 0.24), transparent 36%),
+    radial-gradient(circle at 94% 10%, rgba(56, 189, 248, 0.18), transparent 30%),
+    radial-gradient(circle at 40% 110%, rgba(90, 247, 147, 0.10), transparent 38%),
+    linear-gradient(145deg, #03050a 0%, #07101d 54%, #05070b 100%);
+}
+button, input { font: inherit; }
+.shell { min-height: 100vh; display: grid; grid-template-columns: 320px 1fr; }
+.sidebar {
+  position: sticky; top: 0; height: 100vh; padding: 28px 24px;
+  border-right: 1px solid var(--stroke); background: rgba(4, 7, 12, 0.62);
+  backdrop-filter: var(--glass); overflow-y: auto;
+}
+.brand { display: flex; align-items: center; gap: 14px; margin-bottom: 34px; }
+.brand-mark {
+  width: 48px; height: 48px; border-radius: 16px;
+  background: conic-gradient(from 210deg, #8b5cf6, #38bdf8, #5af793, #8b5cf6);
+  box-shadow: 0 0 30px rgba(139,92,246,.35); position: relative;
+}
+.brand-mark::after { content: ""; position: absolute; inset: 5px; border-radius: 12px; background: #07101d; }
+.brand h1 { margin: 0; font-size: 20px; line-height: 1.08; letter-spacing: -0.02em; }
+.brand p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.kicker { color: var(--accent-2); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .14em; }
+.side-section { margin-bottom: 28px; }
+.side-section h2 { font-size: 13px; margin: 0 0 12px; color: var(--muted); font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.nav-option {
+  width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 14px; margin-bottom: 8px;
+  border: 1px solid transparent; border-radius: 16px; color: var(--muted);
+  background: transparent; cursor: pointer; text-align: left; transition: all .2s ease;
+}
+.nav-option:hover { background: rgba(148,163,184,.08); color: var(--text); }
+.nav-option.active { background: rgba(139, 92, 246, 0.18); color: var(--text); border-color: rgba(139,92,246,.36); }
+.nav-icon { width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; background: rgba(148,163,184,.10); font-size: 16px; }
+.nav-copy strong { display: block; font-size: 14px; }
+.nav-copy span { display: block; margin-top: 2px; font-size: 11px; color: var(--dim); }
+.note-card { padding: 16px; border: 1px solid var(--stroke); border-radius: 18px; background: rgba(15,23,42,.58); }
+.note-card p { margin: 8px 0 0; font-size: 12px; line-height: 1.55; color: var(--muted); }
+.legend { display: grid; gap: 9px; margin-top: 12px; }
+.legend-row { display:flex; align-items:center; gap:9px; color: var(--muted); font-size: 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px currentColor; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.danger { background: var(--danger); } .dot.blue { background: var(--blue); }
+.main { min-width: 0; padding: 26px; }
+.hero {
+  display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 22px;
+  padding: 20px 22px; border: 1px solid var(--stroke); border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, rgba(15,23,42,.66), rgba(15,23,42,.30)); backdrop-filter: var(--glass);
+}
+.hero h2 { margin: 4px 0 6px; font-size: clamp(27px, 4vw, 46px); letter-spacing: -0.065em; line-height: .96; }
+.hero p { margin: 0; color: var(--muted); line-height: 1.55; max-width: 820px; }
+.hero-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.pill {
+  border: 1px solid var(--stroke); border-radius: 999px; padding: 9px 13px;
+  background: rgba(15,23,42,.58); color: var(--muted); font-size: 12px; font-weight: 800;
+}
+.pill.hot { color: #d6ccff; border-color: rgba(139,92,246,.42); background: rgba(139,92,246,.14); }
+.stage { border: 1px solid var(--stroke); border-radius: 34px; background: rgba(2, 6, 23, .42); padding: 22px; box-shadow: var(--shadow); }
+.screen { display: none; animation: fade .28s ease; }
+.screen.active { display: block; }
+@keyframes fade { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+/* Cockpit */
+.cockpit-frame {
+  aspect-ratio: 16 / 9; min-height: 620px; border-radius: 34px; overflow: hidden; position: relative;
+  background:
+    linear-gradient(90deg, rgba(2,6,23,.94), rgba(2,6,23,.58) 54%, rgba(2,6,23,.92)),
+    radial-gradient(circle at 52% 40%, rgba(56,189,248,.13), transparent 26%),
+    radial-gradient(circle at 76% 46%, rgba(139,92,246,.16), transparent 30%),
+    #030712;
+  border: 1px solid rgba(148,163,184,.22);
+}
+.cockpit-frame::before {
+  content: ""; position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(148,163,184,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.035) 1px, transparent 1px);
+  background-size: 46px 46px; mask-image: radial-gradient(circle at center, black, transparent 72%);
+}
+.cockpit-ui { position: relative; z-index: 1; height: 100%; display: grid; grid-template-columns: 92px 1.08fr .92fr; gap: 22px; padding: 28px; }
+.rail { border-radius: 26px; border: 1px solid var(--stroke); background: rgba(8,13,24,.72); padding: 16px 10px; display:flex; flex-direction:column; align-items:center; gap:16px; }
+.rail-logo { width: 46px; height: 46px; border-radius: 15px; background: rgba(139,92,246,.18); display:grid; place-items:center; color:#c4b5fd; font-weight:900; }
+.rail-btn { width: 52px; height: 52px; border-radius: 18px; border: 1px solid transparent; display:grid; place-items:center; color: var(--muted); background: transparent; font-size: 20px; }
+.rail-btn.active { color: white; border-color: rgba(139,92,246,.34); background: rgba(139,92,246,.18); }
+.rail-spacer { flex:1; }
+.cockpit-left, .cockpit-right { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.status-top { display:flex; justify-content:space-between; gap:16px; align-items:center; }
+.status-title small { color: var(--muted); font-weight: 800; letter-spacing: .12em; font-size: 12px; text-transform: uppercase; }
+.status-title h3 { margin: 4px 0 0; font-size: 31px; letter-spacing: -.04em; }
+.status-chips { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.chip { border: 1px solid var(--stroke); background: rgba(15,23,42,.72); border-radius: 999px; padding: 8px 12px; font-size: 12px; font-weight: 850; color: var(--muted); }
+.chip.ok { color: var(--ok); border-color: rgba(90,247,147,.32); background: rgba(90,247,147,.09); }
+.chip.warn { color: var(--warn); border-color: rgba(251,191,36,.34); background: rgba(251,191,36,.08); }
+.hero-control {
+  flex: 1; min-height: 360px; border-radius: 32px; padding: 24px;
+  border: 1px solid rgba(148,163,184,.20); background: linear-gradient(145deg, rgba(15,23,42,.88), rgba(15,23,42,.40));
+  display:flex; flex-direction:column; justify-content:space-between; overflow:hidden; position:relative;
+}
+.hero-control::after { content:""; position:absolute; right:-70px; top:-80px; width:260px; height:260px; border-radius:50%; background: radial-gradient(circle, rgba(139,92,246,.22), transparent 64%); }
+.state-label { color: var(--muted); font-size: 13px; font-weight: 900; letter-spacing: .13em; text-transform: uppercase; }
+.state-big { font-size: clamp(76px, 9vw, 142px); line-height: .82; font-weight: 950; letter-spacing: -.095em; margin: 14px 0; color: var(--danger); text-shadow: 0 0 26px rgba(255,93,108,.16); }
+.state-big.on { color: var(--ok); text-shadow: 0 0 30px rgba(90,247,147,.22); }
+.state-desc { color: #cbd5e1; line-height:1.55; max-width: 540px; }
+.hold-button { width: 100%; min-height: 72px; border:0; border-radius: 22px; color:white; font-size: 17px; font-weight:950; letter-spacing:.04em; cursor:pointer; background: linear-gradient(135deg, #b91c1c, #ef4444); box-shadow: 0 18px 40px rgba(239,68,68,.22); }
+.hold-button.on { background: linear-gradient(135deg, #047857, #22c55e); box-shadow: 0 18px 40px rgba(34,197,94,.20); }
+.metric-grid { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
+.metric-card { min-height: 100px; border:1px solid var(--stroke); border-radius: 20px; background: rgba(15,23,42,.60); padding:15px; }
+.metric-card small { display:block; color: var(--muted); font-size: 11px; font-weight:850; text-transform: uppercase; letter-spacing:.08em; }
+.metric-card b { display:block; margin-top:8px; font-size: 25px; letter-spacing:-.04em; }
+.metric-card span { display:block; margin-top:5px; color: var(--dim); font-size: 12px; }
+.mode-strip { display:grid; grid-template-columns: repeat(3,1fr); gap:12px; }
+.mode-tile { border:1px solid var(--stroke); border-radius:20px; background:rgba(15,23,42,.58); padding:17px; min-height:110px; }
+.mode-tile.active { border-color: rgba(139,92,246,.56); background: rgba(139,92,246,.16); }
+.mode-tile .icon { font-size:24px; } .mode-tile strong { display:block; margin-top:8px; font-size:18px; } .mode-tile p { margin:5px 0 0; color:var(--muted); font-size:12px; line-height:1.35; }
+.vehicle-card { flex:1; border-radius: 32px; border:1px solid var(--stroke); background: linear-gradient(145deg, rgba(15,23,42,.60), rgba(8,13,24,.82)); padding: 22px; position:relative; overflow:hidden; }
+.car-visual { height: 270px; position:relative; display:grid; place-items:center; margin-top: 12px; }
+.car-visual svg { width: 86%; max-width: 430px; filter: drop-shadow(0 24px 60px rgba(56,189,248,.12)); }
+.lane { position:absolute; inset: 0; background: linear-gradient(90deg, transparent 18%, rgba(56,189,248,.16) 50%, transparent 82%); clip-path: polygon(42% 0, 58% 0, 82% 100%, 18% 100%); opacity:.55; }
+.alert-list { display:grid; gap:10px; }
+.alert-row { display:flex; align-items:center; justify-content:space-between; border:1px solid var(--stroke); border-radius: 17px; padding: 13px 15px; background: rgba(15,23,42,.52); }
+.alert-row strong { font-size: 14px; } .alert-row span { color: var(--muted); font-size: 12px; }
+
+/* Phone */
+.phone-stage { min-height: 720px; display:grid; grid-template-columns: 390px 1fr; gap: 26px; align-items: center; }
+.phone-frame { width: 360px; height: 720px; border-radius: 54px; margin:auto; padding: 12px; background: linear-gradient(145deg, #0d1320, #020617); box-shadow: 0 34px 90px rgba(0,0,0,.48), inset 0 0 0 1px rgba(255,255,255,.09); }
+.phone-screen { height:100%; border-radius: 43px; overflow:hidden; background:#f5f7fb; color:#111827; display:flex; flex-direction:column; }
+.phone-status { height: 42px; display:flex; align-items:center; justify-content:space-between; padding:0 24px; font-size:12px; color:#334155; font-weight:800; }
+.phone-content { padding: 6px 18px 0; flex:1; overflow:hidden; }
+.phone-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+.phone-head h3 { margin:0; font-size:24px; letter-spacing:-.05em; }
+.phone-head span { font-size:12px; color:#64748b; }
+.phone-primary { border-radius: 30px; padding: 22px; color:white; background: radial-gradient(circle at 82% 0%, rgba(56,189,248,.32), transparent 32%), linear-gradient(145deg, #111827, #312e81); box-shadow:0 18px 42px rgba(49,46,129,.28); }
+.phone-primary small { color:#c4b5fd; font-weight:900; letter-spacing:.12em; }
+.phone-primary .value { font-size:74px; line-height:.86; font-weight:950; letter-spacing:-.1em; margin:14px 0 4px; color:#ffb4bd; }
+.phone-primary .value.on { color:#adffc8; }
+.phone-primary p { margin:0; color:#cbd5e1; font-size:13px; }
+.phone-action { margin-top:18px; width:100%; border:0; border-radius:22px; min-height:56px; background:#ef4444; color:white; font-weight:950; letter-spacing:.04em; box-shadow:0 12px 26px rgba(239,68,68,.25); }
+.phone-action.on { background:#16a34a; box-shadow:0 12px 26px rgba(22,163,74,.24); }
+.phone-cards { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
+.phone-card { background:white; border:1px solid #e2e8f0; border-radius:22px; padding:14px; min-height: 86px; }
+.phone-card small { color:#64748b; display:block; font-size:11px; font-weight:850; text-transform:uppercase; letter-spacing:.07em; }
+.phone-card b { display:block; margin-top:8px; font-size:22px; letter-spacing:-.04em; }
+.phone-card span { color:#94a3b8; display:block; margin-top:2px; font-size:11px; }
+.phone-alert { margin-top:12px; border-radius:22px; padding:14px; background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; font-size:13px; line-height:1.45; }
+.phone-tabs { height: 72px; border-top:1px solid #e2e8f0; display:grid; grid-template-columns: repeat(5,1fr); background:white; }
+.phone-tab { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; color:#94a3b8; font-size:10px; font-weight:800; }
+.phone-tab.active { color:#4f46e5; }
+.phone-copy { display:grid; gap:16px; }
+.design-card { border:1px solid var(--stroke); background: rgba(15,23,42,.58); border-radius: 24px; padding: 20px; }
+.design-card h3 { margin:0 0 9px; font-size:22px; letter-spacing:-.04em; }
+.design-card p, .design-card li { color:var(--muted); line-height:1.55; }
+.design-card ul { margin: 10px 0 0; padding-left: 18px; }
+
+/* Diagnostics */
+.diag-shell { min-height: 720px; display:grid; grid-template-columns: 280px 1fr; gap: 18px; }
+.diag-side, .diag-main { border:1px solid var(--stroke); border-radius: 28px; background: rgba(8,13,24,.74); padding: 18px; }
+.diag-side h3, .diag-main h3 { margin:0 0 14px; font-size:22px; letter-spacing:-.04em; }
+.diag-summary { display:grid; gap:10px; }
+.diag-kpi { border:1px solid var(--stroke); border-radius:18px; padding:14px; background: rgba(15,23,42,.62); }
+.diag-kpi small { color:var(--muted); font-weight:850; text-transform:uppercase; font-size:11px; letter-spacing:.08em; }
+.diag-kpi b { display:block; margin-top:6px; font-size:28px; letter-spacing:-.05em; }
+.filter-box { display:flex; gap:10px; margin-bottom:14px; }
+.filter-box input { flex:1; border:1px solid var(--stroke); border-radius:16px; background:rgba(15,23,42,.72); color:var(--text); padding:13px 14px; outline:none; }
+.filter-box button { border:1px solid rgba(139,92,246,.38); border-radius:16px; color:#d6ccff; background:rgba(139,92,246,.16); padding:0 15px; font-weight:850; }
+.segmented { display:flex; gap:6px; padding:5px; background:rgba(15,23,42,.62); border:1px solid var(--stroke); border-radius:18px; margin-bottom:14px; }
+.seg { flex:1; border:0; background:transparent; color:var(--muted); border-radius:13px; min-height:40px; cursor:pointer; font-weight:850; }
+.seg.active { color:white; background:rgba(139,92,246,.28); }
+.frame-table { border:1px solid var(--stroke); border-radius:20px; overflow:hidden; background:rgba(2,6,23,.42); }
+.frame-row { display:grid; grid-template-columns: 110px 70px 90px minmax(250px, 1fr) 82px; align-items:center; padding:12px 14px; border-bottom:1px solid rgba(148,163,184,.11); font-family:var(--mono); font-size:13px; }
+.frame-row.header { background:rgba(15,23,42,.84); color:var(--muted); font-family:var(--font); font-size:11px; text-transform:uppercase; letter-spacing:.09em; font-weight:900; }
+.frame-row:last-child { border-bottom:0; }
+.frame-row.warn { background:rgba(251,191,36,.08); } .frame-row.danger { background:rgba(255,93,108,.10); }
+.hex { color:#93c5fd; } .dir-rx { color:var(--ok); } .dir-tx { color:#f0abfc; } .age { color:var(--dim); }
+.timeline { margin-top:16px; border:1px solid var(--stroke); border-radius:20px; padding:14px; background:rgba(15,23,42,.52); }
+.bars { display:grid; gap:8px; margin-top:12px; }
+.bar { height:10px; background:#111827; border-radius:99px; overflow:hidden; }
+.bar span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg, var(--accent), var(--accent-2)); }
+
+@media (max-width: 1120px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { position: relative; height: auto; display:block; }
+  .side-section.nav { display:grid; grid-template-columns: repeat(3,1fr); gap:8px; }
+  .side-section.nav h2 { grid-column: 1 / -1; }
+  .nav-option { margin:0; }
+  .cockpit-ui { grid-template-columns: 74px 1fr; }
+  .cockpit-right { grid-column: 2; }
+  .phone-stage, .diag-shell { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .main { padding: 14px; }
+  .hero { flex-direction: column; }
+  .stage { padding: 12px; border-radius: 24px; }
+  .cockpit-frame { min-height: 980px; aspect-ratio: auto; }
+  .cockpit-ui { grid-template-columns: 1fr; padding: 16px; }
+  .rail { flex-direction: row; height: 72px; }
+  .rail-spacer { display:none; }
+  .metric-grid, .mode-strip { grid-template-columns: 1fr 1fr; }
+  .phone-frame { width: min(360px, 100%); }
+  .frame-row { grid-template-columns: 76px 54px 58px minmax(160px,1fr) 58px; font-size:11px; padding:10px 8px; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div>
+        <h1>Atlas T-2CAN<br>UI Redesign</h1>
+        <p>Driving-first · mobile remote · engineering depth</p>
+      </div>
+    </div>
+
+    <div class="side-section nav">
+      <h2>高保真三屏</h2>
+      <button class="nav-option active" data-screen="cockpit">
+        <span class="nav-icon">▰</span><span class="nav-copy"><strong>车机首页</strong><span>Cockpit Home</span></span>
+      </button>
+      <button class="nav-option" data-screen="mobile">
+        <span class="nav-icon">◖</span><span class="nav-copy"><strong>手机首页</strong><span>Remote Card</span></span>
+      </button>
+      <button class="nav-option" data-screen="diagnostics">
+        <span class="nav-icon">⌘</span><span class="nav-copy"><strong>CAN 诊断</strong><span>Engineering Mode</span></span>
+      </button>
+    </div>
+
+    <div class="side-section">
+      <h2>设计原则</h2>
+      <div class="note-card">
+        <span class="kicker">Best Direction</span>
+        <p>车机首页承担“驾驶时一眼看懂”；手机首页承担“现场安全遥控”；诊断页承担“工程高密度排障”。不再让所有页面都像同一套后台表单。</p>
+        <div class="legend">
+          <div class="legend-row"><span class="dot ok"></span> 正常 / 可执行</div>
+          <div class="legend-row"><span class="dot warn"></span> 警告 / 防护中</div>
+          <div class="legend-row"><span class="dot danger"></span> 危险 / 关闭 / 需确认</div>
+          <div class="legend-row"><span class="dot blue"></span> 诊断 / 遥测</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <h2>相对当前 UI 的提升</h2>
+      <div class="note-card">
+        <p>当前 UI 是 11 页功能堆叠，首页纵向过长、车机感弱、手机端像压缩后台。本稿保留功能名和 API 思路，但重新分配信息权重。</p>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="hero">
+      <div>
+        <span class="kicker">Baoyu Design Concept · High Fidelity</span>
+        <h2>从“配置面板”升级为“车内控制产品”</h2>
+        <p>本设计稿不是直接替换代码，而是给 T-2CAN Dashboard 的视觉与交互目标定标准：车机横屏、手机热点现场操作、CAN 工程诊断三种场景分开优化。</p>
+      </div>
+      <div class="hero-actions">
+        <span class="pill hot">A 车机座舱感</span>
+        <span class="pill hot">C 手机遥控器</span>
+        <span class="pill hot">B 诊断密度</span>
+      </div>
+    </section>
+
+    <section class="stage">
+      <div class="screen active" id="screen-cockpit" data-screen-label="车机首页">
+        <div class="cockpit-frame">
+          <div class="cockpit-ui">
+            <nav class="rail">
+              <div class="rail-logo">A</div>
+              <div class="rail-btn active">▰</div>
+              <div class="rail-btn">◉</div>
+              <div class="rail-btn">↗</div>
+              <div class="rail-btn">⌘</div>
+              <div class="rail-spacer"></div>
+              <div class="rail-btn">☀</div>
+            </nav>
+            <div class="cockpit-left">
+              <div class="status-top">
+                <div class="status-title">
+                  <small>ATLAS DRIVE CONSOLE</small>
+                  <h3>驾驶状态中心</h3>
+                </div>
+                <div class="status-chips">
+                  <span class="chip ok">CAN1 ONLINE</span>
+                  <span class="chip">CAN2 IDLE</span>
+                  <span class="chip warn">FSD 防护中</span>
+                </div>
+              </div>
+              <div class="hero-control">
+                <div>
+                  <div class="state-label">Primary Injection</div>
+                  <div class="state-big" id="cockpitState">OFF</div>
+                  <div class="state-desc">模块总开关已关闭；NVS 保存为 OFF。启用前需要长按确认，避免车机触控误触。</div>
+                </div>
+                <button class="hold-button" id="cockpitToggle">HOLD 2s TO ENABLE FSD INJECTION</button>
+              </div>
+              <div class="metric-grid">
+                <div class="metric-card"><small>Hardware</small><b>Auto</b><span>Legacy detected</span></div>
+                <div class="metric-card"><small>Drive</small><b>Normal</b><span>balanced profile</span></div>
+                <div class="metric-card"><small>Speed</small><b>Auto</b><span>effective +12</span></div>
+                <div class="metric-card"><small>Runtime</small><b>01:42</b><span>AP hotspot</span></div>
+              </div>
+            </div>
+            <div class="cockpit-right">
+              <div class="vehicle-card">
+                <div class="status-top">
+                  <div class="status-title"><small>Vehicle Surface</small><h3>Model X Legacy</h3></div>
+                  <span class="chip warn">Parked Gate</span>
+                </div>
+                <div class="car-visual">
+                  <div class="lane"></div>
+                  <svg viewBox="0 0 360 180" fill="none" aria-label="stylized vehicle">
+                    <path d="M72 114c18-50 47-76 108-76s90 26 108 76" stroke="rgba(96,165,250,.42)" stroke-width="3"/>
+                    <path d="M86 118c8-36 42-60 94-60s86 24 94 60l16 8c8 4 12 12 10 21H60c-2-9 2-17 10-21l16-8Z" fill="rgba(15,23,42,.92)" stroke="rgba(148,163,184,.48)" stroke-width="2"/>
+                    <path d="M120 112h120" stroke="rgba(56,189,248,.7)" stroke-width="6" stroke-linecap="round"/>
+                    <circle cx="110" cy="148" r="18" fill="#020617" stroke="rgba(148,163,184,.62)" stroke-width="4"/>
+                    <circle cx="250" cy="148" r="18" fill="#020617" stroke="rgba(148,163,184,.62)" stroke-width="4"/>
+                    <path d="M136 76h88c18 0 34 13 40 32H96c6-19 22-32 40-32Z" fill="rgba(56,189,248,.12)" stroke="rgba(96,165,250,.34)"/>
+                  </svg>
+                </div>
+                <div class="mode-strip">
+                  <div class="mode-tile active"><div class="icon">🎯</div><strong>Normal</strong><p>日常均衡驾驶模式</p></div>
+                  <div class="mode-tile"><div class="icon">🛡️</div><strong>Guard</strong><p>防封保护已启用</p></div>
+                  <div class="mode-tile"><div class="icon">🌡️</div><strong>42°C</strong><p>芯片温度正常</p></div>
+                </div>
+              </div>
+              <div class="alert-list">
+                <div class="alert-row"><div><strong>当前建议</strong><br><span>优先使用 Auto / Normal / 自动偏移</span></div><span class="chip ok">SAFE</span></div>
+                <div class="alert-row"><div><strong>实验功能</strong><br><span>V14/MAX、双拨爆闪、自动换挡需停车测试</span></div><span class="chip warn">5 ITEMS</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="screen" id="screen-mobile" data-screen-label="手机首页">
+        <div class="phone-stage">
+          <div class="phone-frame">
+            <div class="phone-screen">
+              <div class="phone-status"><span>9:41</span><span>●●● 5G  🔋</span></div>
+              <div class="phone-content">
+                <div class="phone-head">
+                  <div><h3>Atlas Remote</h3><span>Connected to 100.100.1.1</span></div>
+                  <span style="background:#dcfce7;color:#166534;border-radius:99px;padding:7px 10px;font-weight:900">AP</span>
+                </div>
+                <div class="phone-primary">
+                  <small>FSD INJECTION</small>
+                  <div class="value" id="phoneState">OFF</div>
+                  <p>模块关闭。长按启用，普通点击不会触发危险动作。</p>
+                  <button class="phone-action" id="phoneToggle">Hold to Enable</button>
+                </div>
+                <div class="phone-cards">
+                  <div class="phone-card"><small>CAN1</small><b>Offline</b><span>未接车正常</span></div>
+                  <div class="phone-card"><small>CAN2</small><b>Idle</b><span>0x00 EFLG</span></div>
+                  <div class="phone-card"><small>HW</small><b>Auto</b><span>Legacy route</span></div>
+                  <div class="phone-card"><small>Mode</small><b>Normal</b><span>Speed auto</span></div>
+                </div>
+                <div class="phone-alert"><strong>未验证功能收纳</strong><br>自动换挡、MAX/V14、双拨爆闪放入“More / 实验室”，不挤占首页。</div>
+              </div>
+              <div class="phone-tabs">
+                <div class="phone-tab active">⌂<span>Home</span></div>
+                <div class="phone-tab">◉<span>Drive</span></div>
+                <div class="phone-tab">↗<span>Speed</span></div>
+                <div class="phone-tab">◎<span>Net</span></div>
+                <div class="phone-tab">⋯<span>More</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="phone-copy">
+            <div class="design-card">
+              <h3>手机端重新定义为“现场遥控器”</h3>
+              <p>当前移动端是桌面页面的压缩：卡片多、信息密度高、操作按钮分散。新方案把手机首页变成一个原生 App 风格的远程控制卡片，只承载现场最常用动作。</p>
+            </div>
+            <div class="design-card">
+              <h3>危险操作交互规则</h3>
+              <ul>
+                <li>FSD 注入启用使用 Hold-to-enable，不使用普通 toggle。</li>
+                <li>重启、爆闪、Service Mode 放入二级页并二次确认。</li>
+                <li>底部 Tab 保留 5 个入口：Home / Drive / Speed / Network / More。</li>
+              </ul>
+            </div>
+            <div class="design-card">
+              <h3>适合热点现场使用</h3>
+              <p>大按钮、浅色手机主题、单手 thumb zone、清晰连接状态，比现在的深色小卡片更适合户外和车内临时操作。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="screen" id="screen-diagnostics" data-screen-label="CAN诊断页">
+        <div class="diag-shell">
+          <aside class="diag-side">
+            <h3>Engineering Mode</h3>
+            <div class="diag-summary">
+              <div class="diag-kpi"><small>CAN1 RX / TX</small><b>1280 / 84</b></div>
+              <div class="diag-kpi"><small>CAN2 EFLG</small><b style="color:var(--ok)">0x00</b></div>
+              <div class="diag-kpi"><small>TX Errors</small><b style="color:var(--warn)">0</b></div>
+              <div class="diag-kpi"><small>Discovered IDs</small><b>17</b></div>
+              <div class="diag-kpi"><small>Last Write</small><b style="color:var(--blue)">Match</b></div>
+            </div>
+            <div class="timeline">
+              <span class="kicker">Live Timeline</span>
+              <div class="bars">
+                <div class="bar"><span style="width:72%"></span></div>
+                <div class="bar"><span style="width:48%;background:linear-gradient(90deg,var(--blue),var(--accent-2))"></span></div>
+                <div class="bar"><span style="width:18%;background:linear-gradient(90deg,var(--warn),#fb7185)"></span></div>
+              </div>
+            </div>
+          </aside>
+          <section class="diag-main">
+            <div class="status-top" style="margin-bottom:16px">
+              <div class="status-title"><small>CAN TOOLS</small><h3>错误优先的高密度诊断</h3></div>
+              <div class="status-chips"><span class="chip ok">LIVE</span><span class="chip warn">ERRORS FIRST</span><span class="chip">DBC OFF</span></div>
+            </div>
+            <div class="filter-box">
+              <input id="frameFilter" placeholder="Filter: 0x249 / TXERR / FSD / mux..." value="">
+              <button id="clearFilter">Clear</button>
+            </div>
+            <div class="segmented">
+              <button class="seg active">Sniffer</button><button class="seg">Recorder</button><button class="seg">Controller</button><button class="seg">Debug</button>
+            </div>
+            <div class="frame-table" id="frameTable">
+              <div class="frame-row header"><span>ID</span><span>DIR</span><span>DLC</span><span>DATA / EVENT</span><span>AGE</span></div>
+              <div class="frame-row" data-search="0x249 rx pull"><span class="hex">0x249</span><span class="dir-rx">RX</span><span>8</span><span>00 00 20 00 00 00 00 00 · PULL observed</span><span class="age">12ms</span></div>
+              <div class="frame-row" data-search="0x3c2 tx fsd"><span class="hex">0x3C2</span><span class="dir-tx">TX</span><span>8</span><span>10 00 FF 00 02 00 00 00 · FSD parity</span><span class="age">31ms</span></div>
+              <div class="frame-row warn" data-search="txerr warning"><span class="hex">TXERR</span><span>WARN</span><span>—</span><span>Last transmit warning · recovered</span><span class="age">1.2s</span></div>
+              <div class="frame-row" data-search="0x339 service"><span class="hex">0x339</span><span class="dir-tx">TX</span><span>8</span><span>00 00 00 00 00 80 00 00 · service pulse</span><span class="age">2.4s</span></div>
+              <div class="frame-row danger" data-search="eflg bus error"><span class="hex">EFLG</span><span>ERR</span><span>—</span><span>Historical bus error · tap for detail</span><span class="age">4.8s</span></div>
+              <div class="frame-row" data-search="0x760 speed offset"><span class="hex">0x760</span><span class="dir-tx">TX</span><span>8</span><span>Legacy speed offset byte5 · +12 effective</span><span class="age">6.1s</span></div>
+            </div>
+            <div class="timeline">
+              <span class="kicker">Why this page is dense</span>
+              <p style="color:var(--muted);line-height:1.55;margin:10px 0 0">诊断页是唯一允许“工程密度”的地方：状态 KPI、筛选、tab、错误行、表格全部保留，但视觉层级比当前页面更清晰。驾驶首页和手机首页不再承载这些细节。</p>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<script>
+const navButtons = Array.from(document.querySelectorAll('.nav-option'));
+const screens = {
+  cockpit: document.getElementById('screen-cockpit'),
+  mobile: document.getElementById('screen-mobile'),
+  diagnostics: document.getElementById('screen-diagnostics')
+};
+navButtons.forEach(btn => btn.addEventListener('click', () => {
+  const key = btn.dataset.screen;
+  navButtons.forEach(b => b.classList.toggle('active', b === btn));
+  Object.entries(screens).forEach(([name, el]) => el.classList.toggle('active', name === key));
+}));
+let fsdOn = false;
+function setFsd(next) {
+  fsdOn = next;
+  const cState = document.getElementById('cockpitState');
+  const pState = document.getElementById('phoneState');
+  const cBtn = document.getElementById('cockpitToggle');
+  const pBtn = document.getElementById('phoneToggle');
+  cState.textContent = fsdOn ? 'ON' : 'OFF';
+  pState.textContent = fsdOn ? 'ON' : 'OFF';
+  cState.classList.toggle('on', fsdOn);
+  pState.classList.toggle('on', fsdOn);
+  cBtn.textContent = fsdOn ? 'HOLD 2s TO DISABLE FSD INJECTION' : 'HOLD 2s TO ENABLE FSD INJECTION';
+  pBtn.textContent = fsdOn ? 'Hold to Disable' : 'Hold to Enable';
+  cBtn.classList.toggle('on', fsdOn);
+  pBtn.classList.toggle('on', fsdOn);
+}
+document.getElementById('cockpitToggle').addEventListener('click', () => setFsd(!fsdOn));
+document.getElementById('phoneToggle').addEventListener('click', () => setFsd(!fsdOn));
+const filter = document.getElementById('frameFilter');
+const clearFilter = document.getElementById('clearFilter');
+function applyFilter() {
+  const q = filter.value.trim().toLowerCase();
+  document.querySelectorAll('#frameTable .frame-row:not(.header)').forEach(row => {
+    row.style.display = !q || row.dataset.search.includes(q) || row.textContent.toLowerCase().includes(q) ? 'grid' : 'none';
+  });
+}
+filter.addEventListener('input', applyFilter);
+clearFilter.addEventListener('click', () => { filter.value = ''; applyFilter(); });
+</script>
+</body>
+</html>

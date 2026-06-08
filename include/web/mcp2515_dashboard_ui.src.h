@@ -336,11 +336,12 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .cockpit-chip.ok { color: var(--ok); border-color: rgba(74,222,128,.35); background: rgba(74,222,128,.08); }
 .cockpit-chip.warn { color: var(--warn); border-color: rgba(251,191,36,.35); background: rgba(251,191,36,.08); }
 .cockpit-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(320px, .88fr); gap: 16px; }
-.cockpit-primary { min-height: 340px; border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-xl); padding: 24px; background: radial-gradient(circle at 85% 0%, rgba(124,58,237,.18), transparent 32%), linear-gradient(145deg, rgba(15,23,42,.92), rgba(8,13,24,.78)); box-shadow: var(--cockpit-shadow); display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
+.cockpit-primary { min-height: 340px; border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-xl); padding: 24px; background: radial-gradient(circle at 85% 0%, rgba(124,58,237,.18), transparent 32%), linear-gradient(145deg, rgba(15,23,42,.92), rgba(8,13,24,.78)); box-shadow: var(--cockpit-shadow); display: grid; grid-template-rows: 1fr auto; gap: 18px; overflow: hidden; }
+.cockpit-state-panel { min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .cockpit-state-label { color: var(--cockpit-muted); font-size: 12px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
-.cockpit-state { font-size: clamp(74px, 11vw, 132px); line-height: .82; font-weight: 900; letter-spacing: -.09em; margin: 16px 0 8px; color: var(--err); text-shadow: 0 0 26px rgba(248,113,113,.18); }
+.cockpit-state { width: 100%; font-size: clamp(74px, 11vw, 132px); line-height: .82; font-weight: 900; letter-spacing: -.055em; margin: 18px 0 10px; color: var(--err); text-align: center; text-shadow: 0 0 26px rgba(248,113,113,.18); }
 .cockpit-state.on { color: var(--ok); text-shadow: 0 0 30px rgba(74,222,128,.22); }
-.cockpit-state-desc { color: var(--tx2); font-size: 14px; line-height: 1.55; max-width: 520px; }
+.cockpit-state-desc { color: var(--tx2); font-size: 14px; line-height: 1.55; max-width: 520px; margin: 0 auto; }
 .cockpit-hold { width: 100%; min-height: 68px; margin-top: 18px; border: none; border-radius: 22px; background: linear-gradient(135deg, #991b1b, #ef4444); color: white; font-size: 16px; font-weight: 900; letter-spacing: .04em; cursor: pointer; box-shadow: 0 16px 36px rgba(239,68,68,.20); }
 .cockpit-hold.on { background: linear-gradient(135deg, #047857, #22c55e); box-shadow: 0 16px 36px rgba(34,197,94,.20); }
 .cockpit-metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
@@ -391,6 +392,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .cockpit-status-bar { align-items: flex-start; }
   .cockpit-chip-row { width: 100%; }
   .cockpit-primary { min-height: 0; padding: 18px; border-radius: 22px; }
+  .cockpit-state-panel { min-height: 160px; }
   .cockpit-state { font-size: 62px; }
   .cockpit-hold { min-height: 56px; border-radius: 18px; font-size: 14px; }
   .cockpit-mode-grid { grid-template-columns: 1fr; }
@@ -476,16 +478,16 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <p>T-2CAN 控制面板</p>
   </div>
   <div class="sidebar-nav">
-    <div class="nav-item active" data-page="pg-overview"><span class="nav-icon">▣</span>模块配置</div>
-    <div class="nav-item" data-page="pg-hardware"><span class="nav-icon">◇</span>激活模式</div>
-    <div class="nav-item" data-page="pg-drive"><span class="nav-icon">◉</span>驾驶模式</div>
-    <div class="nav-item" data-page="pg-speed"><span class="nav-icon">↗</span>速度偏移</div>
-    <div class="nav-item" data-page="pg-bus2"><span class="nav-icon">✦</span>CAN2控制</div>
+    <div class="nav-item active" data-page="pg-overview"><span class="nav-icon">▣</span>驾驶状态</div>
+    <div class="nav-item" data-page="pg-hardware"><span class="nav-icon">◇</span>硬件模式</div>
+    <div class="nav-item" data-page="pg-drive"><span class="nav-icon">◉</span>驾驶风格</div>
+    <div class="nav-item" data-page="pg-speed"><span class="nav-icon">↗</span>速度策略</div>
+    <div class="nav-item" data-page="pg-bus2"><span class="nav-icon">✦</span>CAN2 控制</div>
     <div class="nav-item" data-page="pg-strobe"><span class="nav-icon">⚡</span>灯光特技</div>
-    <div class="nav-item" data-page="pg-defense"><span class="nav-icon">◈</span>FSD防御</div>
-    <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA升级</div>
+    <div class="nav-item" data-page="pg-defense"><span class="nav-icon">◈</span>FSD 防护</div>
+    <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA 升级</div>
     <div class="nav-item" data-page="pg-network"><span class="nav-icon">◎</span>网络设置</div>
-    <div class="nav-item" data-page="pg-can"><span class="nav-icon">⌘</span>CAN工具</div>
+    <div class="nav-item" data-page="pg-can"><span class="nav-icon">⌘</span>CAN 诊断</div>
     <div class="nav-item" data-page="pg-shift"><span class="nav-icon">⚙</span>自动换挡</div>
   </div>
   <div class="sidebar-ft">
@@ -531,9 +533,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
         <div class="cockpit-grid">
           <div class="cockpit-home-main">
             <div class="cockpit-primary">
-              <div>
+              <div class="cockpit-state-panel">
                 <div class="cockpit-state-label">FSD 注入</div>
-                <div class="cockpit-state" id="fsd-label">已关闭</div>
+                <div class="cockpit-state" id="fsd-label">OFF</div>
                 <div class="cockpit-state-desc" id="ov-fsd-desc">模块总开关关闭；启用前请确认车辆处于安全状态。</div>
               </div>
               <button class="cockpit-hold" id="fsd-toggle" onclick="toggleFsd()">长按 2 秒启用 FSD 注入</button>
@@ -735,7 +737,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 2: Hardware Config -->
     <div class="page" id="pg-hardware">
-<div class="page-title">破解模式</div>
+<div class="page-title">硬件模式</div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-hw-ui">Auto</div></div>
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-hw-nvs">--</div></div>
@@ -743,8 +745,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 <!-- HW Version Selection -->
 <div class="card">
-  <div class="card-title">FSD 智能破解模式</div>
-  <div class="card-subtitle">选择车辆自动驾驶硬件版本，Auto 会交给固件现有探测逻辑</div>
+  <div class="card-title">FSD 硬件模式</div>
+  <div class="card-subtitle">选择车辆自动驾驶硬件版本；Auto 会使用固件现有探测逻辑。</div>
   <div class="sel-cards c4" id="hw-cards">
     <div class="sel-card active" onclick="setHW(3)">
       <div class="sel-lbl">推荐</div>
@@ -792,7 +794,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 3: Drive Mode -->
     <div class="page" id="pg-drive">
-<div class="page-title">驾驶模式</div>
+<div class="page-title">驾驶风格</div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-drive-ui">Normal</div></div>
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-drive-nvs">--</div></div>
@@ -846,14 +848,14 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 4: Speed Offset -->
     <div class="page" id="pg-speed">
-<div class="page-title">速度偏移</div>
+<div class="page-title">速度策略</div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-speed-ui">待同步</div></div>
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-speed-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-speed-run">待检测</div></div>
 </div>
 <div class="card">
-  <div class="card-title">速度偏移模式</div>
+  <div class="card-title">速度策略模式</div>
   <div class="card-subtitle">选择固定百分比 / 自动偏移 / 自定义偏移，配置会同步到 /speed_strategy 与 /speed_custom</div>
   <div class="sel-cards c3" id="speed-mode-tabs" style="margin-bottom:12px">
     <div class="sel-card" onclick="showSpeedMode('fixed')"><div class="sel-lbl">模式</div><div class="sel-name">固定百分比</div></div>
@@ -1132,7 +1134,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 6: FSD Defense -->
     <div class="page" id="pg-defense">
-<div class="page-title">FSD防御 <span class="exp-badge">部分实验</span></div>
+<div class="page-title">FSD 防护 <span class="exp-badge">部分实验</span></div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-defense-ui">待同步</div></div>
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-defense-nvs">读取中</div></div>
@@ -1221,7 +1223,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 7: OTA Update -->
     <div class="page" id="pg-ota">
-<div class="page-title">OTA升级</div>
+<div class="page-title">OTA 升级</div>
 <!-- Version Info -->
 <div class="card">
   <div class="card-title">固件信息</div>
@@ -1661,8 +1663,8 @@ var OLD_DNS_BLACKLIST = 'tesla.cn\ntesla.com\nteslamotors.com\ntesla.services';
 function $(id){return document.getElementById(id)}
 function setText(id,txt){var e=$(id);if(e)e.textContent=txt}
 function setFsdVisualState(on){
-  var stateText=on?'已启用':'已关闭';
-  var mobileText=on?'ON':'OFF';
+  var stateText=on?'ON':'OFF';
+  var mobileText=stateText;
   setText('fsd-label',stateText);
   setText('m-fsd',mobileText);
   var desc=on?'FSD 注入模块已启用；请持续关注 CAN 状态和防护状态。':'模块总开关关闭；启用前请确认车辆处于安全状态。';
@@ -1717,10 +1719,10 @@ function fmtUp(sec){
 // ── I18N ───────────────────────────────────────────────────
 var I18N={
   // Sidebar
-  '模块配置':'Module','激活模式':'Activation Mode','驾驶模式':'Drive Mode',
-  '速度偏移':'Speed Offset','CAN2控制':'CAN2 Control','灯光特技':'Light Show',
-  'FSD防御':'FSD Defense','OTA升级':'OTA Update',
-  '网络设置':'Network','CAN工具':'CAN Tools','自动换挡':'Auto Shift',
+  '驾驶状态':'Drive Status','硬件模式':'Hardware Mode','驾驶风格':'Drive Style',
+  '速度策略':'Speed Strategy','CAN2 控制':'CAN2 Control','灯光特技':'Light Show',
+  'FSD 防护':'FSD Guard','OTA 升级':'OTA Update',
+  '网络设置':'Network','CAN 诊断':'CAN Diagnostics','自动换挡':'Auto Shift',
   // Top bar
   '已连接':'Connected','未连接':'Disconnected','连接丢失':'Connection Lost',
   // Overview
@@ -1794,7 +1796,7 @@ var I18N={
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
 function applyI18n(){
   var navs=document.querySelectorAll('.nav-item');
-  var zhTexts=['模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','灯光特技','FSD防御','OTA升级','网络设置','CAN工具','自动换挡'];
+  var zhTexts=['驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动换挡'];
   for(var i=0;i<navs.length;i++){
     var icon=navs[i].querySelector('.nav-icon');
     var iconHtml=icon?icon.outerHTML:'';
@@ -2084,23 +2086,33 @@ function updateDriveCards(sp,spa,profile,profileName){
   updateDriveCardsByMode(active);
 }
 
+function updateDriveSurfaces(mode, statusText){
+  var label=driveModeLabel(mode);
+  setText('drive-current',label);
+  setText('ov-drive-current',label);
+  setText('m-drive',label);
+  setStatusTriplet('drive',label,label,statusText||(mode==='max'?'MAX/V14 需实车验证':'配置已同步'),mode==='max'?'warn':'ok');
+  var v14=$('ov-fsd-tgl');if(v14)v14.checked=(mode==='max');
+  setCls('ov-v14','stat-val '+(mode==='max'?'v-warn':'v-dim'));
+  setText('ov-v14',mode==='max'?'MAX/V14':'待机');
+  setText('tb-exp',experimentSummary());
+}
+
 function updateDriveCardsByMode(active){
   var cards=$('drive-cards');
-  if(!cards)return;
-  var items=cards.querySelectorAll('.drive-card');
+  var items=cards?cards.querySelectorAll('.drive-card'):[];
   var modes=['auto','sloth','chill','normal','hurry','max'];
   for(var i=0;i<items.length;i++)items[i].classList.toggle('active',modes[i]===active);
-  setText('drive-current',driveModeLabel(active));
+  updateDriveSurfaces(active);
 }
 
 async function loadDriveProfile(){
   var d=await fetchJson('/drive_profile');
   if(!d)return;
-  var mode=String(d.profile||'Normal').toLowerCase();
+  var mode=driveModeFromProfile(d.value,d.profile);
   S.driveProfile=d.value!==undefined?d.value:S.driveProfile;
   updateDriveCardsByMode(mode);
-  var v14=$('ov-fsd-tgl');if(v14)v14.checked=(mode==='max');
-  setStatusTriplet('drive',mode,mode,mode==='max'?'MAX/V14 需实车验证':'配置已同步',mode==='max'?'warn':'ok');
+  updateDriveSurfaces(mode,'配置已同步');
 }
 
 var speedStrategyState='auto';
@@ -2266,16 +2278,21 @@ async function setProfile(sp){
 }
 
 async function setDriveMode(mode){
-  try{await postForm('/drive_profile',{profile:mode});}
-  catch(e){return}
-  S.spa=mode==='auto';
-  S.sp=(mode==='sloth'||mode==='chill')?0:((mode==='hurry'||mode==='max')?2:1);
   var driveMap={auto:0,sloth:1,chill:2,normal:3,hurry:4,max:5};
-  S.driveProfile=driveMap[mode]!==undefined?driveMap[mode]:3;
+  if(driveMap[mode]===undefined)mode='normal';
   updateDriveCardsByMode(mode);
+  updateDriveSurfaces(mode,'保存中...');
+  var saved;
+  try{saved=await postForm('/drive_profile',{profile:mode});}
+  catch(e){setStatusTriplet('drive',driveModeLabel(mode),'保存失败','请检查设备连接','err');return}
+  var savedMode=saved&&saved.value!==undefined?driveModeFromProfile(saved.value,saved.profile):mode;
+  S.spa=savedMode==='auto';
+  S.sp=(savedMode==='sloth'||savedMode==='chill')?0:((savedMode==='hurry'||savedMode==='max')?2:1);
+  S.driveProfile=driveMap[savedMode]!==undefined?driveMap[savedMode]:3;
+  updateDriveCardsByMode(savedMode);
   updateProfileCards(S.sp);
-  var v14=$('ov-fsd-tgl');if(v14)v14.checked=(mode==='max');
-  setStatusTriplet('drive',mode,mode,mode==='max'?'MAX/V14 需实车验证':'等待 /status 确认',mode==='max'?'warn':'ok');
+  updateDriveSurfaces(savedMode,'已保存');
+  setTimeout(poll,300);
 }
 
 function updateSpeedStrategyCards(strategy){
@@ -3465,14 +3482,14 @@ function restartPoll(ms){
 <div class="mob-more-panel" id="mob-more">
   <div class="mob-more-close" onclick="toggleMobMore()">✕</div>
   <div class="mob-more-item" data-page="pg-overview">▣ 状态</div>
-  <div class="mob-more-item" data-page="pg-hardware">◇ 激活模式</div>
-  <div class="mob-more-item" data-page="pg-drive">◉ 驾驶模式</div>
-  <div class="mob-more-item" data-page="pg-speed">↗ 速度偏移</div>
-  <div class="mob-more-item" data-page="pg-ota">⇧ OTA升级</div>
-  <div class="mob-more-item" data-page="pg-bus2">✦ CAN2控制</div>
+  <div class="mob-more-item" data-page="pg-hardware">◇ 硬件模式</div>
+  <div class="mob-more-item" data-page="pg-drive">◉ 驾驶风格</div>
+  <div class="mob-more-item" data-page="pg-speed">↗ 速度策略</div>
+  <div class="mob-more-item" data-page="pg-ota">⇧ OTA 升级</div>
+  <div class="mob-more-item" data-page="pg-bus2">✦ CAN2 控制</div>
   <div class="mob-more-item" data-page="pg-strobe">⚡ 灯光特技</div>
   <div class="mob-more-item" data-page="pg-network">◎ 网络设置</div>
-  <div class="mob-more-item" data-page="pg-defense">◈ FSD防御</div>
+  <div class="mob-more-item" data-page="pg-defense">◈ FSD 防护</div>
   <div class="mob-more-item" data-page="pg-can">⌘ CAN 诊断</div>
   <div class="mob-more-item" data-page="pg-shift">⚙ 自动换挡</div>
 </div>

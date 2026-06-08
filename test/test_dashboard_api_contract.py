@@ -15,6 +15,7 @@ CHANGELOG = ROOT / "CHANGELOG.md"
 README = ROOT / "README.md"
 TESTS_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+SIMULATOR = ROOT / "scripts" / "webui_simulator.py"
 
 
 class DashboardApiContractTests(unittest.TestCase):
@@ -31,6 +32,7 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.readme = README.read_text(encoding="utf-8")
         cls.tests_workflow = TESTS_WORKFLOW.read_text(encoding="utf-8")
         cls.release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        cls.simulator = SIMULATOR.read_text(encoding="utf-8")
 
     def test_dashboard_ui_generation_is_dependency_aware(self) -> None:
         """PlatformIO must rebuild firmware when the generated dashboard header changes."""
@@ -1241,8 +1243,29 @@ class DashboardApiContractTests(unittest.TestCase):
         """Drive UI should use driveProfile/driveProfileName so Auto/Sloth/MAX survive polling."""
         self.assertIn("function driveModeFromProfile(profile,name)", self.ui)
         self.assertIn("driveModeFromProfile(d.driveProfile,d.driveProfileName)", self.ui)
-        self.assertIn("driveMap[mode]!==undefined?driveMap[mode]:3", self.ui)
+        self.assertIn("driveMap[savedMode]!==undefined?driveMap[savedMode]:3", self.ui)
         self.assertNotIn("[mode]||3", self.ui)
+
+    def test_drive_style_selection_persists_and_updates_home_status(self) -> None:
+        """Drive style cards must POST, persist returned mode, and mirror it to the overview status."""
+        for token in [
+            "function updateDriveSurfaces(mode, statusText)",
+            "setText('ov-drive-current',label);",
+            "setStatusTriplet('drive',label,label,statusText",
+            "saved=await postForm('/drive_profile',{profile:mode});",
+            "var savedMode=saved&&saved.value!==undefined?driveModeFromProfile(saved.value,saved.profile):mode;",
+            "updateDriveSurfaces(savedMode,'已保存');",
+            "setTimeout(poll,300);",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+        for token in [
+            '"driveProfile": self.drive_profile',
+            '"driveProfileName": self.drive_profile_config()["profile"]',
+            "STATE.sp_auto = STATE.drive_profile == 0",
+        ]:
+            with self.subTest(simulator_token=token):
+                self.assertIn(token, self.simulator)
 
     def test_phase5a_temperature_uses_error_style_above_60c(self) -> None:
         """Temperature >60°C should be red/error, not warning/yellow."""
@@ -1282,16 +1305,16 @@ class DashboardApiContractTests(unittest.TestCase):
         for token in [
             "'灯光特技':'Light Show'",
             "'自动换挡':'Auto Shift'",
-            "'模块配置':'Module'",
-            "'激活模式':'Activation Mode'",
-            "'驾驶模式':'Drive Mode'",
-            "'速度偏移':'Speed Offset'",
-            "'CAN工具':'CAN Tools'",
-            "'FSD防御':'FSD Defense'",
+            "'驾驶状态':'Drive Status'",
+            "'硬件模式':'Hardware Mode'",
+            "'驾驶风格':'Drive Style'",
+            "'速度策略':'Speed Strategy'",
+            "'CAN 诊断':'CAN Diagnostics'",
+            "'FSD 防护':'FSD Guard'",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
-        self.assertIn("'模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','灯光特技','FSD防御','OTA升级','网络设置','CAN工具','自动换挡'", self.ui)
+        self.assertIn("'驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动换挡'", self.ui)
         self.assertIn("d&&(d.firmware||d.version)", self.ui)
         self.assertIn("setText('s-ver',d.firmware||d.version);", self.ui)
 
@@ -1360,19 +1383,18 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
 
-    def test_atlas_redesign_default_design_language_copy_is_stable(self) -> None:
-        """Driving-first redesign should keep the default design-language labels after Task 4 rollback."""
+    def test_atlas_redesign_refined_chinese_copy_is_stable(self) -> None:
+        """Driving-first redesign should keep the refined Task 4 Chinese copy labels."""
         required_copy = [
-            "模块配置",
-            "激活模式",
-            "驾驶模式",
-            "速度偏移",
-            "CAN2控制",
-            "FSD防御",
-            "OTA升级",
-            "CAN工具",
-            "破解模式",
-            "FSD 智能破解模式",
+            "驾驶状态",
+            "硬件模式",
+            "驾驶风格",
+            "速度策略",
+            "CAN2 控制",
+            "FSD 防护",
+            "OTA 升级",
+            "CAN 诊断",
+            "FSD 硬件模式",
             "驾驶状态中心",
             "FSD 注入",
             "长按 2 秒启用 FSD 注入",
@@ -1395,6 +1417,16 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.ui)
 
         forbidden_default_copy = [
+            'data-page="pg-overview"><span class="nav-icon">▣</span>模块配置',
+            'data-page="pg-hardware"><span class="nav-icon">◇</span>激活模式',
+            'data-page="pg-drive"><span class="nav-icon">◉</span>驾驶模式',
+            'data-page="pg-speed"><span class="nav-icon">↗</span>速度偏移',
+            'data-page="pg-bus2"><span class="nav-icon">✦</span>CAN2控制',
+            'data-page="pg-defense"><span class="nav-icon">◈</span>FSD防御',
+            'data-page="pg-ota"><span class="nav-icon">⇧</span>OTA升级',
+            'data-page="pg-can"><span class="nav-icon">⌘</span>CAN工具',
+            '<div class="page-title">破解模式</div>',
+            '<div class="card-title">FSD 智能破解模式</div>',
             "Cockpit Home",
             "Remote Card",
             "Engineering Mode",
