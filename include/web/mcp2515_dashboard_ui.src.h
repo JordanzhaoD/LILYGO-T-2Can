@@ -503,7 +503,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <span class="topbar-dot ok" id="tb-dot-status"></span>
     <span class="topbar-badge badge-ok" id="tb-status">已连接</span>
     <span class="topbar-dot warn" id="tb-dot-fsd"></span>
-    <span class="topbar-badge badge-warn" id="tb-fsd">FSD防封保护</span>
+    <span class="topbar-badge badge-warn" id="tb-fsd">FSD 防护状态</span>
     <span class="topbar-exp" id="tb-exp">实验项 0</span>
     <button class="mobile-theme-toggle" onclick="toggleTheme()" id="mobile-theme-btn">☀ 白天</button>
     <span class="topbar-time" id="tb-up">00:00:00</span>
@@ -1058,7 +1058,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 <!-- Master switch + 5 defense toggles -->
 <div class="card">
-  <div class="card-title">FSD 防封保护</div>
+  <div class="card-title">FSD 防护状态</div>
   <div class="card-subtitle">仿生扭矩替代固定echo，轮DND消除提示音</div>
   <div class="setting-row">
     <div>
@@ -1367,7 +1367,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 10: CAN Tools -->
     <div class="page" id="pg-can">
-<div class="page-title">CAN工具</div>
+<div class="page-title">工程模式</div>
 <!-- CAN Pin Config -->
 <div class="card">
   <div class="card-title">CAN 引脚配置</div>
@@ -1385,21 +1385,21 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
 <!-- Sub-tabs -->
 <div class="sub-tabs">
-  <div class="sub-tab active" onclick="switchCanTab('sniffer')">Sniffer</div>
-  <div class="sub-tab" onclick="switchCanTab('recorder')">Recorder</div>
-  <div class="sub-tab" onclick="switchCanTab('controller')">Controller</div>
-  <div class="sub-tab" onclick="switchCanTab('debug')">Debug</div>
+  <div class="sub-tab active" onclick="switchCanTab('sniffer')">实时帧</div>
+  <div class="sub-tab" onclick="switchCanTab('recorder')">记录器</div>
+  <div class="sub-tab" onclick="switchCanTab('controller')">控制器</div>
+  <div class="sub-tab" onclick="switchCanTab('debug')">调试</div>
 </div>
 
 <!-- Sniffer -->
 <div id="can-sniffer">
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <span style="font-weight:600">CAN Sniffer</span>
-      <span style="color:var(--tx3);font-size:11px" id="sniff-count">0 frames</span>
+      <span style="font-weight:600">错误优先</span>
+      <span style="color:var(--tx3);font-size:11px" id="sniff-count">0 实时帧</span>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:8px">
-      <input class="inp" id="sniff-filter" placeholder="Filter: ID or name..." style="flex:1">
+      <input class="inp" id="sniff-filter" placeholder="帧筛选：ID 或名称..." style="flex:1">
       <button class="btn btn-sm btn-outline" id="sniff-pause" onclick="toggleSniffPause()">⏸</button>
     </div>
     <div style="max-height:250px;overflow-y:auto">
@@ -1414,7 +1414,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <!-- Recorder -->
 <div id="can-recorder" style="display:none">
   <div class="card">
-    <div class="card-title">CAN Recorder</div>
+    <div class="card-title">记录器</div>
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <button class="btn btn-sm" id="rec-start" onclick="startRec()">开始录制</button>
       <button class="btn btn-sm btn-outline" id="rec-stop" onclick="stopRec()" disabled>停止</button>
@@ -1434,12 +1434,12 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <!-- Controller -->
 <div id="can-controller" style="display:none">
   <div class="card">
-    <div class="card-title">CAN Controller 状态</div>
+    <div class="card-title">控制器状态</div>
     <div class="diag-grid">
       <div class="diag-item"><span class="lbl">EFLG</span><span class="v-dim" id="ctrl-eflg">0x00</span></div>
       <div class="diag-item"><span class="lbl">RX Errors</span><span class="v-dim" id="ctrl-rxerr">0</span></div>
       <div class="diag-item"><span class="lbl">TX Errors</span><span class="v-dim" id="ctrl-txerr">0</span></div>
-      <div class="diag-item"><span class="lbl">Mode</span><span class="v-dim" id="ctrl-mode">--</span></div>
+      <div class="diag-item"><span class="lbl">模式</span><span class="v-dim" id="ctrl-mode">--</span></div>
     </div>
     <div id="ctrl-mux" style="margin-top:8px"></div>
   </div>
@@ -1448,9 +1448,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <!-- Debug -->
 <div id="can-debug" style="display:none">
   <div class="card">
-    <div class="card-title">Debug</div>
+    <div class="card-title">调试</div>
     <div class="setting-row">
-      <div class="setting-name">Debug 日志</div>
+      <div class="setting-name">调试日志</div>
       <label class="tgl">
         <input type="checkbox" id="debug-tgl" onchange="toggleCanDebug()">
         <div class="tgl-track"></div>
@@ -1458,7 +1458,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
   </div>
   <div class="card">
-    <div class="card-title">Last Write Check</div>
+    <div class="card-title">最近写入</div>
     <div class="diag-grid">
       <div class="diag-item"><span class="lbl">Injected</span><span class="v-acc" id="lw-injected">--</span></div>
       <div class="diag-item"><span class="lbl">Bus</span><span class="v-dim" id="lw-bus">--</span></div>
@@ -1565,6 +1565,22 @@ var OLD_DNS_BLACKLIST = 'tesla.cn\ntesla.com\nteslamotors.com\ntesla.services';
 // ── Utilities ──────────────────────────────────────────────
 function $(id){return document.getElementById(id)}
 function setText(id,txt){var e=$(id);if(e)e.textContent=txt}
+function setFsdVisualState(on){
+  var stateText=on?'已启用':'已关闭';
+  var mobileText=on?'ON':'OFF';
+  setText('fsd-label',stateText);
+  setText('m-fsd',mobileText);
+  var desc=on?'FSD 注入模块已启用；请持续关注 CAN 状态和防护状态。':'模块总开关关闭；启用前请确认车辆处于安全状态。';
+  setText('ov-fsd-desc',desc);
+  var btn=$('fsd-toggle');
+  if(btn){btn.textContent=on?'长按 2 秒关闭 FSD 注入':'长按 2 秒启用 FSD 注入';btn.classList.toggle('on',!!on);}
+  var mobileBtn=document.querySelector('.mobile-hold');
+  if(mobileBtn){mobileBtn.textContent=on?'长按关闭':'长按启用';mobileBtn.classList.toggle('on',!!on);}
+  var state=$('fsd-label');
+  if(state){state.classList.toggle('on',!!on);}
+  var mobileState=$('m-fsd');
+  if(mobileState){mobileState.classList.toggle('on',!!on);}
+}
 function setHtml(id,html){var e=$(id);if(e)e.innerHTML=html}
 function setCls(id,cls){var e=$(id);if(e)e.className=cls}
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
@@ -1673,12 +1689,12 @@ var I18N={
   '已拦截':'Blocked','条':'items','清空':'Clear',
   // CAN Tools
   'CAN 引脚配置':'CAN Pin Config',
-  'CAN Sniffer':'CAN Sniffer',
-  'CAN Recorder':'CAN Recorder','开始录制':'Start','停止':'Stop','下载 CSV':'Download CSV',
+  '实时帧':'Live Frames',
+  '记录器':'Recorder','开始录制':'Start','停止':'Stop','下载 CSV':'Download CSV',
   '录制帧数限制':'Frame Limit',
-  'CAN Controller 状态':'CAN Controller Status',
-  'Debug 日志':'Debug Log',
-  'Last Write Check':'Last Write Check'
+  '控制器状态':'Controller Status',
+  '调试':'Debug','调试日志':'Debug Log',
+  '最近写入':'Last Write Check'
 };
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
 function applyI18n(){
@@ -1845,8 +1861,7 @@ async function poll(){
   var can2Online=($('s-can2')&&$('s-can2').textContent==='Online');
   var can2Text=($('s-can2')&&$('s-can2').textContent)?$('s-can2').textContent:'--';
   if(mCan2){mCan2.className=(mCan2.classList&&mCan2.classList.contains('val')?'val ':'stat-val ')+(can2Online?'v-ok':'v-dim');mCan2.textContent=can2Text;}
-  var mFsd=$('m-fsd');
-  if(mFsd){mFsd.className=(mFsd.classList&&mFsd.classList.contains('mobile-state'))?('mobile-state '+(d.ci?'on':'')):('stat-val '+(d.ci?'v-ok':'v-dim'));mFsd.textContent=d.ci?'ON':'OFF';}
+  setFsdVisualState(!!d.ci);
   setText('m-fps',d.fps.toFixed(1)+' Hz');
   setText('m-rxtx',(d.rx||0)+' / '+(d.tx||0));
   setText('m-up',fmtUp(uptime));
@@ -1923,12 +1938,13 @@ async function poll(){
 
 function updateFsdToggle(ci){
   var tgl=$('fsd-toggle');
-  if(!tgl)return;
-  if(tgl.classList.contains('cockpit-hold')){
-    tgl.classList.toggle('on',!!ci);
-  }else if(ci){tgl.className='big-toggle on'}
-  else{tgl.className='big-toggle off'}
-  setText('fsd-label',T(ci?'已开启':'已关闭'));
+  if(tgl){
+    if(tgl.classList.contains('cockpit-hold')){
+      tgl.classList.toggle('on',!!ci);
+    }else if(ci){tgl.className='big-toggle on'}
+    else{tgl.className='big-toggle off'}
+  }
+  setFsdVisualState(!!ci);
 }
 
 function updateHwCards(hw){
@@ -2096,6 +2112,7 @@ async function toggleFsd(){
   var bootTgl=$('fsd-boot-tgl');
   if(bootTgl)bootTgl.checked=S.bootCan;
   updateFsdToggle(S.ci);
+  if(masterTgl)setFsdVisualState(!!masterTgl.checked);
   poll();
 }
 
@@ -3037,7 +3054,7 @@ function renderSniffer(){
       +'</td><td>RX</td><td class="hex">'+dataStr+'</td><td>--</td></tr>';
   }
   rows.innerHTML=html;
-  setText('sniff-count',count+' frames');
+  setText('sniff-count',count+' 实时帧');
 }
 
 function toggleSniffPause(){
@@ -3334,7 +3351,7 @@ function restartPoll(ms){
   <div class="mob-more-item" data-page="pg-strobe">⚡ 灯光特技</div>
   <div class="mob-more-item" data-page="pg-network">◎ 网络设置</div>
   <div class="mob-more-item" data-page="pg-defense">◈ FSD防御</div>
-  <div class="mob-more-item" data-page="pg-can">⌘ CAN工具</div>
+  <div class="mob-more-item" data-page="pg-can">⌘ CAN 诊断</div>
   <div class="mob-more-item" data-page="pg-shift">⚙ 自动换挡</div>
 </div>
 </body>
