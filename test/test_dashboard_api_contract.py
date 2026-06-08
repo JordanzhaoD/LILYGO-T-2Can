@@ -1279,9 +1279,19 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_batch_c_sidebar_i18n_and_version_display_are_stable(self) -> None:
         """New UI pages must not break nav translations, and overview version should use /system_status firmware."""
-        self.assertIn("'灯光特技':'Light Show'", self.ui)
-        self.assertIn("'自动换挡':'Auto Shift'", self.ui)
-        self.assertIn("'模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','灯光特技','FSD防御','OTA升级','网络设置','CAN工具','自动换挡'", self.ui)
+        for token in [
+            "'灯光特技':'Light Show'",
+            "'自动换挡':'Auto Shift'",
+            "'驾驶状态':'Drive Status'",
+            "'硬件模式':'Hardware Mode'",
+            "'驾驶风格':'Drive Style'",
+            "'速度策略':'Speed Strategy'",
+            "'CAN 诊断':'CAN Diagnostics'",
+            "'FSD 防护':'FSD Guard'",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+        self.assertIn("'驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动换挡'", self.ui)
         self.assertIn("d&&(d.firmware||d.version)", self.ui)
         self.assertIn("setText('s-ver',d.firmware||d.version);", self.ui)
 
