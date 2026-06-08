@@ -624,10 +624,19 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 	<div class="card">
 	<div class="card-title">FSD 注入策略</div>
 	<div class="setting-desc" style="margin-bottom:10px">稳定模式仅注入 mux0 bit46，禁用 mux1；Tesla Controller 对齐模式用于受控 A/B 测试</div>
-	<div class="seg">
-	  <button onclick="setLegacyFsdPolicy('stable')">稳定模式</button>
-	  <button onclick="setLegacyFsdPolicy('experimental')">实验模式</button>
-	  <button onclick="setLegacyFsdPolicy('legacy_tesla_parity')">Tesla Controller 对齐模式</button>
+	<div class="sel-cards c3" id="legacy-fsd-policy-cards" style="margin-bottom:12px">
+	  <div class="sel-card active" data-policy="stable" onclick="setLegacyFsdPolicy('stable')">
+	    <div class="sel-lbl">推荐</div>
+	    <div class="sel-name">稳定模式</div>
+	  </div>
+	  <div class="sel-card" data-policy="experimental" onclick="setLegacyFsdPolicy('experimental')">
+	    <div class="sel-lbl">A/B</div>
+	    <div class="sel-name">实验模式</div>
+	  </div>
+	  <div class="sel-card" data-policy="legacy_tesla_parity" onclick="setLegacyFsdPolicy('legacy_tesla_parity')">
+	    <div class="sel-lbl">对齐</div>
+	    <div class="sel-name">Tesla Controller 对齐模式</div>
+	  </div>
 	</div>
 	<div class="stats">
 	  <div class="stat"><div class="stat-lbl">当前策略</div><div class="stat-val v-acc" id="legacy-fsd-strategy">稳定</div></div>
@@ -641,7 +650,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 	      <div class="setting-desc">实验模式：注入 mux1 帧</div>
 	    </div>
 	    <label class="tgl">
-	      <input type="checkbox" id="legacy-fsd-mux1" onchange="saveLegacyFsdExperimental()">
+	      <input type="checkbox" id="legacy-fsd-mux1-tgl" onchange="saveLegacyFsdExperimental()">
 	      <div class="tgl-track"></div>
 	    </label>
 	  </div>
@@ -3182,13 +3191,26 @@ async function pollGearAssist(){
 }
 
 // ── Legacy Real Wiring Truth Cards ────────────────────────
+function renderLegacyFsdPolicyCards(policy){
+  var cards=document.getElementById('legacy-fsd-policy-cards');
+  if(!cards)return;
+  var normalized=policy||'stable';
+  if(policy==='legacy_stable')normalized='stable';
+  if(policy==='legacy_experimental')normalized='experimental';
+  var items=cards.querySelectorAll('.sel-card');
+  for(var i=0;i<items.length;i++){
+    var item=items[i];
+    item.classList.toggle('active',item.getAttribute('data-policy')===normalized);
+  }
+}
 async function setLegacyFsdPolicy(policy){
+  renderLegacyFsdPolicyCards(policy);
   await postForm('/legacy_fsd_config',{policy:policy});
   showToast(policy==='stable'?'Legacy Stable':(policy==='legacy_tesla_parity'?'Tesla Controller 对齐模式':'Experimental'));
   poll();
 }
 async function saveLegacyFsdExperimental(){
-  var mux1=document.getElementById('legacy-fsd-mux1');
+  var mux1=document.getElementById('legacy-fsd-mux1-tgl');
   var profile=document.getElementById('legacy-fsd-profile');
   var vision=document.getElementById('legacy-fsd-vision');
   await postForm('/legacy_fsd_config',{
@@ -3211,6 +3233,7 @@ function renderLegacyTruth(d){
   const m0=fsd.mux0||{};
   const m1=fsd.mux1||{};
   set('legacy-fsd-strategy',fsd.policy==='legacy_tesla_parity'?'Tesla Controller 对齐模式':((fsd.policy==='legacy_experimental')?'实验模式':'稳定'));
+  renderLegacyFsdPolicyCards(fsd.policy);
   set('legacy-fsd-mux0',`RX ${m0.rx||0} / TX ${m0.tx||0} / ${m0.lastSkip||'无'}`);
   set('legacy-fsd-mux1',`RX ${m1.rx||0} / TX ${m1.tx||0} / ${m1.lastSkip||'无'}`);
   set('legacy-fsd-trigger',fsd.triggerSource||'未知');

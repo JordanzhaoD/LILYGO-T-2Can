@@ -185,6 +185,68 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.ui)
                 self.assertIn(token, self.ui_gen)
 
+    def test_legacy_fsd_policy_uses_selection_cards(self) -> None:
+        """Regression: policy card container must use the 3-column selection-card layout."""
+        source_policy_cards_div = re.compile(
+            r'<div\b(?=[^>]*\bid="legacy-fsd-policy-cards")(?=[^>]*\bclass="sel-cards c3")[^>]*>'
+        )
+        generated_policy_cards_div = re.compile(
+            r'<div\b'
+            r'(?=[^>]*\bid=(?:"legacy-fsd-policy-cards"|legacy-fsd-policy-cards)(?=[\s>/]))'
+            r'(?=[^>]*\bclass=(?:"sel-cards c3"|sel-cards)(?=[\s>/]))'
+            r'[^>]*>'
+        )
+        self.assertRegex(self.ui, source_policy_cards_div)
+        self.assertRegex(self.ui_gen, generated_policy_cards_div)
+
+        for token in [
+            'data-policy="stable"',
+            'data-policy="experimental"',
+            'data-policy="legacy_tesla_parity"',
+            'renderLegacyFsdPolicyCards(fsd.policy)',
+            'renderLegacyFsdPolicyCards(policy)',
+            'Tesla Controller 对齐模式',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+        source_policy_fn = re.search(r"function renderLegacyFsdPolicyCards\(policy\)\{.*?\n\}", self.ui, re.S)
+        self.assertIsNotNone(source_policy_fn)
+        source_policy_body = source_policy_fn.group(0)
+        self.assertRegex(source_policy_body, r"policy==='legacy_stable'.*?'stable'")
+        self.assertRegex(source_policy_body, r"policy==='legacy_experimental'.*?'experimental'")
+        self.assertIn("policy||'stable'", source_policy_body)
+
+        for pattern in [
+            r'\bdata-policy=(?:"stable"|stable)(?=[\s>/])',
+            r'\bdata-policy=(?:"experimental"|experimental)(?=[\s>/])',
+            r'\bdata-policy=(?:"legacy_tesla_parity"|legacy_tesla_parity)(?=[\s>/])',
+            r'renderLegacyFsdPolicyCards\(fsd\.policy\)',
+            r'renderLegacyFsdPolicyCards\(policy\)',
+            r"policy==='legacy_stable'.*?'stable'",
+            r"policy==='legacy_experimental'.*?'experimental'",
+            r"policy\|\|'stable'",
+            r'Tesla Controller 对齐模式',
+        ]:
+            with self.subTest(pattern=pattern):
+                self.assertRegex(self.ui_gen, pattern)
+
+    def test_legacy_fsd_mux1_checkbox_has_unique_toggle_id(self) -> None:
+        """Regression: mux1 checkbox and toggle must not share duplicate DOM ids."""
+        self.assertIn('id="legacy-fsd-mux1"', self.ui)
+        self.assertIn('id="legacy-fsd-mux1-tgl"', self.ui)
+        self.assertIn("document.getElementById('legacy-fsd-mux1-tgl')", self.ui)
+        self.assertEqual(self.ui.count('id="legacy-fsd-mux1"'), 1)
+        self.assertEqual(self.ui.count('id="legacy-fsd-mux1-tgl"'), 1)
+
+        mux1_id = r'\bid=(?:"legacy-fsd-mux1"|legacy-fsd-mux1)(?=[\s>/])'
+        mux1_toggle_id = r'\bid=(?:"legacy-fsd-mux1-tgl"|legacy-fsd-mux1-tgl)(?=[\s>/])'
+        self.assertRegex(self.ui_gen, mux1_id)
+        self.assertRegex(self.ui_gen, mux1_toggle_id)
+        self.assertIn("document.getElementById('legacy-fsd-mux1-tgl')", self.ui_gen)
+        self.assertEqual(len(re.findall(mux1_id, self.ui_gen)), 1)
+        self.assertEqual(len(re.findall(mux1_toggle_id, self.ui_gen)), 1)
+
     def test_twai_diagnostics_are_exposed_for_legacy_can_a(self) -> None:
         twai = (ROOT / "include" / "drivers" / "twai_driver.h").read_text(encoding="utf-8")
         diag = (ROOT / "include" / "dash_twai_diag.h").read_text(encoding="utf-8")
