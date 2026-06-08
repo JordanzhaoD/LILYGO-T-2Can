@@ -135,6 +135,7 @@ struct CarManagerBase
     bool (*checkSummon)() = nullptr;
     bool (*checkIsa)() = nullptr;
     bool (*checkEvd)() = nullptr;
+    FsdGateBlockReason (*gateBlockReason)() = nullptr;
 
     bool injectionGateOpen() const
     {
@@ -146,6 +147,17 @@ struct CarManagerBase
         if (checkAD && !checkAD())
             return false;
         return enhancedAutopilotInjectionAllowed(injectionGateOpen());
+    }
+
+    FsdGateBlockReason currentGateBlockReason() const
+    {
+        if (gateBlockReason)
+            return gateBlockReason();
+        if (checkAD && !checkAD())
+            return FsdGateBlockReason::CheckAd;
+        if (!enhancedAutopilotInjectionAllowed(injectionGateOpen()))
+            return FsdGateBlockReason::CompileGate;
+        return FsdGateBlockReason::CheckAd;
     }
 
     // Recompute Summoning from current sprSeen + lastAca state. Summoning
@@ -294,10 +306,14 @@ struct LegacyHandler : public CarManagerBase
             uint8_t effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
             if (effectiveOffset == 0) return;
             uint8_t raw = (uint8_t)(effectiveOffset + 30);
+            legacyFsdDiag.aux760.recordBefore(frame.data);
             frame.data[5] = (frame.data[5] & 0xC0) | (raw & 0x3F);
+            legacyFsdDiag.aux760.recordAfter(frame.data);
+            legacyFsdDiag.aux760.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
             framesSent++;
-            driver.send(frame);
-            if (onSend) onSend(0, true);
+            bool ok = driver.send(frame);
+            legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux760, ok, dashDiagNowMs());
+            if (onSend) onSend(0, ok);
             return;
         }
         // 0x438 (1080) — UI_driverAssistAnonDebugParams: visionSpeedSlider = 100
@@ -306,10 +322,14 @@ struct LegacyHandler : public CarManagerBase
             if (frame.dlc < 8) return;
             if (!overrideSpeedLimit) return;
             if (checkAD && !checkAD()) return;
+            legacyFsdDiag.aux1080.recordBefore(frame.data);
             frame.data[7] = (frame.data[7] & 0x80) | 100;
+            legacyFsdDiag.aux1080.recordAfter(frame.data);
+            legacyFsdDiag.aux1080.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
             framesSent++;
-            driver.send(frame);
-            if (onSend) onSend(0, true);
+            bool ok = driver.send(frame);
+            legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux1080, ok, dashDiagNowMs());
+            if (onSend) onSend(0, ok);
             return;
         }
         if (handleDISystemStatus(frame)) return;
@@ -337,6 +357,8 @@ struct LegacyHandler : public CarManagerBase
             if (index == 0)
             {
                 legacyFsdDiag.mux0.recordRx(nowMs);
+                legacyFsdDiag.markMux0Rx(nowMs);
+                legacyFsdDiag.mux0.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
                 bool forced = (bool)forceActivateRuntime;
                 bool uiSelected = isFSDSelectedInUI(frame);
                 fsdTriggered = forced || uiSelected;
@@ -348,33 +370,40 @@ struct LegacyHandler : public CarManagerBase
                 if (!(bool)fsdTriggered)
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::NotTriggered;
+                    legacyFsdDiag.health = FsdHealthState::NotTriggered;
                     return;
                 }
                 if (!injectionAllowed())
                 {
-                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::CheckAdFalse;
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = currentGateBlockReason();
                     return;
                 }
 
                 legacyFsdDiag.mux0.recordBefore(frame.data);
                 setBit(frame, 46, true);
-                if (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental && legacyFsdDiag.profileWriteEnable)
+                if (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
+                    (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental && legacyFsdDiag.profileWriteEnable))
                     setSpeedProfileV12V13(frame, speedProfile);
                 legacyFsdDiag.mux0.recordAfter(frame.data);
                 framesSent++;
                 bool ok = driver.send(frame);
-                legacyFsdDiag.mux0.recordTx(ok, nowMs);
+                legacyFsdDiag.recordMuxTx(legacyFsdDiag.mux0, ok, nowMs);
+                legacyFsdDiag.markTxResult(ok, nowMs);
                 if (onSend) onSend(0, ok);
             }
             else if (index == 1)
             {
                 legacyFsdDiag.mux1.recordRx(nowMs);
+                legacyFsdDiag.markMux1Rx(nowMs);
+                legacyFsdDiag.mux1.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
                 if (legacyFsdDiag.policy == LegacyFsdPolicy::Stable)
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::DisabledInStable;
                     return;
                 }
-                if (!legacyFsdDiag.mux1Enable)
+                if (legacyFsdDiag.policy != LegacyFsdPolicy::TeslaParity && !legacyFsdDiag.mux1Enable)
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::DisabledByPolicy;
                     return;
@@ -382,22 +411,26 @@ struct LegacyHandler : public CarManagerBase
                 if (!(bool)fsdTriggered)
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::NotTriggered;
+                    legacyFsdDiag.health = FsdHealthState::NotTriggered;
                     return;
                 }
                 if (!injectionAllowed())
                 {
-                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::CheckAdFalse;
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = currentGateBlockReason();
                     return;
                 }
 
                 legacyFsdDiag.mux1.recordBefore(frame.data);
                 setBit(frame, 19, false);
-                if (legacyFsdDiag.visionLimitClearEnable)
+                if (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental && legacyFsdDiag.visionLimitClearEnable)
                     setBit(frame, 48, false);
                 legacyFsdDiag.mux1.recordAfter(frame.data);
                 framesSent++;
                 bool ok = driver.send(frame);
-                legacyFsdDiag.mux1.recordTx(ok, nowMs);
+                legacyFsdDiag.recordMuxTx(legacyFsdDiag.mux1, ok, nowMs);
+                legacyFsdDiag.markTxResult(ok, nowMs);
                 if (onSend) onSend(1, ok);
             }
 

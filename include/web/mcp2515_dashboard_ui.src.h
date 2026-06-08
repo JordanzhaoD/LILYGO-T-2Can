@@ -623,10 +623,11 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 	<!-- Legacy FSD 策略 -->
 	<div class="card">
 	<div class="card-title">FSD 注入策略</div>
-	<div class="setting-desc" style="margin-bottom:10px">稳定模式仅注入 mux0 bit46，禁用 mux1，减少 FSD 界面闪烁</div>
+	<div class="setting-desc" style="margin-bottom:10px">稳定模式仅注入 mux0 bit46，禁用 mux1；Tesla Controller 对齐模式用于受控 A/B 测试</div>
 	<div class="seg">
 	  <button onclick="setLegacyFsdPolicy('stable')">稳定模式</button>
 	  <button onclick="setLegacyFsdPolicy('experimental')">实验模式</button>
+	  <button onclick="setLegacyFsdPolicy('legacy_tesla_parity')">Tesla Controller 对齐模式</button>
 	</div>
 	<div class="stats">
 	  <div class="stat"><div class="stat-lbl">当前策略</div><div class="stat-val v-acc" id="legacy-fsd-strategy">稳定</div></div>
@@ -664,6 +665,21 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 	      <div class="tgl-track"></div>
 	    </label>
 	  </div>
+	</div>
+
+	<!-- Legacy CAN-A 健康诊断 -->
+	<div class="card">
+	<div class="card-title">Legacy CAN-A 诊断</div>
+	<div class="stats">
+	  <div class="stat"><div class="stat-lbl">0x3EE mux0</div><div class="stat-val v-dim" id="legacy-health-mux0">--</div></div>
+	  <div class="stat"><div class="stat-lbl">0x3EE mux1</div><div class="stat-val v-dim" id="legacy-health-mux1">--</div></div>
+	  <div class="stat"><div class="stat-lbl">TWAI 状态</div><div class="stat-val v-dim" id="legacy-health-twai">--</div></div>
+	  <div class="stat"><div class="stat-lbl">TEC/REC</div><div class="stat-val v-dim" id="legacy-health-tec-rec">--</div></div>
+	  <div class="stat"><div class="stat-lbl">TX失败</div><div class="stat-val v-dim" id="legacy-health-tx-failed">0</div></div>
+	  <div class="stat"><div class="stat-lbl">RX丢失</div><div class="stat-val v-dim" id="legacy-health-rx-missed">0</div></div>
+	  <div class="stat"><div class="stat-lbl">健康状态</div><div class="stat-val v-dim" id="legacy-health-state">--</div></div>
+	  <div class="stat"><div class="stat-lbl">最后阻止原因</div><div class="stat-val v-dim" id="legacy-health-blocked">--</div></div>
+	</div>
 	</div>
 
 	<!-- Service 维修模式 -->
@@ -3168,7 +3184,7 @@ async function pollGearAssist(){
 // ── Legacy Real Wiring Truth Cards ────────────────────────
 async function setLegacyFsdPolicy(policy){
   await postForm('/legacy_fsd_config',{policy:policy});
-  showToast(policy==='stable'?'Legacy Stable':'Experimental');
+  showToast(policy==='stable'?'Legacy Stable':(policy==='legacy_tesla_parity'?'Tesla Controller 对齐模式':'Experimental'));
   poll();
 }
 async function saveLegacyFsdExperimental(){
@@ -3194,10 +3210,21 @@ function renderLegacyTruth(d){
   const fsd=d.fsdDiag||{};
   const m0=fsd.mux0||{};
   const m1=fsd.mux1||{};
-  set('legacy-fsd-strategy',(fsd.policy==='legacy_experimental')?'实验模式':'稳定');
+  set('legacy-fsd-strategy',fsd.policy==='legacy_tesla_parity'?'Tesla Controller 对齐模式':((fsd.policy==='legacy_experimental')?'实验模式':'稳定'));
   set('legacy-fsd-mux0',`RX ${m0.rx||0} / TX ${m0.tx||0} / ${m0.lastSkip||'无'}`);
   set('legacy-fsd-mux1',`RX ${m1.rx||0} / TX ${m1.tx||0} / ${m1.lastSkip||'无'}`);
   set('legacy-fsd-trigger',fsd.triggerSource||'未知');
+  const tw=d.twai||{};
+  const gate=fsd.gate||{};
+  const muxLine=(m)=>`RX ${m.rx||0} / TX ${m.tx||0} / ERR ${m.err||0} / ${m.lastSkip||'无'}`;
+  set('legacy-health-mux0',muxLine(m0));
+  set('legacy-health-mux1',muxLine(m1));
+  set('legacy-health-twai',tw.state||'unknown');
+  set('legacy-health-tec-rec',`${tw.tec||0}/${tw.rec||0}`);
+  set('legacy-health-tx-failed',tw.txFailed||0);
+  set('legacy-health-rx-missed',tw.rxMissed||0);
+  set('legacy-health-state',fsd.health||'unknown');
+  set('legacy-health-blocked',gate.lastBlockedBy||fsd.lastBlockedBy||fsd.gateReason||'none');
   const svc=d.serviceDiag||{};
   const svctx=svc.tx||{};
   set('service-burst-state',`${svc.lastCommand==='enter'?'进入':svc.lastCommand==='exit'?'退出':'无'} / 剩余 ${svc.remaining||0}`);

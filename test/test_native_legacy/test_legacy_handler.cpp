@@ -14,6 +14,11 @@ static bool denyAD()
     return false;
 }
 
+static FsdGateBlockReason denyByApGate()
+{
+    return FsdGateBlockReason::ApGate;
+}
+
 void setUp()
 {
     mock.reset();
@@ -222,6 +227,63 @@ void test_legacy_experimental_mux1_can_clear_bit19()
     TEST_ASSERT_EQUAL(FsdSkipReason::Sent, handler.legacyFsdDiag.mux1.lastSkip);
 }
 
+void test_legacy_tesla_parity_mux0_writes_speed_profile()
+{
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::TeslaParity;
+    handler.speedProfile = 2;
+
+    CanFrame f = {.id = 1006};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    f.data[6] = 0x00;
+
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
+    TEST_ASSERT_EQUAL_HEX8(0x04, mock.sent[0].data[6] & 0x06);
+}
+
+void test_legacy_tesla_parity_mux1_clears_bit19()
+{
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::TeslaParity;
+
+    CanFrame f0 = {.id = 1006};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+
+    CanFrame f1 = {.id = 1006};
+    f1.data[0] = 0x01;
+    setBit(f1, 19, true);
+    handler.handleMessage(f1, mock);
+
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+    TEST_ASSERT_FALSE((mock.sent[1].data[2] >> 3) & 0x01);
+    TEST_ASSERT_EQUAL(FsdSkipReason::Sent, handler.legacyFsdDiag.mux1.lastSkip);
+}
+
+void test_legacy_tesla_parity_does_not_clear_bit48_even_when_vision_flag_enabled()
+{
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::TeslaParity;
+    handler.legacyFsdDiag.visionLimitClearEnable = true;
+
+    CanFrame f0 = {.id = 1006};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+
+    CanFrame f1 = {.id = 1006};
+    f1.data[0] = 0x01;
+    setBit(f1, 19, true);
+    setBit(f1, 48, true);
+    handler.handleMessage(f1, mock);
+
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+    TEST_ASSERT_FALSE((mock.sent[1].data[2] >> 3) & 0x01);
+    TEST_ASSERT_TRUE(mock.sent[1].data[6] & 0x01);
+}
+
 void test_legacy_trigger_source_force_vs_ui_bit_vs_false()
 {
     forceActivateRuntime = true;
@@ -247,6 +309,52 @@ void test_legacy_trigger_source_force_vs_ui_bit_vs_false()
     TEST_ASSERT_EQUAL(FsdSkipReason::NotTriggered, handler.legacyFsdDiag.mux0.lastSkip);
 }
 
+void test_legacy_mux0_records_can_a_twai_labels()
+{
+    CanFrame f = {.id = 1006};
+    f.bus = CAN_BUS_VEH;
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(FsdDiagBus::CanA, handler.legacyFsdDiag.mux0.bus);
+    TEST_ASSERT_EQUAL(FsdDiagDriver::Twai, handler.legacyFsdDiag.mux0.driver);
+    TEST_ASSERT_NOT_EQUAL(0, handler.legacyFsdDiag.firstMux0RxMs);
+    TEST_ASSERT_NOT_EQUAL(0, handler.legacyFsdDiag.firstTxOkMs);
+}
+
+void test_legacy_gate_block_records_gate_blocked_health()
+{
+    handler.checkAD = denyAD;
+    CanFrame f = {.id = 1006};
+    f.bus = CAN_BUS_VEH;
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(FsdSkipReason::GateBlocked, handler.legacyFsdDiag.mux0.lastSkip);
+    TEST_ASSERT_EQUAL(FsdHealthState::GateBlocked, handler.legacyFsdDiag.health);
+    TEST_ASSERT_EQUAL(FsdGateBlockReason::CheckAd, handler.legacyFsdDiag.lastBlockedBy);
+}
+
+void test_legacy_gate_block_uses_resolver_reason()
+{
+    handler.checkAD = denyAD;
+    handler.gateBlockReason = denyByApGate;
+    CanFrame f = {.id = 1006};
+    f.bus = CAN_BUS_VEH;
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(FsdSkipReason::GateBlocked, handler.legacyFsdDiag.mux0.lastSkip);
+    TEST_ASSERT_EQUAL(FsdHealthState::GateBlocked, handler.legacyFsdDiag.health);
+    TEST_ASSERT_EQUAL(FsdGateBlockReason::ApGate, handler.legacyFsdDiag.lastBlockedBy);
+}
+
 // --- CAN 760 offset write ---
 
 void test_legacy_can760_writes_offset()
@@ -255,9 +363,15 @@ void test_legacy_can760_writes_offset()
     CanFrame f = {.id = 760};
     f.dlc = 8;
     f.data[5] = 0xC0;
+    const uint8_t originalByte5 = f.data[5];
+
     handler.handleMessage(f, mock);
+
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0xC0 | 40, mock.sent[0].data[5]);
+    TEST_ASSERT_NOT_EQUAL(originalByte5, mock.sent[0].data[5]);
+    TEST_ASSERT_EQUAL_HEX8(originalByte5, handler.legacyFsdDiag.aux760.before[5]);
+    TEST_ASSERT_EQUAL_HEX8(mock.sent[0].data[5], handler.legacyFsdDiag.aux760.after[5]);
 }
 
 void test_legacy_can760_skips_when_offset_zero()
@@ -356,6 +470,21 @@ void test_legacy_can760_checkAD_blocks_computed_offset()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
+void test_legacy_can760_records_tx_fail()
+{
+    handler.legacyOffset = 10;
+    mock.sendOk = false;
+
+    CanFrame f = {.id = 760};
+    f.dlc = 8;
+    f.data[5] = 0xC0;
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacyFsdDiag.aux760.err);
+    TEST_ASSERT_EQUAL(FsdSkipReason::TxFail, handler.legacyFsdDiag.aux760.lastSkip);
+}
+
 // --- CAN 1080 visionSpeedSlider override ---
 
 void test_legacy_can1080_sets_vision_slider()
@@ -364,9 +493,15 @@ void test_legacy_can1080_sets_vision_slider()
     CanFrame f = {.id = 1080};
     f.dlc = 8;
     f.data[7] = 0x80;
+    const uint8_t originalByte7 = f.data[7];
+
     handler.handleMessage(f, mock);
+
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x80 | 100, mock.sent[0].data[7]);
+    TEST_ASSERT_NOT_EQUAL(originalByte7, mock.sent[0].data[7]);
+    TEST_ASSERT_EQUAL_HEX8(originalByte7, handler.legacyFsdDiag.aux1080.before[7]);
+    TEST_ASSERT_EQUAL_HEX8(mock.sent[0].data[7], handler.legacyFsdDiag.aux1080.after[7]);
 }
 
 void test_legacy_can1080_skips_when_disabled()
@@ -376,6 +511,21 @@ void test_legacy_can1080_skips_when_disabled()
     f.dlc = 8;
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+void test_legacy_can1080_records_tx_fail()
+{
+    handler.overrideSpeedLimit = true;
+    mock.sendOk = false;
+
+    CanFrame f = {.id = 1080};
+    f.dlc = 8;
+    f.data[7] = 0x80;
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacyFsdDiag.aux1080.err);
+    TEST_ASSERT_EQUAL(FsdSkipReason::TxFail, handler.legacyFsdDiag.aux1080.lastSkip);
 }
 
 // --- No sends on unrelated CAN IDs ---
@@ -408,12 +558,109 @@ void test_legacy_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[8]);
 }
 
+void test_legacy_health_no_source_when_mux0_stale()
+{
+    LegacyFsdDiag d;
+    d.mux0.lastRxMs = 1000;
+    FsdHealthState s = classifyLegacyFsdHealth(d, 7000, true);
+    TEST_ASSERT_EQUAL(FsdHealthState::NoSourceFrame, s);
+}
+
+void test_legacy_health_tx_degraded_recovers_after_success()
+{
+    LegacyFsdDiag d;
+    d.mux0.lastRxMs = 6500;
+    d.mux0.err = 1;
+    d.mux0.lastSkip = FsdSkipReason::TxFail;
+    d.mux0.lastTxMs = 6600;
+
+    FsdHealthState degraded = classifyLegacyFsdHealth(d, 7000, true);
+    TEST_ASSERT_EQUAL(FsdHealthState::TxDegraded, degraded);
+
+    d.mux0.tx = 1;
+    d.mux0.lastSkip = FsdSkipReason::Sent;
+    d.mux0.lastTxMs = 6800;
+    d.health = FsdHealthState::Healthy;
+
+    FsdHealthState recovered = classifyLegacyFsdHealth(d, 7000, true);
+    TEST_ASSERT_EQUAL(FsdHealthState::Healthy, recovered);
+}
+
+void test_legacy_health_recovers_when_mux0_success_after_aux_fail()
+{
+    LegacyFsdDiag d;
+    d.mux0.lastRxMs = 8000;
+    d.aux760.lastSkip = FsdSkipReason::TxFail;
+    d.aux760.lastTxMs = 8500;
+    d.aux760.err = 1;
+
+    FsdHealthState degraded = classifyLegacyFsdHealth(d, 9000, true);
+    TEST_ASSERT_EQUAL(FsdHealthState::TxDegraded, degraded);
+
+    d.mux0.lastSkip = FsdSkipReason::Sent;
+    d.mux0.lastTxMs = 8900;
+    d.mux0.tx = 1;
+    d.health = FsdHealthState::Healthy;
+
+    FsdHealthState recovered = classifyLegacyFsdHealth(d, 9000, true);
+    TEST_ASSERT_EQUAL(FsdHealthState::Healthy, recovered);
+}
+
+void test_legacy_health_same_ms_success_then_fail_is_degraded()
+{
+    LegacyFsdDiag d;
+    d.mux0.lastRxMs = 9000;
+    d.mux0.tx = 1;
+    d.mux0.lastSkip = FsdSkipReason::Sent;
+    d.mux0.lastTxMs = 9000;
+    d.mux0.lastTxSeq = 1;
+    d.mux1.err = 1;
+    d.mux1.lastSkip = FsdSkipReason::TxFail;
+    d.mux1.lastTxMs = 9000;
+    d.mux1.lastTxSeq = 2;
+    d.health = FsdHealthState::TxDegraded;
+
+    TEST_ASSERT_EQUAL(FsdHealthState::TxDegraded, classifyLegacyFsdHealth(d, 9001, true));
+}
+
+void test_legacy_health_same_ms_fail_then_success_is_healthy()
+{
+    LegacyFsdDiag d;
+    d.mux0.lastRxMs = 9000;
+    d.mux0.tx = 1;
+    d.mux0.lastSkip = FsdSkipReason::Sent;
+    d.mux0.lastTxMs = 9000;
+    d.mux0.lastTxSeq = 2;
+    d.mux1.err = 1;
+    d.mux1.lastSkip = FsdSkipReason::TxFail;
+    d.mux1.lastTxMs = 9000;
+    d.mux1.lastTxSeq = 1;
+    d.health = FsdHealthState::Healthy;
+
+    TEST_ASSERT_EQUAL(FsdHealthState::Healthy, classifyLegacyFsdHealth(d, 9001, true));
+}
+
+void test_legacy_health_gate_blocked_when_last_blocked()
+{
+    LegacyFsdDiag d;
+    d.mux0.lastRxMs = 6500;
+    d.health = FsdHealthState::GateBlocked;
+    FsdHealthState s = classifyLegacyFsdHealth(d, 7000, true);
+    TEST_ASSERT_EQUAL(FsdHealthState::GateBlocked, s);
+}
+
 int main()
 {
     UNITY_BEGIN();
 
     RUN_TEST(test_legacy_filter_ids_count);
     RUN_TEST(test_legacy_filter_ids_values);
+    RUN_TEST(test_legacy_health_no_source_when_mux0_stale);
+    RUN_TEST(test_legacy_health_tx_degraded_recovers_after_success);
+    RUN_TEST(test_legacy_health_recovers_when_mux0_success_after_aux_fail);
+    RUN_TEST(test_legacy_health_same_ms_success_then_fail_is_degraded);
+    RUN_TEST(test_legacy_health_same_ms_fail_then_success_is_healthy);
+    RUN_TEST(test_legacy_health_gate_blocked_when_last_blocked);
 
     RUN_TEST(test_legacy_stalk_pos0_sets_profile_2);
     RUN_TEST(test_legacy_stalk_pos1_sets_profile_2);
@@ -431,7 +678,13 @@ int main()
     RUN_TEST(test_legacy_stable_mux1_is_disabled);
     RUN_TEST(test_legacy_experimental_mux0_can_write_speed_profile);
     RUN_TEST(test_legacy_experimental_mux1_can_clear_bit19);
+    RUN_TEST(test_legacy_tesla_parity_mux0_writes_speed_profile);
+    RUN_TEST(test_legacy_tesla_parity_mux1_clears_bit19);
+    RUN_TEST(test_legacy_tesla_parity_does_not_clear_bit48_even_when_vision_flag_enabled);
     RUN_TEST(test_legacy_trigger_source_force_vs_ui_bit_vs_false);
+    RUN_TEST(test_legacy_mux0_records_can_a_twai_labels);
+    RUN_TEST(test_legacy_gate_block_records_gate_blocked_health);
+    RUN_TEST(test_legacy_gate_block_uses_resolver_reason);
 
     RUN_TEST(test_legacy_can760_writes_offset);
     RUN_TEST(test_legacy_can760_skips_when_offset_zero);
@@ -441,8 +694,10 @@ int main()
     RUN_TEST(test_legacy_can760_custom_writes_simple_offset);
     RUN_TEST(test_legacy_can760_clamps_simple_offset_to_wire_max);
     RUN_TEST(test_legacy_can760_checkAD_blocks_computed_offset);
+    RUN_TEST(test_legacy_can760_records_tx_fail);
     RUN_TEST(test_legacy_can1080_sets_vision_slider);
     RUN_TEST(test_legacy_can1080_skips_when_disabled);
+    RUN_TEST(test_legacy_can1080_records_tx_fail);
 
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
 

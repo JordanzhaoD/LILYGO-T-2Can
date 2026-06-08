@@ -48,6 +48,10 @@
 #include "dash_wheel_dnd.h"
 #include "dash_tx_evidence.h"
 #include "dash_capabilities.h"
+#include "dash_twai_diag.h"
+#if defined(ESP_PLATFORM) && defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
+#include "drivers/twai_driver.h"
+#endif
 
 #ifndef DASH_SSID
 #error "Define -DDASH_SSID in build_flags (e.g. -DDASH_SSID=\\\"ADUnlock-1234\\\")"
@@ -802,6 +806,7 @@ static String jsonEscape(const String &s)
 }
 
 static bool dashApInjectionAllowed();
+static FsdGateBlockReason dashCurrentGateBlockReason();
 
 static bool dashCheckADEnabled()
 {
@@ -812,6 +817,19 @@ static bool dashApInjectionAllowed()
 {
     // 2.5.2 风格：apInjectionGate=false 时短路放行；=true 时回到 3.0 强制门控。
     return !apInjectionGate || (dashHandler && dashHandler->injectionGateOpen());
+}
+
+static FsdGateBlockReason dashCurrentGateBlockReason()
+{
+    if (!canActive)
+        return FsdGateBlockReason::CanActive;
+    if (!dashOtaGuardAllowInjection())
+        return FsdGateBlockReason::Ota;
+    if (!dashApInjectionAllowed())
+        return FsdGateBlockReason::ApGate;
+    if (!enhancedAutopilotInjectionAllowed(dashHandler && dashHandler->injectionGateOpen()))
+        return FsdGateBlockReason::CompileGate;
+    return FsdGateBlockReason::CheckAd;
 }
 
 static bool dashInjectionActive()
@@ -1098,6 +1116,7 @@ static void dashApplyRuntimeState()
     if (dashHandler)
     {
         dashHandler->checkAD = dashCheckADEnabled;
+        dashHandler->gateBlockReason = dashCurrentGateBlockReason;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
@@ -1157,7 +1176,7 @@ static void dashSavePrefs()
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
     prefs.putBool("def_apeap", dashApEapCompatible);
-    prefs.putUChar("lfsd_pol", dashLegacyFsdPolicy == LegacyFsdPolicy::Experimental ? 1 : 0);
+    prefs.putUChar("lfsd_pol", dashLegacyFsdPolicy == LegacyFsdPolicy::TeslaParity ? 2 : (dashLegacyFsdPolicy == LegacyFsdPolicy::Experimental ? 1 : 0));
     prefs.putBool("lfsd_m1", dashLegacyFsdMux1Enable);
     prefs.putBool("lfsd_prof", dashLegacyFsdProfileWriteEnable);
     prefs.putBool("lfsd_vis", dashLegacyFsdVisionLimitClearEnable);
@@ -1358,7 +1377,10 @@ static void dashLoadPrefs()
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
     dashApEapCompatible = prefs.getBool("def_apeap", true);
-    dashLegacyFsdPolicy = prefs.getUChar("lfsd_pol", 0) == 1 ? LegacyFsdPolicy::Experimental : LegacyFsdPolicy::Stable;
+    {
+        uint8_t lfsdPolicy = prefs.getUChar("lfsd_pol", 0);
+        dashLegacyFsdPolicy = lfsdPolicy == 2 ? LegacyFsdPolicy::TeslaParity : (lfsdPolicy == 1 ? LegacyFsdPolicy::Experimental : LegacyFsdPolicy::Stable);
+    }
     dashLegacyFsdMux1Enable = prefs.getBool("lfsd_m1", false);
     dashLegacyFsdProfileWriteEnable = prefs.getBool("lfsd_prof", false);
     dashLegacyFsdVisionLimitClearEnable = prefs.getBool("lfsd_vis", false);
@@ -1737,6 +1759,54 @@ static void appendTxEvidenceJson(String &j, const DashTxEvidence &ev, unsigned l
     j += "\"}";
 }
 
+static void appendTwaiDiagJson(String &j, unsigned long now)
+{
+    DashTwaiDiag d{};
+#if defined(ESP_PLATFORM) && defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
+    if (dashDriver)
+    {
+        // The active LILYGO CAN-A driver is TWAIDriver in this build. Keep this
+        // helper narrow and diagnostic-only; other driver types keep defaults.
+        TWAIDriver *twai = static_cast<TWAIDriver *>(dashDriver);
+        if (twai)
+            d = twai->snapshotDiag();
+    }
+#endif
+    j += R"JSON(,"twai":{"state":")JSON";
+    j += dashTwaiStateName(d.state);
+    j += R"JSON(","tec":)JSON";
+    j += d.txErrorCounter;
+    j += R"JSON(,"rec":)JSON";
+    j += d.rxErrorCounter;
+    j += R"JSON(,"msgsToTx":)JSON";
+    j += d.msgsToTx;
+    j += R"JSON(,"msgsToRx":)JSON";
+    j += d.msgsToRx;
+    j += R"JSON(,"txFailed":)JSON";
+    j += d.txFailed;
+    j += R"JSON(,"rxMissed":)JSON";
+    j += d.rxMissed;
+    j += R"JSON(,"rxOverrun":)JSON";
+    j += d.rxOverrun;
+    j += R"JSON(,"arbLost":)JSON";
+    j += d.arbLost;
+    j += R"JSON(,"busError":)JSON";
+    j += d.busError;
+    j += R"JSON(,"recoveries":)JSON";
+    j += d.recoveries;
+    j += R"JSON(,"lastRecoveryAgeMs":)JSON";
+    j += d.lastRecoveryMs ? String(now - d.lastRecoveryMs) : String(-1);
+    j += R"JSON(,"framesRead":)JSON";
+    j += d.framesRead;
+    j += R"JSON(,"framesAccepted":)JSON";
+    j += d.framesAccepted;
+    j += R"JSON(,"framesDropped":)JSON";
+    j += d.framesDropped;
+    j += R"JSON(,"readDrainBudgetHits":)JSON";
+    j += d.readDrainBudgetHits;
+    j += "}";
+}
+
 static void appendServiceDiagJson(String &j, unsigned long now)
 {
 #ifdef DRIVER_T2CAN_DUAL
@@ -1821,6 +1891,10 @@ static void appendFsdMuxDiagJson(String &j, const char *name, const FsdMuxDiag &
     j += mux.lastTxMs ? String(now - mux.lastTxMs) : String(-1);
     j += ",\"lastSkip\":\"";
     j += fsdSkipReasonName(mux.lastSkip);
+    j += R"JSON(","bus":")JSON";
+    j += fsdDiagBusName(mux.bus);
+    j += R"JSON(","driver":")JSON";
+    j += fsdDiagDriverName(mux.driver);
     j += "\",\"before\":";
     appendHexBytesJson(j, mux.before);
     j += ",\"after\":";
@@ -1849,8 +1923,21 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     j += fsdTriggerSourceName(diag.triggerSource);
     j += R"JSON(","forceRuntime":)JSON";
     j += diag.forceRuntime ? "true" : "false";
+    FsdHealthState health = classifyLegacyFsdHealth(diag, now, canActive);
+    j += R"JSON(,"health":")JSON";
+    j += fsdHealthStateName(health);
+    j += R"JSON(","firstMux0RxAgeMs":)JSON";
+    j += diag.firstMux0RxMs ? String(now - diag.firstMux0RxMs) : String(-1);
+    j += R"JSON(,"firstMux1RxAgeMs":)JSON";
+    j += diag.firstMux1RxMs ? String(now - diag.firstMux1RxMs) : String(-1);
+    j += R"JSON(,"firstTxOkAgeMs":)JSON";
+    j += diag.firstTxOkMs ? String(now - diag.firstTxOkMs) : String(-1);
+    j += R"JSON(,"firstTxFailAgeMs":)JSON";
+    j += diag.firstTxFailMs ? String(now - diag.firstTxFailMs) : String(-1);
     appendFsdMuxDiagJson(j, "mux0", diag.mux0, true, now);
-    appendFsdMuxDiagJson(j, "mux1", diag.mux1, diag.policy == LegacyFsdPolicy::Experimental && diag.mux1Enable, now);
+    appendFsdMuxDiagJson(j, "mux1", diag.mux1, diag.policy == LegacyFsdPolicy::TeslaParity || (diag.policy == LegacyFsdPolicy::Experimental && diag.mux1Enable), now);
+    appendFsdMuxDiagJson(j, "aux760", diag.aux760, true, now);
+    appendFsdMuxDiagJson(j, "aux1080", diag.aux1080, true, now);
     j += ",\"gate\":{\"canActive\":";
     j += canActive ? "true" : "false";
     j += ",\"otaAllowed\":";
@@ -1865,7 +1952,13 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     j += apActive ? "true" : "false";
     j += ",\"summoning\":";
     j += summoning ? "true" : "false";
-    j += "}}";
+    j += R"JSON(,"finalAllowed":)JSON";
+    j += (canActive && dashOtaGuardAllowInjection() && dashApInjectionAllowed()) ? "true" : "false";
+    j += R"JSON(,"lastBlockedBy":")JSON";
+    j += fsdGateBlockReasonName(diag.lastBlockedBy);
+    j += R"JSON(","gateReason":")JSON";
+    j += fsdGateBlockReasonName(diag.lastBlockedBy);
+    j += "\"}}";
 }
 
 static void handleStatus()
@@ -2017,6 +2110,7 @@ static void handleStatus()
     // --- FSD runtime state fields (runtime switches) ---
     j += ",\"fsdTriggered\":";
     j += dashHandler ? ((bool)dashHandler->fsdTriggered ? "true" : "false") : "false";
+    appendTwaiDiagJson(j, now);
     appendFsdDiagJson(j, now);
     j += ",\"hwDetected\":";
     j += dashHandler ? (int)dashHandler->hwDetected : 0;
@@ -2756,9 +2850,11 @@ static void handleLegacyFsdConfig()
         if (server.hasArg("policy"))
         {
             String p = server.arg("policy");
-            if (p == "experimental" || p == "legacy_experimental" || p == "1")
+            if (p == "legacy_tesla_parity" || p == "tesla_parity" || p == "2")
+                dashLegacyFsdPolicy = LegacyFsdPolicy::TeslaParity;
+            else if (p == "experimental" || p == "legacy_experimental" || p == "1")
                 dashLegacyFsdPolicy = LegacyFsdPolicy::Experimental;
-            else if (p == "legacy_stable")
+            else if (p == "stable" || p == "legacy_stable" || p == "0")
                 dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
             else
                 dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
@@ -6062,6 +6158,7 @@ static void dashInitHandlers()
     for (int i = 0; i < 3; i++)
     {
         handlerPool[i]->onFrame = mcpDashOnFrame;
+        handlerPool[i]->gateBlockReason = dashCurrentGateBlockReason;
     }
 }
 

@@ -114,6 +114,103 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.dash)
 
+    def test_legacy_tesla_parity_policy_is_wired(self) -> None:
+        diag = (ROOT / "include" / "dash_fsd_diag.h").read_text(encoding="utf-8")
+        for token in [
+            'TeslaParity',
+            '"legacy_tesla_parity"',
+            'p == "legacy_tesla_parity"',
+            'prefs.putUChar("lfsd_pol"',
+            'prefs.getUChar("lfsd_pol"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, diag + self.dash)
+        self.assertIn('Tesla Controller 对齐模式', self.ui)
+
+    def test_legacy_can_a_fsd_diag_expanded_fields_are_exposed(self) -> None:
+        for token in [
+            'FsdHealthState',
+            'FsdGateBlockReason',
+            'FsdDiagBus',
+            'FsdDiagDriver',
+            'fsdHealthStateName',
+            'fsdGateBlockReasonName',
+            'classifyLegacyFsdHealth',
+            'kLegacyFsdSourceStaleMs',
+            'FsdGateBlockReason (*gateBlockReason)() = nullptr',
+            'currentGateBlockReason()',
+            'FsdGateBlockReason::ApGate',
+            'firstMux0RxMs',
+            'firstTxOkMs',
+            'firstTxFailMs',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.handlers + (ROOT / "include" / "dash_fsd_diag.h").read_text(encoding="utf-8"))
+        for token in [
+            '"health"',
+            '"gateReason"',
+            '"lastBlockedBy"',
+            '"bus"',
+            '"driver"',
+            '"firstMux0RxAgeMs"',
+            '"firstTxOkAgeMs"',
+            '"firstTxFailAgeMs"',
+            '"aux760"',
+            '"aux1080"',
+            'dashCurrentGateBlockReason',
+            'dashHandler->gateBlockReason = dashCurrentGateBlockReason',
+            'handlerPool[i]->gateBlockReason = dashCurrentGateBlockReason',
+            'FsdGateBlockReason::CanActive',
+            'FsdGateBlockReason::Ota',
+            'FsdGateBlockReason::ApGate',
+            'FsdGateBlockReason::CompileGate',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+    def test_legacy_can_a_health_ui_labels_are_present(self) -> None:
+        for token in [
+            'Legacy CAN-A 诊断',
+            '0x3EE mux0',
+            '0x3EE mux1',
+            'TWAI 状态',
+            'TEC/REC',
+            'TX失败',
+            'RX丢失',
+            '健康状态',
+            '最后阻止原因',
+            'Tesla Controller 对齐模式',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+                self.assertIn(token, self.ui_gen)
+
+    def test_twai_diagnostics_are_exposed_for_legacy_can_a(self) -> None:
+        twai = (ROOT / "include" / "drivers" / "twai_driver.h").read_text(encoding="utf-8")
+        diag = (ROOT / "include" / "dash_twai_diag.h").read_text(encoding="utf-8")
+        for token in [
+            '#define TWAI_RX_QUEUE_LEN 128',
+            'DashTwaiDiag',
+            'snapshotDiag()',
+            'twai_get_status_info',
+            'readDrainBudgetHits',
+            'framesAccepted',
+            'framesDropped',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, twai + diag)
+        for token in [
+            '"twai"',
+            '"state"',
+            '"tec"',
+            '"rec"',
+            '"txFailed"',
+            '"rxMissed"',
+            '"readDrainBudgetHits"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
     def test_service_diag_evidence_is_exposed(self) -> None:
         for token in [
             '#include "dash_tx_evidence.h"',
