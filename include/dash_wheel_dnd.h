@@ -19,6 +19,19 @@
 // ──────────────────────────────────────────────────────────────
 
 #include <cstdint>
+#include <cstring>
+
+#include "dash_tx_evidence.h"
+
+struct DashWheelDndDiag
+{
+    bool native3c2Seen = false;
+    uint32_t native3c2Ms = 0;
+    const char *baseFrameMode = "waiting_native";
+    const char *sequenceState = "idle";
+    uint8_t sequenceStep = 0;
+    DashTxEvidence tx{};
+};
 
 struct DashWheelDND
 {
@@ -35,6 +48,11 @@ struct DashWheelDND
     bool speedActive{false};
     int lastStepMs{0};  // timestamp of last step (millis)
     uint8_t counter{0}; // rolling counter for 0x3C2 frames
+    uint8_t nativeData[8] = {};
+    uint32_t nativeMs = 0;
+    bool nativeSeen = false;
+    bool syntheticFallback = false;
+    DashWheelDndDiag diag{};
 
     // ── public API ──────────────────────────────────────────
 
@@ -52,6 +70,20 @@ struct DashWheelDND
         speedStep = 0;
     }
 
+    void recordNative3c2(const uint8_t data[8], uint32_t nowMs)
+    {
+        memcpy(nativeData, data, 8);
+        nativeMs = nowMs;
+        nativeSeen = true;
+        diag.native3c2Seen = true;
+        diag.native3c2Ms = nowMs;
+    }
+
+    bool native3c2Fresh(uint32_t nowMs) const
+    {
+        return nativeSeen && (nowMs - nativeMs) <= 500;
+    }
+
     /// Tick the state machine.  Call from the main loop (or a
     /// FreeRTOS task) with the current millis() value.
     /// Returns true when a CAN frame should be sent this tick;
@@ -66,15 +98,25 @@ struct DashWheelDND
 
         lastStepMs = nowMs;
 
-        // Build frame
-        outData[0] = counter;       // counter in byte 0
-        outData[1] = 0x00;
-        outData[2] = 0x00;          // volume byte
-        outData[3] = 0x00;          // speed byte
-        outData[4] = 0x00;
-        outData[5] = 0x00;
-        outData[6] = 0x00;
-        outData[7] = 0x00;          // checksum placeholder
+        bool useNative = native3c2Fresh((uint32_t)nowMs);
+        if (!useNative && !syntheticFallback)
+        {
+            diag.baseFrameMode = "waiting_native";
+            diag.sequenceState = "waiting_native";
+            return false;
+        }
+
+        if (useNative)
+        {
+            memcpy(outData, nativeData, 8);
+            diag.baseFrameMode = "native";
+        }
+        else
+        {
+            memset(outData, 0, 8);
+            diag.baseFrameMode = "synthetic_fallback";
+        }
+        diag.sequenceState = "running";
 
         // Volume step
         if (volumeActive)

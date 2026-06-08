@@ -188,6 +188,27 @@ void test_twai_filter_empty_count_returns_zero()
     TEST_ASSERT_EQUAL_HEX32(0, f.acceptance_mask);
 }
 
+#include "dash_twai_diag.h"
+
+void test_twai_diag_default_snapshot_is_safe()
+{
+    DashTwaiDiag d;
+    TEST_ASSERT_EQUAL(DashTwaiState::Unknown, d.state);
+    TEST_ASSERT_EQUAL_UINT32(0, d.txFailed);
+    TEST_ASSERT_EQUAL_UINT32(0, d.rxMissed);
+    TEST_ASSERT_EQUAL_UINT32(0, d.recoveries);
+    TEST_ASSERT_EQUAL_STRING("unknown", dashTwaiStateName(d.state));
+}
+
+void test_twai_diag_state_names_are_stable()
+{
+    TEST_ASSERT_EQUAL_STRING("running", dashTwaiStateName(DashTwaiState::Running));
+    TEST_ASSERT_EQUAL_STRING("bus_off", dashTwaiStateName(DashTwaiState::BusOff));
+    TEST_ASSERT_EQUAL_STRING("recovering", dashTwaiStateName(DashTwaiState::Recovering));
+    TEST_ASSERT_EQUAL_STRING("stopped", dashTwaiStateName(DashTwaiState::Stopped));
+    TEST_ASSERT_EQUAL_STRING("unknown", dashTwaiStateName(DashTwaiState::Unknown));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -214,6 +235,8 @@ int main()
     RUN_TEST(test_twai_filter_single_id_mask_is_exact);
     RUN_TEST(test_twai_filter_hw4_mask_bits);
     RUN_TEST(test_twai_filter_empty_count_returns_zero);
+    RUN_TEST(test_twai_diag_default_snapshot_is_safe);
+    RUN_TEST(test_twai_diag_state_names_are_stable);
 
     return UNITY_END();
 }

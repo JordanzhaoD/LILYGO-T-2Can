@@ -57,7 +57,7 @@ void tearDown() {}
 
 void test_nag_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(2, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(3, handler.filterIdCount());
 }
 
 void test_nag_filter_ids_value()
@@ -65,6 +65,7 @@ void test_nag_filter_ids_value()
     const uint32_t *ids = handler.filterIds();
     TEST_ASSERT_EQUAL_UINT32(880, ids[0]);
     TEST_ASSERT_EQUAL_UINT32(920, ids[1]);
+    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[2]);
 }
 
 // ============================================================

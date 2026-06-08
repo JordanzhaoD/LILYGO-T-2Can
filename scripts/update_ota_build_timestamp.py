@@ -1,71 +1,113 @@
-﻿#!/usr/bin/env python3
-"""Refresh the OTA build timestamp shown in the embedded dashboard UI."""
+#!/usr/bin/env python3
+"""Register dashboard UI generation as a PlatformIO/SCons dependency.
+
+This script used to rewrite the source UI as an import side effect. That made
+`mcp2515_dashboard_ui.h` newer than compiled objects without forcing a rebuild,
+so firmware could serve an old dashboard. It now exposes the generated header as
+an explicit SCons target and makes the firmware depend on it.
+"""
 from __future__ import annotations
 
-import re
+import os
 import subprocess
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(globals().get("__file__", ".")).resolve()
-if ROOT.is_file():
-    ROOT = ROOT.parent.parent
+SCRIPT_FILE = Path(globals().get("__file__", "scripts/update_ota_build_timestamp.py"))
+if SCRIPT_FILE.is_absolute():
+    ROOT = SCRIPT_FILE.resolve().parent.parent
 else:
     ROOT = Path.cwd().resolve()
+SCRIPT_FILE = ROOT / "scripts" / "update_ota_build_timestamp.py"
 SRC = ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h"
+DST = ROOT / "include" / "web" / "mcp2515_dashboard_ui.h"
 MINIFY = ROOT / "scripts" / "minify_dashboard.py"
 VERSION_FILE = ROOT / "VERSION"
 
-TZ_SHANGHAI = timezone(timedelta(hours=8))
+
+def _git_short_sha() -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=str(ROOT),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        return proc.stdout.strip() or "nogit"
+    except Exception:
+        return "nogit"
 
 
-def js_string(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-
-
-def unicode_escape(value: str) -> str:
-    return value.encode("unicode_escape").decode("ascii")
-
-
-def main() -> int:
+def _build_metadata(env_name: str | None = None) -> tuple[str, str]:
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     version = VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.exists() else "unknown"
-    timestamp = datetime.now(TZ_SHANGHAI).strftime("%Y-%m-%d %H:%M:%S +08:00")
-    stamp_text = f"Version: {version}\nOTA timestamp: {timestamp}"
-    stamp_zh = f"版本：{version}\nOTA 时间：{timestamp}"
+    env_part = env_name or os.environ.get("PIOENV") or "manual"
+    build_id = f"{version}-{env_part}-{_git_short_sha()}-{now_utc}"
+    return build_id, now_utc
 
-    text = SRC.read_text(encoding="utf-8")
 
-    text = re.sub(
-        r"Version: [^\r\n<]+\r?\nOTA(?: test)? timestamp: [^<]+(?=</div>)",
-        stamp_text,
-        text,
-        count=1,
-    )
-    text = re.sub(
-        r'(<div class="modal-msg" id="ota-test-msg">)Version: [^\r\n<]+\r?\nOTA(?: test)? timestamp: [^<]+(</div>)',
-        lambda m: m.group(1) + stamp_text + m.group(2),
-        text,
-        count=1,
-    )
-    i18n_entry = f"'{js_string(stamp_text)}':'{unicode_escape(stamp_zh)}',"
-    text = re.sub(
-        r"'Version: [^']+?\\nOTA(?: test)? timestamp: [^']+?':'[^']*?',",
-        lambda _m: i18n_entry,
-        text,
-        count=1,
-    )
+def generate(build_id: str | None = None, build_utc: str | None = None) -> int:
+    if not build_id or not build_utc:
+        build_id, build_utc = _build_metadata()
+    cmd = [
+        sys.executable,
+        str(MINIFY),
+        "--build-id",
+        build_id,
+        "--build-utc",
+        build_utc,
+    ]
+    return subprocess.run(cmd, cwd=str(ROOT)).returncode
 
-    SRC.write_text(text, encoding="utf-8")
-    print(f"OTA timestamp: {timestamp}")
 
-    proc = subprocess.run([sys.executable, str(MINIFY)], cwd=str(ROOT))
-    return proc.returncode
+def register_scons() -> bool:
+    try:
+        from SCons.Script import Import
+    except Exception:
+        return False
+
+    try:
+        Import("env")
+    except Exception:
+        return False
+
+    # Import() injects env into locals/globals in SCons scripts.
+    env = globals().get("env") or locals().get("env")
+    if env is None:
+        return False
+
+    build_id, build_utc = _build_metadata(env.get("PIOENV"))
+
+    def action(target, source, env):  # noqa: ANN001 - SCons callback signature
+        cmd = [
+            sys.executable,
+            str(MINIFY),
+            "--build-id",
+            build_id,
+            "--build-utc",
+            build_utc,
+        ]
+        return subprocess.run(cmd, cwd=str(ROOT)).returncode
+
+    sources = [str(SRC), str(VERSION_FILE), str(MINIFY), str(SCRIPT_FILE)]
+    ui_header = env.Command(str(DST), sources, action)
+
+    # The dashboard HTML is pulled into the firmware through
+    # include/web/mcp2515_dashboard.h, which is included from main.cpp. Make the
+    # generated header visible to SCons so a UI change rebuilds the object and
+    # links a new firmware image instead of only rewriting the header on disk.
+    env.Depends("$BUILD_DIR/src/main.cpp.o", ui_header)
+    env.Depends("$BUILD_DIR/${PROGNAME}.elf", ui_header)
+    env.Depends("$BUILD_DIR/${PROGNAME}.bin", ui_header)
+    return True
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(generate())
 
-_result = main()
-if _result:
-    raise SystemExit(_result)
+if not register_scons():
+    _result = generate()
+    if _result:
+        raise SystemExit(_result)

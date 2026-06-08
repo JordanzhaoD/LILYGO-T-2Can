@@ -528,6 +528,28 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 
+<div class="card">
+  <div class="big-toggle off" id="fsd-toggle" onclick="toggleFsd()">
+    <div class="card-title">FSD 注入控制</div>
+    <div class="setting-desc" style="margin-bottom:12px">启用后设备将注入 CAN 帧到车辆总线；状态会保存到 NVS 并作为开机默认值</div>
+    <div class="toggle-visual"><div class="thumb"></div></div>
+    <div class="toggle-label" id="fsd-label">已关闭</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">开机自动启用</div>
+      <div class="setting-desc">设备重启后按此保存值恢复 FSD 注入</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="fsd-boot-tgl" onchange="saveConfig()">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+</div>
+
 <!-- Stats Grid -->
 <div class="card">
 <div class="card-title">系统状态</div>
@@ -585,6 +607,113 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 	    </label>
 	  </div>
 	</div>
+
+	<!-- Legacy 运行时状态 -->
+	<div class="card">
+	<div class="card-title">Legacy 运行时状态</div>
+	<div class="stats">
+	  <div class="stat"><div class="stat-lbl">当前 HW</div><div class="stat-val v-acc" id="legacy-selected-hw">--</div></div>
+	  <div class="stat"><div class="stat-lbl">生效模式</div><div class="stat-val v-acc" id="legacy-effective-handler">--</div></div>
+	  <div class="stat"><div class="stat-lbl">检测 HW</div><div class="stat-val v-dim" id="legacy-detected-hw">--</div></div>
+	  <div class="stat"><div class="stat-lbl">AP 门控</div><div class="stat-val v-dim" id="legacy-ap-gate">--</div></div>
+	  <div class="stat"><div class="stat-lbl">OTA 看守</div><div class="stat-val v-dim" id="legacy-ota-guard">--</div></div>
+	</div>
+	</div>
+
+	<!-- Legacy FSD 策略 -->
+	<div class="card">
+	<div class="card-title">FSD 注入策略</div>
+	<div class="setting-desc" style="margin-bottom:10px">稳定模式仅注入 mux0 bit46，禁用 mux1；Tesla Controller 对齐模式用于受控 A/B 测试</div>
+	<div class="seg">
+	  <button onclick="setLegacyFsdPolicy('stable')">稳定模式</button>
+	  <button onclick="setLegacyFsdPolicy('experimental')">实验模式</button>
+	  <button onclick="setLegacyFsdPolicy('legacy_tesla_parity')">Tesla Controller 对齐模式</button>
+	</div>
+	<div class="stats">
+	  <div class="stat"><div class="stat-lbl">当前策略</div><div class="stat-val v-acc" id="legacy-fsd-strategy">稳定</div></div>
+	  <div class="stat"><div class="stat-lbl">mux0</div><div class="stat-val v-dim" id="legacy-fsd-mux0">--</div></div>
+	  <div class="stat"><div class="stat-lbl">mux1</div><div class="stat-val v-dim" id="legacy-fsd-mux1">--</div></div>
+	  <div class="stat"><div class="stat-lbl">触发源</div><div class="stat-val v-dim" id="legacy-fsd-trigger">--</div></div>
+	</div>
+	  <div class="setting-row">
+	    <div>
+	      <div class="setting-name">启用 mux1 注入</div>
+	      <div class="setting-desc">实验模式：注入 mux1 帧</div>
+	    </div>
+	    <label class="tgl">
+	      <input type="checkbox" id="legacy-fsd-mux1" onchange="saveLegacyFsdExperimental()">
+	      <div class="tgl-track"></div>
+	    </label>
+	  </div>
+	  <div class="setting-row">
+	    <div>
+	      <div class="setting-name">写入速度 Profile</div>
+	      <div class="setting-desc">实验模式：mux0 写入速度档位</div>
+	    </div>
+	    <label class="tgl">
+	      <input type="checkbox" id="legacy-fsd-profile" onchange="saveLegacyFsdExperimental()">
+	      <div class="tgl-track"></div>
+	    </label>
+	  </div>
+	  <div class="setting-row">
+	    <div>
+	      <div class="setting-name">清除视觉限速</div>
+	      <div class="setting-desc">实验模式：清除视觉限速位</div>
+	    </div>
+	    <label class="tgl">
+	      <input type="checkbox" id="legacy-fsd-vision" onchange="saveLegacyFsdExperimental()">
+	      <div class="tgl-track"></div>
+	    </label>
+	  </div>
+	</div>
+
+	<!-- Legacy CAN-A 健康诊断 -->
+	<div class="card">
+	<div class="card-title">Legacy CAN-A 诊断</div>
+	<div class="stats">
+	  <div class="stat"><div class="stat-lbl">0x3EE mux0</div><div class="stat-val v-dim" id="legacy-health-mux0">--</div></div>
+	  <div class="stat"><div class="stat-lbl">0x3EE mux1</div><div class="stat-val v-dim" id="legacy-health-mux1">--</div></div>
+	  <div class="stat"><div class="stat-lbl">TWAI 状态</div><div class="stat-val v-dim" id="legacy-health-twai">--</div></div>
+	  <div class="stat"><div class="stat-lbl">TEC/REC</div><div class="stat-val v-dim" id="legacy-health-tec-rec">--</div></div>
+	  <div class="stat"><div class="stat-lbl">TX失败</div><div class="stat-val v-dim" id="legacy-health-tx-failed">0</div></div>
+	  <div class="stat"><div class="stat-lbl">RX丢失</div><div class="stat-val v-dim" id="legacy-health-rx-missed">0</div></div>
+	  <div class="stat"><div class="stat-lbl">健康状态</div><div class="stat-val v-dim" id="legacy-health-state">--</div></div>
+	  <div class="stat"><div class="stat-lbl">最后阻止原因</div><div class="stat-val v-dim" id="legacy-health-blocked">--</div></div>
+	</div>
+	</div>
+
+	<!-- Service 维修模式 -->
+	<div class="card">
+	<div class="card-title">维修模式 0x339</div>
+	<div class="setting-desc" style="margin-bottom:8px">突发发送仅证明模块 TX，车辆响应未知</div>
+	<div class="stats">
+	  <div class="stat"><div class="stat-lbl">突发状态</div><div class="stat-val v-dim" id="service-burst-state">--</div></div>
+	  <div class="stat"><div class="stat-lbl">最后数据</div><div class="stat-val v-dim" id="service-last-data">--</div></div>
+	  <div class="stat"><div class="stat-lbl">发送统计</div><div class="stat-val v-dim" id="service-tx-evidence">--</div></div>
+	</div>
+	</div>
+
+	<!-- Wheel DND -->
+	<div class="card">
+	<div class="card-title">方向盘免打扰 0x3C2</div>
+	<div class="setting-desc" style="margin-bottom:8px">等待原生 0x3C2 帧后再发送，避免盲发合成帧</div>
+	<div class="stats">
+	  <div class="stat"><div class="stat-lbl">原生帧</div><div class="stat-val v-dim" id="wheel-native-3c2">等待原生帧</div></div>
+	  <div class="stat"><div class="stat-lbl">基帧来源</div><div class="stat-val v-dim" id="wheel-base-frame">--</div></div>
+	  <div class="stat"><div class="stat-lbl">序列状态</div><div class="stat-val v-dim" id="wheel-sequence-state">--</div></div>
+	</div>
+	</div>
+
+	<!-- Legacy 不支持功能 -->
+	<div class="card">
+	<div class="card-title">Legacy 功能支持矩阵</div>
+	<div class="stats">
+	  <div class="stat"><div class="stat-lbl">仿生转向</div><div class="stat-val" style="color:var(--tx3)">不支持</div></div>
+	  <div class="stat"><div class="stat-lbl">Ban Shield</div><div class="stat-val" style="color:var(--tx3)">不支持</div></div>
+	  <div class="stat"><div class="stat-lbl">MPP 自定义</div><div class="stat-val" style="color:var(--tx3)">未接线</div></div>
+	  <div class="stat"><div class="stat-lbl">换挡辅助</div><div class="stat-val" style="color:var(--tx3)">未实现</div></div>
+	</div>
+	</div>
     </div>
 
     <!-- Page 2: Hardware Config -->
@@ -628,6 +757,16 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <label class="tgl">
       <input type="checkbox" id="hw-ap-restore" onchange="saveConfig()">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">AP 注入门控</div>
+      <div class="setting-desc">要求 Parked/AP/Summon 状态后才允许注入</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="ap-gate-tgl" onchange="saveApGate()">
       <div class="tgl-track"></div>
     </label>
   </div>
@@ -679,28 +818,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="mode-note">当前选择：<span id="drive-current">Normal</span></div>
 </div>
-<div class="card">
-  <div class="big-toggle off" id="fsd-toggle" onclick="toggleFsd()">
-    <div class="card-title">FSD 注入控制</div>
-    <div class="setting-desc" style="margin-bottom:12px">启用后设备将注入 CAN 帧到车辆总线</div>
-    <div class="toggle-visual"><div class="thumb"></div></div>
-    <div class="toggle-label" id="fsd-label">已关闭</div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">开机自动启用</div>
-      <div class="setting-desc">设备重启后自动开启 FSD 注入</div>
-    </div>
-    <label class="tgl">
-      <input type="checkbox" id="fsd-boot-tgl" onchange="saveConfig()">
-      <div class="tgl-track"></div>
-    </label>
-  </div>
-</div>
-
 <div class="card">
   <div class="card-title">紧急控制</div>
   <div style="display:flex;gap:8px">
@@ -811,6 +928,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <div class="stats">
   <div class="stat"><div class="stat-lbl">CAN2 状态</div><div class="stat-val v-dim" id="b2-status">Offline</div></div>
   <div class="stat"><div class="stat-lbl">CAN2 RX</div><div class="stat-val v-info" id="b2-rx">0</div></div>
+  <div class="stat"><div class="stat-lbl">CAN2 TX</div><div class="stat-val v-info" id="b2-tx">0</div></div>
+  <div class="stat"><div class="stat-lbl">CAN2 TXErr</div><div class="stat-val v-dim" id="b2-txerr">0</div></div>
+  <div class="stat"><div class="stat-lbl">CAN2 EFLG</div><div class="stat-val v-dim" id="b2-eflg">0x00</div></div>
   <div class="stat"><div class="stat-lbl">已发现 ID</div><div class="stat-val v-acc" id="b2-ids">0</div></div>
 </div>
 
@@ -873,12 +993,39 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 
+<!-- Double Pull Flash Burst -->
+<div class="card">
+  <div class="card-title">双拨爆闪 <span class="exp-badge">实验</span></div>
+  <div class="card-subtitle">2秒内两次真实 PULL 触发固件侧 0x249 PULL burst，默认关闭</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">启用双拨触发</div>
+      <div class="setting-desc">开启后，真实超车闪双拨才会自动执行预设爆闪</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="burst-enabled-tgl" onchange="toggleBurst(this)">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+  <div class="sel-cards c4" id="burst-preset" style="margin-bottom:10px">
+    <div class="sel-card" onclick="setBurstPreset('A')"><div class="sel-lbl">A 短促</div><div class="sel-name">2× 250ms</div></div>
+    <div class="sel-card active" onclick="setBurstPreset('B')"><div class="sel-lbl">B 标准</div><div class="sel-name">3× 180ms</div></div>
+    <div class="sel-card" onclick="setBurstPreset('C')"><div class="sel-lbl">C 明显</div><div class="sel-name">5× 150ms</div></div>
+    <div class="sel-card" onclick="setBurstPreset('D')"><div class="sel-lbl">D 长闪</div><div class="sel-name">7× 200ms</div></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-lbl">双拨状态</div><div class="stat-val v-dim" id="burst-status">关闭</div></div>
+    <div class="stat"><div class="stat-lbl">当前参数</div><div class="stat-val v-info" id="burst-params">3× 180/180ms</div></div>
+    <div class="stat"><div class="stat-lbl">剩余相位</div><div class="stat-val v-dim" id="burst-phases">0</div></div>
+  </div>
+</div>
+
 <!-- Service Mode -->
 <div class="card">
   <div class="setting-row">
     <div>
       <div class="setting-name">Service Mode</div>
-      <div class="setting-desc">启用 0x339 持续注入 CAN2</div>
+      <div class="setting-desc">按 VCSEC 规格发送 0x339 四帧脉冲到 CAN2（byte5 bit7）</div>
     </div>
     <label class="tgl">
       <input type="checkbox" id="svc-mode-tgl" onchange="toggleServiceMode()">
@@ -892,8 +1039,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="page" id="pg-strobe">
 <div class="page-title">灯光特技 <span class="exp-badge">实验</span></div>
 <div class="card">
-  <div class="card-title">后雾灯控制</div>
-  <div class="card-subtitle">0x273 CAN帧控制，仅D挡时激活</div>
+  <div class="card-title">后雾灯策略</div>
+  <div class="card-subtitle">这里仅保存默认策略；下方按钮才会立即发送 0x273 CAN-B 执行动作，仅D挡时激活</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">雾灯策略</div>
@@ -931,8 +1078,28 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 <div class="card">
-  <div class="card-title">特技模式</div>
-  <div class="card-subtitle">需D挡，自动停止于其他挡位</div>
+  <div class="card-title">双拨超车闪 <span class="exp-badge">实验</span></div>
+  <div class="card-subtitle">真实拨杆 2 秒内双 PULL 后，固件自动发送 0x249 PULL burst</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">启用双拨爆闪</div>
+      <div class="setting-desc" id="burst-status-strobe">关闭</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="burst-enabled-tgl-strobe" onchange="toggleBurst(this)">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+  <div class="sel-cards c4" id="burst-preset-strobe" style="margin-bottom:10px">
+    <div class="sel-card" onclick="setBurstPreset('A')"><div class="sel-lbl">A 短促</div><div class="sel-name">2×</div></div>
+    <div class="sel-card active" onclick="setBurstPreset('B')"><div class="sel-lbl">B 标准</div><div class="sel-name">3×</div></div>
+    <div class="sel-card" onclick="setBurstPreset('C')"><div class="sel-lbl">C 明显</div><div class="sel-name">5×</div></div>
+    <div class="sel-card" onclick="setBurstPreset('D')"><div class="sel-lbl">D 长闪</div><div class="sel-name">7×</div></div>
+  </div>
+</div>
+<div class="card">
+  <div class="card-title">立即执行</div>
+  <div class="card-subtitle">这些按钮才会触发实际灯光动作；需D挡，自动停止于其他挡位</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
     <button class="btn" onclick="fogTrigger('strobe')" style="flex:1;min-width:100px">💡 爆闪</button>
     <button class="btn" onclick="fogTrigger('f1')" style="flex:1;min-width:100px">🏎️ F1领航灯</button>
@@ -1049,6 +1216,37 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 
+<!-- Release Update -->
+<div class="card">
+  <div class="card-title">Release 在线更新 <span class="exp-badge">Batch C</span></div>
+  <div class="card-subtitle">从 GitHub Release 检查与安装匹配当前硬件的 OTA 固件</div>
+  <div class="diag-grid">
+    <div class="diag-item"><span class="lbl">当前版本</span><span class="v-acc" id="rel-current">--</span></div>
+    <div class="diag-item"><span class="lbl">最新版本</span><span class="v-info" id="rel-latest">--</span></div>
+    <div class="diag-item"><span class="lbl">固件文件</span><span class="v-dim" id="rel-artifact">--</span></div>
+    <div class="diag-item"><span class="lbl">更新状态</span><span class="v-dim" id="rel-status">未检查</span></div>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">Beta 通道</div>
+      <div class="setting-desc">检查最新 prerelease，默认关闭</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="rel-beta-tgl" onchange="toggleUpdateBeta()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">开机自动更新</div>
+      <div class="setting-desc">联网后自动检查并安装新版本，建议测试稳定后再启用</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="rel-auto-tgl" onchange="toggleAutoUpdate()"><div class="tgl-track"></div></label>
+  </div>
+  <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+    <button class="btn btn-sm" id="rel-check-btn" onclick="checkReleaseUpdate()">检查更新</button>
+    <button class="btn btn-sm btn-outline" id="rel-install-btn" onclick="installReleaseUpdate()" disabled>安装更新</button>
+  </div>
+  <div class="setting-desc" id="rel-msg" style="margin-top:8px">请先连接 WiFi 后检查 GitHub Release。</div>
+</div>
+
 <!-- Upload Area -->
 <div class="card">
   <div class="card-title">固件上传</div>
@@ -1058,8 +1256,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div style="color:var(--tx3);font-size:11px">支持 .bin 格式，拖放或点击选择</div>
   </div>
   <input type="file" id="ota-file" accept=".bin" style="display:none" onchange="uploadFirmware()">
-  <div style="margin-top:10px">
-    <button class="btn" id="ota-btn" onclick="uploadFirmware()" style="width:100%">开始上传</button>
+  <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+    <button class="btn" id="ota-btn" onclick="uploadFirmware()" style="flex:1">开始上传</button>
+    <button class="btn btn-outline" id="ota-reset-btn" onclick="resetOtaCredentials()" style="flex:1">重置凭据缓存</button>
   </div>
   <div id="ota-progress" style="display:none;margin-top:8px">
     <div style="background:var(--card-bg-alt);border-radius:4px;height:8px;overflow:hidden">
@@ -1372,10 +1571,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
     </div>
 
-  </div>
-</div>
-
 <script>
+
 // ═══════════════════════════════════════════════════════════
 // Atlas T-2CAN Dashboard — Complete JavaScript
 // ═══════════════════════════════════════════════════════════
@@ -1411,6 +1608,13 @@ var canTab = 'sniffer';
 var lightPreset = 3;
 var lightFrequency = 'medium';
 var rearFogStrategy = 'off';
+var burstPreset = 'B';
+var BURST_PRESETS = {
+  A:{count:2,on_ms:250,off_ms:250,label:'A 短促'},
+  B:{count:3,on_ms:180,off_ms:180,label:'B 标准'},
+  C:{count:5,on_ms:150,off_ms:150,label:'C 明显'},
+  D:{count:7,on_ms:200,off_ms:200,label:'D 长闪'}
+};
 var DNS_PROFILES = {
   conservative: {
     blacklist: 'api-prd.vn.cloud.tesla.cn\nhermes-x2-api.prd.vn.cloud.tesla.cn\nsignaling.vn.cloud.tesla.cn\nhermes-prd.vn.cloud.tesla.cn\nhermes-stream-prd.vn.cloud.tesla.cn\ntelemetry-prd.vn.cloud.tesla.cn\ntelemetry.tesla.cn\napigateway-x2-trigger.tesla.cn\nfleet-api.prd.cn.vn.cloud.tesla.cn\nfirmware.tesla.cn\nlog.tesla.cn\nvehicle-files.prd.cnn1.vn.cloud.tesla.cn',
@@ -1468,9 +1672,9 @@ function fmtUp(sec){
 var I18N={
   // Sidebar
   '模块配置':'Module','激活模式':'Activation Mode','驾驶模式':'Drive Mode',
-  '速度偏移':'Speed Offset','CAN2控制':'CAN2 Control','FSD防御':'FSD Defense',
-  'OTA升级':'OTA Update',
-  '网络设置':'Network','CAN工具':'CAN Tools',
+  '速度偏移':'Speed Offset','CAN2控制':'CAN2 Control','灯光特技':'Light Show',
+  'FSD防御':'FSD Defense','OTA升级':'OTA Update',
+  '网络设置':'Network','CAN工具':'CAN Tools','自动换挡':'Auto Shift',
   // Top bar
   '已连接':'Connected','未连接':'Disconnected','连接丢失':'Connection Lost',
   // Overview
@@ -1512,7 +1716,9 @@ var I18N={
   '保护未启用':'Protection OFF','保护已启用':'Protection ON',
   // OTA
   '固件信息':'Firmware Info','版本':'Version','构建时间':'Build Time',
-  'Flash 占用':'Flash Used',
+  'Flash 占用':'Flash Used','Release 在线更新':'Release Online Update',
+  '当前版本':'Current','最新版本':'Latest','固件文件':'Artifact','更新状态':'Update Status',
+  'Beta 通道':'Beta Channel','开机自动更新':'Auto-update on boot','检查更新':'Check Update','安装更新':'Install Update',
   '固件上传':'Firmware Upload','选择固件文件':'Select firmware',
   '支持 .bin 格式，拖放或点击选择':'.bin files, drag-drop or click',
   '开始上传':'Start Upload','上传中...':'Uploading...',
@@ -1542,7 +1748,7 @@ var I18N={
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
 function applyI18n(){
   var navs=document.querySelectorAll('.nav-item');
-  var zhTexts=['模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','FSD防御','OTA升级','网络设置','CAN工具'];
+  var zhTexts=['模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','灯光特技','FSD防御','OTA升级','网络设置','CAN工具','自动换挡'];
   for(var i=0;i<navs.length;i++){
     var icon=navs[i].querySelector('.nav-icon');
     var iconHtml=icon?icon.outerHTML:'';
@@ -1600,9 +1806,13 @@ function showPage(pageId){
   if(pageId==='pg-drive')loadDriveProfile();
   if(pageId==='pg-bus2')pollCAN2();
   if(pageId==='pg-bus2')loadLightingConfig();
+  if(pageId==='pg-bus2')loadBurstConfig();
   if(pageId==='pg-strobe')loadStrobePage();
+  if(pageId==='pg-strobe')loadBurstConfig();
   if(pageId==='pg-speed')loadSpeedStrategy();
   if(pageId==='pg-defense')loadDefenseConfig();
+  if(pageId==='pg-shift')pollGearAssist();
+  if(pageId==='pg-ota'){loadFirmwareInfo();loadOtaReleaseState();}
   if(pageId==='pg-network'){pollWifiStatus();pollGatewayStatus();loadGatewayDns();loadGatewayBlocked();}
 }
 function openSidebar(){$('sidebar').classList.add('open');$('overlay').classList.add('active')}
@@ -1649,6 +1859,7 @@ async function poll(){
     setText('tb-status',T('未连接'));
     return;
   }
+  var uptime=(d.uptime!==undefined)?d.uptime:(d.up||0);
   S.hw=d.hw;S.ci=d.ci;S.sp=d.sp;S.spa=d.spAuto;S.can=d.can;S.ia=d.ia;S.driveProfile=d.driveProfile!==undefined?d.driveProfile:S.driveProfile;
   S.hw3OffsetSlew=d.hw3OffsetSlew;S.hw3SlewRate=d.hw3SlewRate;
   S.hw3CustomSpeed=d.hw3CustomSpeed;
@@ -1671,21 +1882,24 @@ async function poll(){
   setText('tb-fsd',d.ia?'FSD ON':'FSD OFF');
   setCls('tb-dot-fsd','topbar-dot '+(d.ia?'ok':'warn'));
   setText('tb-exp',experimentSummary());
-  setText('tb-up',fmtUp(d.up||0));
+  setText('tb-up',fmtUp(uptime));
 
   // Overview
   var ovTgl=$('ov-fsd-tgl');
   if(ovTgl)ovTgl.checked=(S.driveProfile===5);
   var masterTgl=$('ov-master-tgl');
   if(masterTgl)masterTgl.checked=!!d.ci;
+  var bootTgl=$('fsd-boot-tgl');
+  if(bootTgl)bootTgl.checked=!!(d.bootCan!==undefined?d.bootCan:d.ci);
   var mFsdTgl=$('m-fsd-tgl');
   if(mFsdTgl)mFsdTgl.checked=!!d.ci;
   setCls('ov-v14','stat-val '+(S.driveProfile===5?'v-warn':'v-dim'));
   setText('ov-v14',S.driveProfile===5?'MAX/V14':'待机');
-  setText('ov-hw',hwLabel(d.hw));
+  var hwText=d.hwName||hwLabel(d.hw);
+  setText('ov-hw',hwText);
   setCls('ov-can','stat-val '+(d.can?'v-ok':'v-err'));
   setText('ov-can',(d.can?'CAN1 Online':'CAN1 Offline')+' / '+($('s-can2')&&$('s-can2').textContent?$('s-can2').textContent:'CAN2 --'));
-  setText('ov-up',fmtUp(d.up||0));
+  setText('ov-up',fmtUp(uptime));
   setCls('m-can','stat-val '+(d.can?'v-ok':'v-err'));
   setText('m-can',d.can?'Online':'Offline');
   setCls('m-can2','stat-val '+(($('s-can2')&&$('s-can2').textContent==='Online')?'v-ok':'v-dim'));
@@ -1694,9 +1908,9 @@ async function poll(){
   setText('m-fsd',d.ci?'ON':'OFF');
   setText('m-fps',d.fps.toFixed(1)+' Hz');
   setText('m-rxtx',(d.rx||0)+' / '+(d.tx||0));
-  setText('m-up',fmtUp(d.up||0));
-  setText('m-hw',hwLabel(d.hw));
-  setText('m-drive',driveLabel(d.sp,d.spAuto));
+  setText('m-up',fmtUp(uptime));
+  setText('m-hw',(d.hwName||hwLabel(d.hw)));
+  setText('m-drive',driveModeLabel(driveModeFromProfile(d.driveProfile,d.driveProfileName)));
   setText('m-speed',d.soff!==undefined?d.soff:'--');
   setText('m-defense',d.hw3OffsetSlew?'ON':'OFF');
   // Phase 1: OTA + 功耗管理状态
@@ -1715,14 +1929,19 @@ async function poll(){
   setText('s-can',d.can?'Online':'Offline');
   setText('s-rx',(d.rx||0)+'/'+(d.tx||0));
   setText('s-tx',d.tx||0);
+  if(d.can2){
+    setText('b2-tx',d.can2.tx||0);
+    setText('b2-txerr',d.can2.txerr||0);
+    setText('b2-eflg','0x'+toHex(d.can2.eflg||0,2));
+  }
   setText('s-fps',d.fps.toFixed(1)+' Hz');
-  setText('s-hw',hwLabel(d.hw));
+  setText('s-hw',(d.hwName||hwLabel(d.hw)));
   setText('s-soff',d.soff||0);
   // Temp from /system_status is separate; use eflg field as proxy
   setText('s-txerr',d.txerr||0);
   setText('s-fd',d.fd||0);
-  setStatusTriplet('module',d.ci?'FSD ON':'FSD OFF','启动保存: '+(d.ci?'ON':'OFF'),d.can?'CAN Online':'CAN Offline',d.can?'ok':'err');
-  setStatusTriplet('hw',hwLabel(d.hw),'mode_hw: '+hwLabel(d.hw),(d.can?'CAN运行 / ':'CAN离线 / ')+hwLabel(d.hw),d.can?'ok':'warn');
+  setStatusTriplet('module',d.ci?'FSD ON':'FSD OFF','启动保存: '+((d.bootCan!==undefined?d.bootCan:d.ci)?'ON':'OFF'),d.can?'CAN Online':'CAN Offline',d.can?'ok':'err');
+  setStatusTriplet('hw',(d.hwName||hwLabel(d.hw)),'mode_hw: '+(d.hwName||hwLabel(d.hw)),(d.can?'CAN运行 / ':'CAN离线 / ')+(d.hwName||hwLabel(d.hw)),d.can?'ok':'warn');
   setStatusTriplet('speed','偏移 '+(d.soff!==undefined?d.soff:'--'),driveLabel(d.sp,d.spAuto),d.fusedSpeedLimitKph?('Fused '+d.fusedSpeedLimitKph+' kph'):'CAN未给出速度',d.can?'ok':'warn');
   setStatusTriplet('defense',d.hw3OffsetSlew?'防御 ON':'防御 OFF','slew '+(d.hw3OffsetSlew?'ON':'OFF'),'触发 '+(d.hw3SlewCount||0)+' / offset '+(d.hw3OffsetLast!==undefined?d.hw3OffsetLast:'--'),d.hw3OffsetSlew?'ok':'warn');
 
@@ -1734,24 +1953,28 @@ async function poll(){
   if(qaBtn){qaBtn.classList.toggle('active',!!d.ci)}
   if(qaSt){qaSt.textContent=d.ci?'ON':'OFF';qaSt.style.color=d.ci?'var(--ok)':'var(--err)'}
 
-  // Boot toggle
+  // Boot toggle — show stored boot preference, not current session state
   var bt=$('fsd-boot-tgl');
-  if(bt)bt.checked=!!d.ci;
+  if(bt)bt.checked=!!(d.bootCan!==undefined?d.bootCan:d.ci);
 
   // HW page
   updateHwCards(d.hw);
   updateProfileCards(d.sp);
-  updateDriveCards(d.sp,d.spAuto);
+  updateDriveCards(d.sp,d.spAuto,d.driveProfile,d.driveProfileName);
 
-  // AP restore
+  // AP restore / injection gate
   var apR=$('hw-ap-restore');
   if(apR)apR.checked=!!d.apAutoRestore;
+  updateApGateControl(d);
 
   // Speed page
   updateSpeedPage(d);
 
   // Defense page
   updateDefensePage(d);
+
+  // Legacy Real Wiring truth cards
+  renderLegacyTruth(d);
 
   // CAN controller sub-page
   updateCanController(d);
@@ -1784,10 +2007,19 @@ function updateProfileCards(sp){
   }
 }
 
-function updateDriveCards(sp,spa){
+function driveModeFromProfile(profile,name){
+  var modes=['auto','sloth','chill','normal','hurry','max'];
+  if(profile!==undefined&&profile!==null&&profile>=0&&profile<modes.length)return modes[profile];
+  var n=String(name||'').toLowerCase();
+  return modes.indexOf(n)>=0?n:'normal';
+}
+function driveModeLabel(mode){
+  return {auto:'Auto',sloth:'Sloth',chill:'Chill',normal:'Normal',hurry:'Hurry',max:'MAX'}[mode]||'Normal';
+}
+function updateDriveCards(sp,spa,profile,profileName){
   var cards=$('drive-cards');
   if(!cards)return;
-  var active=spa?'auto':(sp===0?'chill':(sp===2?'hurry':'normal'));
+  var active=(profile!==undefined&&profile!==null)?driveModeFromProfile(profile,profileName):(spa?'auto':(sp===0?'chill':(sp===2?'hurry':'normal')));
   updateDriveCardsByMode(active);
 }
 
@@ -1797,8 +2029,7 @@ function updateDriveCardsByMode(active){
   var items=cards.querySelectorAll('.drive-card');
   var modes=['auto','sloth','chill','normal','hurry','max'];
   for(var i=0;i<items.length;i++)items[i].classList.toggle('active',modes[i]===active);
-  var label={auto:'Auto',sloth:'Sloth',chill:'Chill',normal:'Normal',hurry:'Hurry',max:'MAX'}[active]||'Normal';
-  setText('drive-current',label);
+  setText('drive-current',driveModeLabel(active));
 }
 
 async function loadDriveProfile(){
@@ -1905,13 +2136,17 @@ async function loadDefenseConfig(){
 async function toggleFsd(){
   var next=S.ci?0:1;
   if(next&&!confirm('确认开启 FSD 注入？')){poll();return}
-  try{await postForm('/config',{can:next?'1':'0',force:next?'1':'0'});}
+  // 主开关同时更新当前会话和开机默认值，重启后保持一致。
+  try{await postForm('/config',{can:next?'1':'0',force:next?'1':'0',bootCan:next?'1':'0'});}
   catch(e){return}
   S.ci=!!next;
+  S.bootCan=!!next;
   var masterTgl=$('ov-master-tgl');
   if(masterTgl)masterTgl.checked=S.ci;
   var mFsdTgl=$('m-fsd-tgl');
   if(mFsdTgl)mFsdTgl.checked=S.ci;
+  var bootTgl=$('fsd-boot-tgl');
+  if(bootTgl)bootTgl.checked=S.bootCan;
   updateFsdToggle(S.ci);
   poll();
 }
@@ -1969,7 +2204,8 @@ async function setDriveMode(mode){
   catch(e){return}
   S.spa=mode==='auto';
   S.sp=(mode==='sloth'||mode==='chill')?0:((mode==='hurry'||mode==='max')?2:1);
-  S.driveProfile={auto:0,sloth:1,chill:2,normal:3,hurry:4,max:5}[mode]||3;
+  var driveMap={auto:0,sloth:1,chill:2,normal:3,hurry:4,max:5};
+  S.driveProfile=driveMap[mode]!==undefined?driveMap[mode]:3;
   updateDriveCardsByMode(mode);
   updateProfileCards(S.sp);
   var v14=$('ov-fsd-tgl');if(v14)v14.checked=(mode==='max');
@@ -2042,9 +2278,17 @@ async function saveConfig(){
   var apR=$('hw-ap-restore');
   if(apR)data.apRestore=apR.checked?'1':'0';
   var bt=$('fsd-boot-tgl');
-  if(bt&&bt.checked)data.can='1';
-  else if(bt)data.can='0';
+  if(bt)data.bootCan=bt.checked?'1':'0';
   try{await postForm('/config',data);}catch(e){}
+}
+function updateApGateControl(d){
+  var gate=$('ap-gate-tgl');
+  if(gate&&d)gate.checked=!!d.apGateEnabled;
+}
+async function saveApGate(){
+  var gate=$('ap-gate-tgl');
+  try{await postForm('/config',{apg:gate&&gate.checked?'1':'0'});}
+  catch(e){if(gate)gate.checked=!gate.checked}
 }
 
 // ── HW3 Speed Save ─────────────────────────────────────────
@@ -2111,6 +2355,12 @@ async function pollCAN2(){
   setCls('b2-status','stat-val '+(d.count>0?'v-ok':'v-dim'));
   setText('b2-status',d.count>0?'Online':'Idle');
   setText('b2-rx',d.rx_total||0);
+  var c2=d.can2||{};
+  setText('b2-tx',c2.tx||0);
+  setText('b2-txerr',c2.txerr||0);
+  setText('b2-eflg','0x'+toHex(c2.eflg||0,2));
+  setCls('b2-txerr','stat-val '+((c2.txerr||0)>0?'v-warn':'v-dim'));
+  setCls('b2-eflg','stat-val '+((c2.eflg||0)>0?'v-err':'v-dim'));
   setText('b2-ids',d.count||0);
   setText('b2-count','('+d.count+')');
   setCls('s-can2','stat-val '+(d.count>0?'v-ok':'v-dim'));
@@ -2121,6 +2371,7 @@ async function pollCAN2(){
   setText('ov-can',(sCan&&sCan.textContent==='Online'?'CAN1 Online':'CAN1 Offline')+' / '+(d.count>0?'CAN2 Online':'CAN2 Idle'));
   var svc=$('svc-mode-tgl');
   if(svc)svc.checked=!!d.service_mode;
+  loadBurstConfig();
   setStatusTriplet('light',
     ($('light-enabled-tgl')&&$('light-enabled-tgl').checked)?'爆闪 ON':'爆闪 OFF',
     '规则 '+(lightPreset||3)+'x '+(lightFrequency||'medium'),
@@ -2163,6 +2414,61 @@ function updateLightOptionCards(id,active,values){
   if(!cards)return;
   var items=cards.querySelectorAll('.sel-card');
   for(var i=0;i<items.length;i++)items[i].classList.toggle('active',values[i]===active);
+}
+
+function detectBurstPreset(d){
+  for(var k in BURST_PRESETS){var p=BURST_PRESETS[k];if(p.count===d.count&&p.on_ms===d.on_ms&&p.off_ms===d.off_ms)return k}
+  return burstPreset||'B';
+}
+function updateBurstPresetCards(){
+  ['burst-preset','burst-preset-strobe'].forEach(function(id){
+    var cards=$(id);if(!cards)return;
+    var items=cards.querySelectorAll('.sel-card');
+    var keys=['A','B','C','D'];
+    for(var i=0;i<items.length;i++)items[i].classList.toggle('active',keys[i]===burstPreset);
+  });
+}
+function updateBurstUi(d){
+  if(!d)return;
+  burstPreset=detectBurstPreset(d);
+  updateBurstPresetCards();
+  var enabled=!!d.enabled;
+  var t=$('burst-enabled-tgl');if(t)t.checked=enabled;
+  var ts=$('burst-enabled-tgl-strobe');if(ts)ts.checked=enabled;
+  var running=!!d.running;
+  var status=enabled?(running?'运行中':'等待双拨'):'关闭';
+  setText('burst-status',status);
+  setText('burst-status-strobe',status);
+  setText('burst-params',(d.count||0)+'× '+(d.on_ms||0)+'/'+(d.off_ms||0)+'ms');
+  setText('burst-phases',d.phases_left||0);
+  setCls('burst-status','stat-val '+(running?'v-warn':(enabled?'v-ok':'v-dim')));
+  setCls('burst-phases','stat-val '+((d.phases_left||0)>0?'v-warn':'v-dim'));
+}
+async function loadBurstConfig(){
+  var d=await fetchJson('/burst');
+  if(d)updateBurstUi(d);
+}
+async function saveBurstConfig(enabled){
+  var p=BURST_PRESETS[burstPreset]||BURST_PRESETS.B;
+  try{
+    var d=await postForm('/burst',{enabled:enabled?'1':'0',count:String(p.count),on_ms:String(p.on_ms),off_ms:String(p.off_ms)});
+    if(d)updateBurstUi(d);
+  }catch(e){}
+}
+function toggleBurst(src){
+  var t=$('burst-enabled-tgl');
+  var ts=$('burst-enabled-tgl-strobe');
+  var enabled=src?!!src.checked:!!((t&&t.checked)||(ts&&ts.checked));
+  if(t)t.checked=enabled;
+  if(ts)ts.checked=enabled;
+  saveBurstConfig(enabled);
+}
+function setBurstPreset(id){
+  if(!BURST_PRESETS[id])id='B';
+  burstPreset=id;
+  updateBurstPresetCards();
+  var enabled=(($('burst-enabled-tgl')&&$('burst-enabled-tgl').checked)||($('burst-enabled-tgl-strobe')&&$('burst-enabled-tgl-strobe').checked));
+  saveBurstConfig(enabled);
 }
 
 async function loadLightingConfig(){
@@ -2212,18 +2518,22 @@ async function loadStrobePage(){
   var sel=$('fog-strategy');if(sel)sel.value=d.rear_fog_value||0;
   var cnt=$('strobe-count');if(cnt)cnt.value=d.count||3;
   var frq=$('strobe-freq');if(frq)frq.value=d.frequency_value||1;
-  // Get active state
+  // Get active state from execution endpoint plus gear from status.
+  var f=await fetchJson('/fog_light');
+  if(f)setText('strobe-status',f.active?'运行中':(f.reason||'待触发'));
   var s=await fetchJson('/status');
   if(s){
-    setText('strobe-status',s.strobeCont?'运行中':'待触发');
     var gears=['','P','R','N','D','','','','SNA'];
     setText('strobe-gear',s.gear!==undefined?gears[s.gear]||s.gear:'--');
   }
 }
 
 async function fogTrigger(mode){
-  try{await postForm('/fog_light',{trigger:mode});}
-  catch(e){}
+  try{
+    var r=await postForm('/fog_light',{trigger:mode});
+    if(r)setText('strobe-status',r.active?'运行中':(r.reason||'已发送'));
+  }
+  catch(e){setText('strobe-status','执行失败')}
   loadStrobePage();
 }
 
@@ -2309,6 +2619,11 @@ async function uploadFirmware(){
 }
 
 // OTA drag-drop setup
+function resetOtaCredentials(){
+  localStorage.removeItem('otaU');
+  localStorage.removeItem('otaP');
+  showToast('OTA 凭据缓存已清除',true);
+}
 function setupOtaDrop(){
   var drop=$('ota-drop');
   if(!drop)return;
@@ -2329,11 +2644,106 @@ async function loadFirmwareInfo(){
   var d=await fetchJson('/system_status');
   if(!d)return;
   setText('ota-ver',d.firmware||'--');
-  setText('ota-build',d.idf||'--');
+  setText('rel-current',d.firmware||'--');
+  var buildLabel=d.uiBuildUtc||d.uiBuildId||d.buildEnv||'--';
+  setText('ota-build',buildLabel);
   var appUsed=d.app_used?Math.round(d.app_used/1024)+'KB':'--';
   var appTotal=d.app_size?Math.round(d.app_size/1024)+'KB':'--';
   setText('ota-flash',appUsed+' / '+appTotal);
-  setText('ota-sdk',d.target||'--');
+  setText('ota-sdk',(d.target||'--')+' / '+(d.idf||'--'));
+}
+
+var releaseUpdateUrl='';
+async function loadOtaReleaseState(){
+  var beta=await fetchJson('/update_beta');
+  if(beta){
+    var bt=$('rel-beta-tgl');
+    if(bt)bt.checked=!!beta.beta;
+    if(beta.version)setText('rel-current',beta.version);
+  }
+  var auto=await fetchJson('/auto_update');
+  if(auto){
+    var at=$('rel-auto-tgl');
+    if(at)at.checked=!!auto.enabled;
+  }
+}
+async function checkReleaseUpdate(){
+  var btn=$('rel-check-btn');
+  var install=$('rel-install-btn');
+  if(btn)btn.disabled=true;
+  if(install)install.disabled=true;
+  releaseUpdateUrl='';
+  setText('rel-status','检查中...');
+  setText('rel-msg','正在连接 GitHub Release，请稍候。');
+  try{
+    var r=await fetch('/update_check');
+    var txt=await r.text();
+    var d={};
+    if(txt){try{d=JSON.parse(txt)}catch(e){}}
+    if(!r.ok)throw new Error((d&&d.error)?d.error:('HTTP '+r.status));
+    setText('rel-current',d.current||'--');
+    setText('rel-latest',d.latest||d.tag||'--');
+    setText('rel-artifact',d.artifact||'--');
+    var msg='已是最新版本';
+    var cls='v-ok';
+    if(d.update&&d.url){
+      releaseUpdateUrl=d.url;
+      msg='发现新版本';
+      cls='v-warn';
+      if(install)install.disabled=false;
+      setText('rel-msg','发现 '+(d.tag||d.latest)+'，点击“安装更新”后设备会下载并重启。');
+    }else if(!d.url){
+      msg='未找到匹配固件';
+      cls='v-err';
+      setText('rel-msg','Release 中没有 '+(d.artifact||'当前硬件')+' 对应的固件文件。');
+    }else{
+      setText('rel-msg','当前版本 '+(d.current||'--')+' 已不低于 '+(d.latest||'--')+'。');
+    }
+    setText('rel-status',msg);
+    setCls('rel-status',cls);
+  }catch(e){
+    setText('rel-status','检查失败');
+    setCls('rel-status','v-err');
+    setText('rel-msg',(e&&e.message)?e.message:'检查失败');
+    showToast((e&&e.message)?e.message:'检查失败');
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+async function installReleaseUpdate(){
+  if(!releaseUpdateUrl){showToast('请先检查更新');return}
+  if(!confirm('确认安装 GitHub Release OTA 固件？设备会下载固件并自动重启。'))return;
+  var btn=$('rel-install-btn');
+  if(btn)btn.disabled=true;
+  setText('rel-status','安装中...');
+  setCls('rel-status','v-warn');
+  setText('rel-msg','设备正在下载并写入 OTA 固件，完成后会自动重启。');
+  try{
+    await postForm('/update_install',{url:releaseUpdateUrl});
+    setText('rel-status','已开始安装');
+    setText('rel-msg','OTA 已开始，设备将自动重启。');
+    showToast('OTA 已开始，设备将重启',true);
+  }catch(e){
+    if(btn)btn.disabled=false;
+    setText('rel-status','安装失败');
+    setCls('rel-status','v-err');
+  }
+}
+async function toggleUpdateBeta(){
+  var t=$('rel-beta-tgl');
+  try{
+    var d=await postForm('/update_beta',{beta:t&&t.checked?'1':'0'});
+    if(d&&d.version)setText('rel-current',d.version);
+    releaseUpdateUrl='';
+    var install=$('rel-install-btn');
+    if(install)install.disabled=true;
+    setText('rel-status','未检查');
+  }catch(e){if(t)t.checked=!t.checked}
+}
+async function toggleAutoUpdate(){
+  var t=$('rel-auto-tgl');
+  try{await postForm('/auto_update',{enabled:t&&t.checked?'1':'0'});}
+  catch(e){if(t)t.checked=!t.checked}
 }
 
 // ── WiFi ───────────────────────────────────────────────────
@@ -2760,6 +3170,72 @@ async function loadCanPins(){
   setText('can-rst',d.rst!=null?'GPIO '+d.rst:'GPIO 9');
 }
 
+// ── Gear assist placeholder telemetry ──────────────────────
+async function pollGearAssist(){
+  var d=await fetchJson('/gear_assist_status');
+  if(!d)return;
+  setText('shift-speed',(d.speed_kph!==undefined?d.speed_kph:'--')+' km/h');
+  setText('shift-gear',d.gear||'--');
+  setText('shift-brake',d.brake?(T('踩下')||'ON'):(d.brake_seen?(T('未踩')||'OFF'):'--'));
+  setText('shift-fsd',d.can_online?'CAN Online':'CAN Offline');
+  setCls('shift-fsd','v-dim '+(d.can_online?'v-ok':'v-err'));
+}
+
+// ── Legacy Real Wiring Truth Cards ────────────────────────
+async function setLegacyFsdPolicy(policy){
+  await postForm('/legacy_fsd_config',{policy:policy});
+  showToast(policy==='stable'?'Legacy Stable':(policy==='legacy_tesla_parity'?'Tesla Controller 对齐模式':'Experimental'));
+  poll();
+}
+async function saveLegacyFsdExperimental(){
+  var mux1=document.getElementById('legacy-fsd-mux1');
+  var profile=document.getElementById('legacy-fsd-profile');
+  var vision=document.getElementById('legacy-fsd-vision');
+  await postForm('/legacy_fsd_config',{
+    policy:'experimental',
+    mux1:mux1&&mux1.checked?'1':'0',
+    profile:profile&&profile.checked?'1':'0',
+    vision:vision&&vision.checked?'1':'0'
+  });
+  showToast('实验模式配置已保存');
+  poll();
+}
+function renderLegacyTruth(d){
+  const set=(id,v)=>{const e=document.getElementById(id); if(e)e.innerText=v;};
+  set('legacy-selected-hw',hwLabel(d.hw));
+  set('legacy-effective-handler',d.hwName||hwLabel(d.effectiveHw));
+  set('legacy-detected-hw',hwLabel(d.hwDetected||0));
+  set('legacy-ap-gate',d.apGateOpen?'开放':'关闭');
+  set('legacy-ota-guard',d.vehicleOta?'已锁定':'正常');
+  const fsd=d.fsdDiag||{};
+  const m0=fsd.mux0||{};
+  const m1=fsd.mux1||{};
+  set('legacy-fsd-strategy',fsd.policy==='legacy_tesla_parity'?'Tesla Controller 对齐模式':((fsd.policy==='legacy_experimental')?'实验模式':'稳定'));
+  set('legacy-fsd-mux0',`RX ${m0.rx||0} / TX ${m0.tx||0} / ${m0.lastSkip||'无'}`);
+  set('legacy-fsd-mux1',`RX ${m1.rx||0} / TX ${m1.tx||0} / ${m1.lastSkip||'无'}`);
+  set('legacy-fsd-trigger',fsd.triggerSource||'未知');
+  const tw=d.twai||{};
+  const gate=fsd.gate||{};
+  const muxLine=(m)=>`RX ${m.rx||0} / TX ${m.tx||0} / ERR ${m.err||0} / ${m.lastSkip||'无'}`;
+  set('legacy-health-mux0',muxLine(m0));
+  set('legacy-health-mux1',muxLine(m1));
+  set('legacy-health-twai',tw.state||'unknown');
+  set('legacy-health-tec-rec',`${tw.tec||0}/${tw.rec||0}`);
+  set('legacy-health-tx-failed',tw.txFailed||0);
+  set('legacy-health-rx-missed',tw.rxMissed||0);
+  set('legacy-health-state',fsd.health||'unknown');
+  set('legacy-health-blocked',gate.lastBlockedBy||fsd.lastBlockedBy||fsd.gateReason||'none');
+  const svc=d.serviceDiag||{};
+  const svctx=svc.tx||{};
+  set('service-burst-state',`${svc.lastCommand==='enter'?'进入':svc.lastCommand==='exit'?'退出':'无'} / 剩余 ${svc.remaining||0}`);
+  set('service-last-data',svctx.lastData||'--');
+  set('service-tx-evidence',`成功 ${svctx.txOk||0} / 失败 ${svctx.txErr||0}`);
+  const wd=d.wheelDndDiag||{};
+  set('wheel-native-3c2',wd.native3c2Seen?`已接收 ${wd.native3c2AgeMs}ms 前`:'等待原生帧');
+  set('wheel-base-frame',wd.baseFrameMode==='native'?'原生帧':wd.baseFrameMode==='synthetic_fallback'?'合成帧':wd.baseFrameMode||'等待中');
+  set('wheel-sequence-state',wd.sequenceState==='sent'?'已发送':wd.sequenceState==='failed'?'失败':wd.sequenceState==='running'?'运行中':wd.sequenceState||'空闲');
+}
+
 // ── Temp from system_status ────────────────────────────────
 async function loadTemp(){
   var d=await fetchJson('/system_status');
@@ -2769,12 +3245,12 @@ async function loadTemp(){
     if(el){
       el.textContent=t+'°C';
       // Color coding: >60°C red, >45°C orange, else green
-      el.className='stat-val '+(t>60?'v-warn':(t>45?'v-info':'v-acc'));
+      el.className='stat-val '+(t>60?'v-err':(t>45?'v-info':'v-acc'));
     }
   }
   // Firmware version display
-  if(d&&d.version){
-    setText('s-ver',d.version);
+  if(d&&(d.firmware||d.version)){
+    setText('s-ver',d.firmware||d.version);
   }
 }
 
@@ -2853,6 +3329,7 @@ document.addEventListener('DOMContentLoaded',function(){
       var pid=activePage.id;
       if(pid==='pg-can'){if(canTab==='sniffer'&&!sniffPaused)pollSniffer();else if(canTab==='debug')pollLastWrite()}
       if(pid==='pg-bus2')pollCAN2();
+      if(pid==='pg-shift')pollGearAssist();
     }
   };
   pollTimer=setInterval(pollTick,pollMs);

@@ -25,15 +25,17 @@ class WifiSettingsRegressionTests(unittest.TestCase):
     def test_wifi_ui_has_all_expected_fields(self) -> None:
         required_ids = [
             "wifi-status",
-            "wifi-ssid",
-            "wifi-pass",
-            "wifi-static",
-            "wifi-ip",
-            "wifi-gw",
-            "wifi-mask",
-            "wifi-dns",
-            "wifi-nets",
-            "scan-btn",
+            "wifi-slots",
+            "wifi-form",
+            "wf-ssid",
+            "wf-pass",
+            "ap-ssid-input",
+            "ap-pass-input",
+            "ap-hidden-tgl",
+            "gw-nat-tgl",
+            "gw-perf-tgl",
+            "dns-blacklist",
+            "dns-whitelist",
         ]
 
         for element_id in required_ids:

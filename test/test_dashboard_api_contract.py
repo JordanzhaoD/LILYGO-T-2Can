@@ -8,6 +8,13 @@ UI_SRC = ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h"
 UI_GEN = ROOT / "include" / "web" / "mcp2515_dashboard_ui.h"
 DASH = ROOT / "include" / "web" / "mcp2515_dashboard.h"
 HANDLERS = ROOT / "include" / "handlers.h"
+LEGACY_SPEED = ROOT / "include" / "dash_legacy_speed.h"
+MAIN = ROOT / "src" / "main.cpp"
+VERSION = ROOT / "VERSION"
+CHANGELOG = ROOT / "CHANGELOG.md"
+README = ROOT / "README.md"
+TESTS_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
+RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 
 
 class DashboardApiContractTests(unittest.TestCase):
@@ -17,6 +24,39 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.ui_gen = UI_GEN.read_text(encoding="utf-8")
         cls.dash = DASH.read_text(encoding="utf-8")
         cls.handlers = HANDLERS.read_text(encoding="utf-8")
+        cls.legacy_speed = LEGACY_SPEED.read_text(encoding="utf-8")
+        cls.main = MAIN.read_text(encoding="utf-8")
+        cls.version = VERSION.read_text(encoding="utf-8")
+        cls.changelog = CHANGELOG.read_text(encoding="utf-8")
+        cls.readme = README.read_text(encoding="utf-8")
+        cls.tests_workflow = TESTS_WORKFLOW.read_text(encoding="utf-8")
+        cls.release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+
+    def test_dashboard_ui_generation_is_dependency_aware(self) -> None:
+        """PlatformIO must rebuild firmware when the generated dashboard header changes."""
+        build_script = (ROOT / "scripts" / "update_ota_build_timestamp.py").read_text(encoding="utf-8")
+        minify_script = (ROOT / "scripts" / "minify_dashboard.py").read_text(encoding="utf-8")
+        self.assertIn("env.Command", build_script)
+        self.assertIn("env.Depends(\"$BUILD_DIR/src/main.cpp.o\"", build_script)
+        self.assertIn("env.Depends(\"$BUILD_DIR/${PROGNAME}.elf\"", build_script)
+        self.assertIn("DASH_UI_BUILD_ID", minify_script)
+        self.assertIn("--check", minify_script)
+
+    def test_generated_dashboard_header_contains_current_phase_tokens(self) -> None:
+        """Generated gzip header must be regenerated from the current source UI."""
+        for token in [
+            "DASH_HTML_GZ",
+            "DASH_UI_BUILD_ID",
+            "DASH_UI_BUILD_UTC",
+            "pg-strobe",
+            "pg-shift",
+            "/speed_custom",
+            "/defense_config",
+            "/fog_light",
+            "/burst",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui_gen)
 
     def test_destructive_buttons_use_post_helpers(self) -> None:
         self.assertIn('onclick="resetStats()"', self.ui)
@@ -35,15 +75,323 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("var map=[3,0,1,2];", self.ui)
         self.assertIn("if (v <= 3 && v != hwMode)", self.dash)
 
+    def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
+        """Device status must show which firmware/UI and handler mode are running."""
+        for token in [
+            "dashDefaultHw",
+            "effectiveHw",
+            "hwName",
+            "buildEnv",
+            "uiBuildId",
+            "uiBuildUtc",
+            "DASH_DEFAULT_HW",
+            "DASH_BUILD_ENV",
+            "DASH_UI_BUILD_ID",
+            "DASH_UI_BUILD_UTC",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        self.assertIn("DASH_DEFAULT_HW=", (ROOT / "scripts" / "platformio_sync_profile.py").read_text(encoding="utf-8"))
+        self.assertIn("DASH_BUILD_ENV", (ROOT / "scripts" / "platformio_sync_profile.py").read_text(encoding="utf-8"))
+        self.assertIn("d.hwName||hwLabel(d.hw)", self.ui)
+        self.assertIn("d.uiBuildUtc||d.uiBuildId||d.buildEnv", self.ui)
+
+    def test_legacy_fsd_diag_and_config_are_exposed(self) -> None:
+        for token in [
+            '"fsdDiag"',
+            'legacyFsdPolicyName',
+            'fsdTriggerSourceName',
+            'fsdSkipReasonName',
+            '"mux0"',
+            '"mux1"',
+            '"triggerSource"',
+            '"forceRuntime"',
+            'server.on("/legacy_fsd_config", HTTP_GET, handleLegacyFsdConfig);',
+            'server.on("/legacy_fsd_config", HTTP_POST, handleLegacyFsdConfig);',
+            'prefs.putUChar("lfsd_pol"',
+            'prefs.getUChar("lfsd_pol"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+    def test_legacy_tesla_parity_policy_is_wired(self) -> None:
+        diag = (ROOT / "include" / "dash_fsd_diag.h").read_text(encoding="utf-8")
+        for token in [
+            'TeslaParity',
+            '"legacy_tesla_parity"',
+            'p == "legacy_tesla_parity"',
+            'prefs.putUChar("lfsd_pol"',
+            'prefs.getUChar("lfsd_pol"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, diag + self.dash)
+        self.assertIn('Tesla Controller 对齐模式', self.ui)
+
+    def test_legacy_can_a_fsd_diag_expanded_fields_are_exposed(self) -> None:
+        for token in [
+            'FsdHealthState',
+            'FsdGateBlockReason',
+            'FsdDiagBus',
+            'FsdDiagDriver',
+            'fsdHealthStateName',
+            'fsdGateBlockReasonName',
+            'classifyLegacyFsdHealth',
+            'kLegacyFsdSourceStaleMs',
+            'FsdGateBlockReason (*gateBlockReason)() = nullptr',
+            'currentGateBlockReason()',
+            'FsdGateBlockReason::ApGate',
+            'firstMux0RxMs',
+            'firstTxOkMs',
+            'firstTxFailMs',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.handlers + (ROOT / "include" / "dash_fsd_diag.h").read_text(encoding="utf-8"))
+        for token in [
+            '"health"',
+            '"gateReason"',
+            '"lastBlockedBy"',
+            '"bus"',
+            '"driver"',
+            '"firstMux0RxAgeMs"',
+            '"firstTxOkAgeMs"',
+            '"firstTxFailAgeMs"',
+            '"aux760"',
+            '"aux1080"',
+            'dashCurrentGateBlockReason',
+            'dashHandler->gateBlockReason = dashCurrentGateBlockReason',
+            'handlerPool[i]->gateBlockReason = dashCurrentGateBlockReason',
+            'FsdGateBlockReason::CanActive',
+            'FsdGateBlockReason::Ota',
+            'FsdGateBlockReason::ApGate',
+            'FsdGateBlockReason::CompileGate',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+    def test_legacy_can_a_health_ui_labels_are_present(self) -> None:
+        for token in [
+            'Legacy CAN-A 诊断',
+            '0x3EE mux0',
+            '0x3EE mux1',
+            'TWAI 状态',
+            'TEC/REC',
+            'TX失败',
+            'RX丢失',
+            '健康状态',
+            '最后阻止原因',
+            'Tesla Controller 对齐模式',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+                self.assertIn(token, self.ui_gen)
+
+    def test_twai_diagnostics_are_exposed_for_legacy_can_a(self) -> None:
+        twai = (ROOT / "include" / "drivers" / "twai_driver.h").read_text(encoding="utf-8")
+        diag = (ROOT / "include" / "dash_twai_diag.h").read_text(encoding="utf-8")
+        for token in [
+            '#define TWAI_RX_QUEUE_LEN 128',
+            'DashTwaiDiag',
+            'snapshotDiag()',
+            'twai_get_status_info',
+            'readDrainBudgetHits',
+            'framesAccepted',
+            'framesDropped',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, twai + diag)
+        for token in [
+            '"twai"',
+            '"state"',
+            '"tec"',
+            '"rec"',
+            '"txFailed"',
+            '"rxMissed"',
+            '"readDrainBudgetHits"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+    def test_service_diag_evidence_is_exposed(self) -> None:
+        for token in [
+            '#include "dash_tx_evidence.h"',
+            'DashTxEvidence serviceTxEvidence',
+            'recordServiceTxEvidence',
+            '"serviceDiag"',
+            '"lastCommand"',
+            '"burstFrames"',
+            '"lastData"',
+            '"vehicleResponse":"unknown"',
+            'serviceDiagJson',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.main + self.dash)
+
+    def test_wheel_dnd_uses_native_3c2_and_exposes_diag(self) -> None:
+        for token in [
+            'recordNative3c2',
+            'native3c2Fresh',
+            'DashWheelDndDiag',
+            '"wheelDndDiag"',
+            '"native3c2Seen"',
+            '"baseFrameMode"',
+            '"waiting_native"',
+            't2canWheelDndRecordNative',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.main + self.dash + self.ui + self.handlers + self.legacy_speed + (ROOT / "include" / "dash_wheel_dnd.h").read_text(encoding="utf-8"))
+
+    def test_legacy_fsd_config_accepts_get_emitted_policy_names(self) -> None:
+        """POST /legacy_fsd_config must round-trip policy strings emitted by GET."""
+        handler = re.search(r"static void handleLegacyFsdConfig\(\).*?server\.send\(200, \"application/json\", j\);", self.dash, re.S)
+        self.assertIsNotNone(handler)
+        body = handler.group(0)
+        self.assertIn('p == "legacy_experimental"', body)
+        self.assertIn('p == "legacy_stable"', body)
+        self.assertIn('p == "experimental"', body)
+        self.assertIn('p == "1"', body)
+        self.assertLess(body.index('p == "legacy_stable"'), body.index('dashLegacyFsdPolicy = LegacyFsdPolicy::Stable'))
+
+    def test_uptime_and_fsd_boot_persistence_are_wired(self) -> None:
+        """Running time and FSD boot/default state must round-trip through /status and /config.
+
+        bootCan can be changed via the "开机自动启用" toggle (saveConfig),
+        and the master toggle also persists the chosen state as the boot default.
+        """
+        self.assertIn('uptime', self.dash)
+        self.assertIn('bootCan', self.dash)
+        self.assertIn('prefs.putBool("boot_can", bootCanActive)', self.dash)
+        self.assertIn('bootCanActive = prefs.getBool("boot_can"', self.dash)
+        self.assertIn('server.hasArg("bootCan")', self.dash)
+        self.assertIn("var uptime=(d.uptime!==undefined)?d.uptime:(d.up||0);", self.ui)
+        self.assertIn("fmtUp(uptime)", self.ui)
+        # Jordan chose master-toggle persistence: toggleFsd() updates bootCan too.
+        self.assertIn("bootCan:next?'1':'0'", self.ui)
+        self.assertIn("data.bootCan=bt.checked?'1':'0'", self.ui)
+
+    def test_status_mux_json_is_closed_before_phase1_fields(self) -> None:
+        """The /status JSON must close mux[] before appending Phase 1 root fields."""
+        match = re.search(r"static void handleStatus\(\).*?server\.send\(200, \"application/json\", j\);", self.dash, re.S)
+        self.assertIsNotNone(match)
+        body = match.group(0)
+        mux_pos = body.index('j += "]},\\"mux\\":[";')
+        vehicle_pos = body.index('j += ",\\"vehicleOta\\":";')
+        between = body[mux_pos:vehicle_pos]
+        self.assertIn('j += "]";', between)
+        self.assertNotIn('j += "]}";', body[vehicle_pos:])
+
+    def test_settings_backup_exports_new_dashboard_config(self) -> None:
+        """Backup JSON must include the newer FSD, speed, defense, lighting and power settings."""
+        match = re.search(r"static void handleSettingsExport\(\).*?server\.send\(200, \"application/json\", j\);", self.dash, re.S)
+        self.assertIsNotNone(match)
+        body = match.group(0)
+        for token in [
+            '\\"bootCan\\"',
+            '\\"apGate\\"',
+            '\\"apAutoRestore\\"',
+            '\\"driveProfile\\"',
+            '\\"speedStrategy\\"',
+            '\\"speed\\"',
+            '\\"lighting\\"',
+            '\\"defense\\"',
+            '\\"power\\"',
+            '\\"fsdRuntime\\"',
+            '\\"legacyMpp\\"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, body)
+
+    def test_settings_import_restores_new_dashboard_config(self) -> None:
+        """Restore must accept Auto HW and write all persisted dashboard config groups."""
+        match = re.search(r"static void handleSettingsImport\(\).*?dashLog\(\"\[BACKUP\] Settings imported", self.dash, re.S)
+        self.assertIsNotNone(match)
+        body = match.group(0)
+        self.assertIn("hw >= 0 && hw <= 3", body)
+        self.assertNotIn("hw >= 0 && hw <= 2", body)
+        for token in [
+            'p.putBool("boot_can"',
+            'p.putBool("ap_gate"',
+            'p.putBool("ap_rst"',
+            'p.putUChar("drv_prof"',
+            'p.putUChar("offsetMode"',
+            'p.putUChar("manualPct"',
+            'p.putBool("lt_en"',
+            'p.putBool("def_en"',
+            'p.putBool(NVS_KEY_AUTO_SHUTDOWN',
+            'p.putBool("fa"',
+            'p.putBool("lg_mpp_en"',
+            "i < kHw3CustomTargetCount && i < arr.size()",
+            "i < kHw3HighSpeedBucketCount && i < arr.size()",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, body)
+
+    def test_fsd_injection_control_lives_in_module_page(self) -> None:
+        """FSD injection controls belong to Module Config, not Driving Mode."""
+        module = re.search(r'id="pg-overview".*?<!-- Page 2: Hardware Config -->', self.ui, re.S)
+        drive = re.search(r'id="pg-drive".*?<!-- Page 4: Speed Offset -->', self.ui, re.S)
+        self.assertIsNotNone(module)
+        self.assertIsNotNone(drive)
+        self.assertIn('id="fsd-toggle"', module.group(0))
+        self.assertIn('id="fsd-boot-tgl"', module.group(0))
+        self.assertNotIn('id="fsd-toggle"', drive.group(0))
+        self.assertNotIn('id="fsd-boot-tgl"', drive.group(0))
+
     def test_backend_accepts_panel_control_methods(self) -> None:
         expected_routes = [
             'server.on("/reset_stats", HTTP_POST, handleResetStats);',
             'server.on("/reboot", HTTP_POST, handleReboot);',
             'server.on("/service_mode", HTTP_POST, handleServiceMode);',
+            'server.on("/burst", HTTP_POST, handleBurst);',
         ]
         for route in expected_routes:
             with self.subTest(route=route):
                 self.assertIn(route, self.dash)
+
+    def test_bus2_diagnostics_are_exposed_in_status(self) -> None:
+        """Dual-CAN builds should expose CAN2 RX/TX/TXErr/EFLG separately from CAN1."""
+        self.assertIn('uint32_t t2canBus2RxCount(void);', self.dash)
+        self.assertIn('uint32_t t2canBus2TxCount(void);', self.dash)
+        self.assertIn('uint32_t t2canBus2TxErrCount(void);', self.dash)
+        self.assertIn('uint8_t t2canBus2Eflg(void);', self.dash)
+        self.assertIn(',\\"can2\\":{\\"rx\\":', self.dash)
+        self.assertIn('t2canBus2TxCount()', self.dash)
+        self.assertIn('t2canBus2TxErrCount()', self.dash)
+        self.assertIn('t2canBus2Eflg()', self.dash)
+        self.assertIn('id="b2-tx"', self.ui)
+        self.assertIn('id="b2-txerr"', self.ui)
+        self.assertIn('id="b2-eflg"', self.ui)
+
+    def test_service_mode_uses_vcsec_four_frame_pulse(self) -> None:
+        """Service mode should send spec-correct 0x339 pulses, not continuous 0xE0 spam."""
+        self.assertIn('g_svcBurstRemaining = 4;', self.main)
+        self.assertIn('g_svcBurstValue = on ? 0x80 : 0x00;', self.main)
+        self.assertIn('f.data[5] = g_svcBurstValue;', self.main)
+        self.assertIn('t2canTxSecondaryCounted(f);', self.main)
+        self.assertNotIn('f.data[5] = 0xE0;', self.main)
+        self.assertIn('VCSEC_serviceDiagnosticRequest', self.readme)
+        self.assertIn('00 00 00 00 00 80 00 00', self.readme)
+        self.assertIn('00 00 00 00 00 00 00 00', self.readme)
+        self.assertIn('四帧脉冲', self.ui)
+
+    def test_mcp2515_bus2_spi_and_filter_support(self) -> None:
+        """MCP2515 driver should support returning from accept-all to filtered mode and use 10MHz SPI."""
+        mcp = (ROOT / "include" / "drivers" / "espidf_mcp2515.h").read_text(encoding="utf-8")
+        self.assertIn('void setReceiveAllMode()', mcp)
+        self.assertIn('void setUseFiltersMode()', mcp)
+        self.assertIn('RXBnCTRL_RXM_STDEXT', mcp)
+        self.assertIn('dev.clock_speed_hz = 10000000', mcp)
+
+    def test_high_beam_shared_bus_limit_is_documented(self) -> None:
+        """README should record that shared-bus injection cannot force high-beam during FSD."""
+        for token in [
+            '0x3F5 byte1 bit7',
+            '0x3F5 byte3',
+            '0x293 byte2 bit6',
+            'inline MITM',
+            'shared-bus injection cannot override',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.readme)
 
     def test_all_panel_endpoints_have_matching_backend_routes(self) -> None:
         routes = set()
@@ -57,6 +405,7 @@ class DashboardApiContractTests(unittest.TestCase):
             ("GET", "/frames"),
             ("GET", "/bus2_ids"),
             ("GET", "/stalk_test"),
+            ("GET", "/burst"),
             ("GET", "/ota_creds"),
             ("GET", "/wifi_scan"),
             ("GET", "/wifi_status"),
@@ -89,6 +438,7 @@ class DashboardApiContractTests(unittest.TestCase):
             ("POST", "/reset_stats"),
             ("POST", "/reboot"),
             ("POST", "/service_mode"),
+            ("POST", "/burst"),
             ("POST", "/wifi_config"),
             ("POST", "/wifi_connect"),
             ("POST", "/wifi_delete"),
@@ -99,6 +449,12 @@ class DashboardApiContractTests(unittest.TestCase):
             ("POST", "/logging"),
             ("POST", "/ap_config"),
             ("POST", "/update"),
+            ("GET", "/update_check"),
+            ("POST", "/update_install"),
+            ("GET", "/update_beta"),
+            ("POST", "/update_beta"),
+            ("GET", "/auto_update"),
+            ("POST", "/auto_update"),
             # Phase 1 新增端点
             ("GET", "/power_mgmt"),
             ("POST", "/power_mgmt"),
@@ -144,6 +500,45 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('server.hasArg("dur")', self.dash)
         self.assertIn('",\\"duration_ms\\":"', self.dash)
 
+    def test_flash_burst_double_pull_is_wired(self) -> None:
+        """Flash Burst should be firmware-timed, default-off, and controlled via /burst."""
+        for token in [
+            'static volatile bool g_burstEnabled = false;',
+            't2canBurstCheckTrigger',
+            't2canBurstTick',
+            'uint8_t status = (f.data[1] >> 4) & 0x07;',
+            'kBurstDoublePullWindowMs = 2000',
+            'g_burstPrevStatus != 1 && status == 1',
+            't2canSetBurstEnabled',
+            't2canSetBurstParams',
+            't2canBurstIsRunning',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.main)
+        task = re.search(r"static void app_can_task\(void \*\).*?appCanTaskLoops", self.main, re.S)
+        self.assertIsNotNone(task)
+        self.assertLess(task.group(0).index('t2canBurstTick();'), task.group(0).index('t2canStalkInjectTick();'))
+        for token in [
+            'server.on("/burst", HTTP_GET, handleBurst);',
+            'server.on("/burst", HTTP_POST, handleBurst);',
+            'static void handleBurst()',
+            '\\"phases_left\\"',
+            '\\"last_trigger_ms\\"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        for token in [
+            '双拨爆闪',
+            '启用双拨触发',
+            '/burst',
+            'loadBurstConfig',
+            'setBurstPreset',
+            'BURST_PRESETS',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+                self.assertIn(token if token != '双拨爆闪' else '/burst', self.ui_gen)
+
     def test_gateway_profile_and_poll_interval_are_functional(self) -> None:
         self.assertIn("var DNS_PROFILES = {", self.ui)
         self.assertIn("function applyDnsProfile(profile)", self.ui)
@@ -176,6 +571,35 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(field=field):
                 # In C++ source, JSON keys appear as \"fieldName\":
                 self.assertIn(f',\\"{field}\\"', self.dash)
+
+    def test_phase1_ota_guard_gates_handler_injection(self) -> None:
+        """Handler-level AD checks must include OTA guard, not only dashboard post-processing."""
+        check_ad = re.search(r"static bool dashCheckADEnabled\(\).*?\n\}", self.dash, re.S)
+        self.assertIsNotNone(check_ad)
+        self.assertIn("canActive", check_ad.group(0))
+        self.assertIn("dashOtaGuardAllowInjection()", check_ad.group(0))
+        self.assertIn("CAN_ID_OTA_STATUS", self.handlers)
+
+    def test_phase1_power_mgmt_partial_update_and_wake_pin(self) -> None:
+        """Power management updates should preserve omitted fields and use configurable wake pin."""
+        power = re.search(r"static void handlePowerMgmt\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(power)
+        body = power.group(0)
+        self.assertIn('if (server.hasArg("autoShutdown"))', body)
+        self.assertIn('if (server.hasArg("wifiAutoOff"))', body)
+        self.assertIn("dashArgTruthy(server.arg(\"autoShutdown\"))", body)
+        self.assertIn("dashArgTruthy(server.arg(\"wifiAutoOff\"))", body)
+        power_header = (ROOT / "include" / "dash_power_mgmt.h").read_text(encoding="utf-8")
+        self.assertIn("DASH_WAKE_PIN", power_header)
+        self.assertIn("TWAI_RX_PIN", power_header)
+        self.assertIn("dashPowerMgmtConfigureWake()", power_header)
+
+    def test_phase1_lilygo_release_defaults_injection_off(self) -> None:
+        """LILYGO release profile should require explicit dashboard arming after boot."""
+        platformio = (ROOT / "platformio.ini").read_text(encoding="utf-8")
+        lilygo = re.search(r"\[env:lilygo_t2can_dual\].*?(?=\n\[env:|\Z)", platformio, re.S)
+        self.assertIsNotNone(lilygo)
+        self.assertNotIn("DASH_INJECTION_ON_BOOT", lilygo.group(0))
 
 
     def test_phase2_speed_strategy_syncs_new_offset_mode(self) -> None:
@@ -215,14 +639,41 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn("dashComputeHw3AutoTargetKph", body)
         self.assertNotIn("hw3HighSpeedTargetPct", body)
 
-    def test_speed_strategy_enables_legacy_custom_only_for_legacy_hw(self) -> None:
-        """/speed_strategy custom keeps Legacy/HW2.x behavior without enabling it for HW3/HW4/Auto."""
+    def test_speed_strategy_does_not_enable_legacy_mpp(self) -> None:
+        """/speed_strategy drives the shared 3-mode algorithm, not the old Legacy MPP path."""
         speed_strategy = re.search(r"static void handleSpeedStrategy\(\).*?static String dashSpeedCustomJson\(\)", self.dash, re.S)
         self.assertIsNotNone(speed_strategy)
         body = speed_strategy.group(0)
-        self.assertIn('if (hwMode == 0 && dashSpeedStrategy == 2)', body)
-        self.assertIn('legacyMppCustomEnable = true;', body)
-        self.assertEqual(body.count('legacyMppCustomEnable ='), 1)
+        self.assertNotIn('legacyMppCustomEnable = true;', body)
+        self.assertNotIn('legacyMppCustomEnable =', body)
+        self.assertIn('offsetMode = dashSpeedStrategy;', body)
+        self.assertIn('dashSyncLegacyShims();', body)
+
+    def test_legacy_can760_uses_simple_offset_helper_not_mpp(self) -> None:
+        """Legacy speed offset must use the verified CAN760 byte5 UI_userSpeedOffset path."""
+        can760 = re.search(r"if \(frame\.id == 760\).*?if \(frame\.id == 1080\)", self.handlers, re.S)
+        self.assertIsNotNone(can760)
+        body = can760.group(0)
+        self.assertIn('dashComputeLegacySimpleOffsetKph', body)
+        self.assertIn('frame.data[5]', body)
+        self.assertNotIn('dashComputeLegacyMppTargetKph', body)
+        self.assertNotIn('frame.data[6]', body)
+
+    def test_legacy_handler_captures_fused_speed_limit_from_921(self) -> None:
+        """Legacy/HW0 needs the same fused speed limit input as the 3-mode speed UI."""
+        can921 = re.search(r"if \(frame\.id == 921\).*?// 0x3EE", self.handlers, re.S)
+        self.assertIsNotNone(can921)
+        body = can921.group(0)
+        self.assertIn('fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);', body)
+        self.assertIn('APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));', body)
+
+    def test_legacy_simple_offset_helper_reuses_three_mode_state(self) -> None:
+        """Legacy simple offset should reuse the speed page algorithm and clamp to byte5 wire range."""
+        self.assertIn('kLegacySimpleOffsetMaxKph = 33', self.legacy_speed)
+        self.assertIn('dashComputeLegacySimpleOffsetKph', self.legacy_speed)
+        self.assertIn('fusedSpeedLimitRaw', self.legacy_speed)
+        self.assertIn('dashComputeOffset(limitKph, 0.05f)', self.legacy_speed)
+        self.assertIn('dashClampLegacySimpleOffsetKph', self.legacy_speed)
 
     def test_phase2_speed_custom_endpoint_contract(self) -> None:
         """/speed_custom exposes four validated custom percentage zones."""
@@ -432,6 +883,33 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("0xC2u + 0x03u", dnd)  # CAN ID 0x3C2 bytes
         self.assertIn("outData[7]", dnd)
 
+    def test_phase3_wheel_dnd_is_runtime_wired(self) -> None:
+        """Wheel DND must be instantiated, started by API, and ticked from CAN task."""
+        self.assertIn('#include "dash_wheel_dnd.h"', self.dash)
+        self.assertIn("static DashWheelDND dashWheelDndCtrl;", self.dash)
+        defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(defense)
+        body = defense.group(0)
+        self.assertIn("dashWheelDndCtrl.startVolume()", body)
+        self.assertIn("dashWheelDndCtrl.startSpeed()", body)
+        self.assertIn("static void t2canWheelDndTick()", self.main)
+        self.assertIn("dashWheelDndCtrl.tick((int)millis(), data)", self.main)
+        self.assertIn("f.id = 0x3C2;", self.main)
+        self.assertIn("gateOpen = canActive && dashDefenseEnabled", self.main)
+        self.assertIn("g_wheelDndGateWasOpen", self.main)
+        self.assertIn("dashWheelDndCtrl.reset()", self.main)
+        can_task = re.search(r"static void app_can_task\(void \*\).*?appCanTaskLoops", self.main, re.S)
+        self.assertIsNotNone(can_task)
+        self.assertIn("t2canWheelDndTick();", can_task.group(0))
+
+    def test_phase3_wheel_dnd_only_starts_when_defense_enabled(self) -> None:
+        """DND switches should not inject frames unless the defense system is enabled."""
+        defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(defense)
+        body = defense.group(0)
+        self.assertIn("dashDefenseEnabled && dashDndVolume && (!prevDefenseEnabled || !prevDndVolume)", body)
+        self.assertIn("dashDefenseEnabled && dashDndSpeed && (!prevDefenseEnabled || !prevDndSpeed)", body)
+
     def test_phase3_naghandler_bionic_branch(self) -> None:
         """NagHandler must branch on bionicSteering with fallback."""
         nag = re.search(r"struct NagHandler.*?^\};", self.handlers, re.S | re.M)
@@ -451,6 +929,27 @@ class DashboardApiContractTests(unittest.TestCase):
         # Must still have legacy echo fallback
         self.assertIn("0xB6", body)
 
+    def test_dashboard_runtime_state_syncs_defense_to_handlers(self) -> None:
+        """Loaded NVS/UI defense state must reach active handler and handlerPool."""
+        runtime = re.search(r"static void dashApplyRuntimeState\(\).*?#if defined\(DASH_RGB_STATUS_LED\)", self.dash, re.S)
+        self.assertIsNotNone(runtime)
+        runtime_body = runtime.group(0)
+        for token in [
+            "dashHandler->bionicSteering = dashBionicSteering",
+            "dashHandler->isaChimeSuppress = nvsIsaChimeSuppress",
+            "dashHandler->banShieldEnable = nvsBanShieldEnable",
+            "dashHandler->legacyOffset = nvsLegacyOffset",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, runtime_body)
+
+        nvs_sync = re.search(r"static void dashApplyNvsRuntimeSwitches\(\).*?\n}\n", self.dash, re.S)
+        self.assertIsNotNone(nvs_sync)
+        nvs_body = nvs_sync.group(0)
+        self.assertIn("handlerPool[i]->bionicSteering = dashBionicSteering", nvs_body)
+        self.assertIn("handlerPool[i]->banShieldEnable = nvsBanShieldEnable", nvs_body)
+        self.assertIn("dashApplyNvsRuntimeSwitches();\n    dashSwapHandler(hwMode);", self.dash)
+
     def test_phase3_defense_config_exposes_dnd_params(self) -> None:
         """defense_config must accept and return dnd_volume and dnd_speed."""
         defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
@@ -469,6 +968,7 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('\\"bionic_disabled\\"', body)
         self.assertIn('\\"dnd_volume\\"', body)
         self.assertIn('\\"dnd_speed\\"', body)
+        self.assertIn("bionicDisabled()", body)
         self.assertIn("dashBionicDisabled", body)
 
     def test_phase3_defense_ui_has_7_toggles(self) -> None:
@@ -520,6 +1020,20 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(base)
         body = base.group(0)
         self.assertIn("Shared<bool> bionicSteering{false}", body)
+        self.assertIn("bionicDisabled()", body)
+        self.assertIn("resetBionic", body)
+
+    def test_phase3_defense_runtime_and_persistence_are_wired(self) -> None:
+        """Defense config should drive Nag/Bionic runtime and persist DND switches."""
+        self.assertIn("nagKillerRuntime = canActive && dashDefenseEnabled", self.dash)
+        self.assertIn("dashHandler->resetBionic((uint32_t)millis())", self.dash)
+        self.assertIn('prefs.putBool("def_dv", dashDndVolume);', self.dash)
+        self.assertIn('prefs.putBool("def_ds", dashDndSpeed);', self.dash)
+        self.assertIn('dashDndVolume = prefs.getBool("def_dv", false);', self.dash)
+        self.assertIn('dashDndSpeed = prefs.getBool("def_ds", false);', self.dash)
+        status = re.search(r"static void handleStatus\(\).*?server\.send", self.dash, re.S)
+        self.assertIsNotNone(status)
+        self.assertIn("dashDndSpeed ? \"true\" : \"false\"", status.group(0))
 
     def test_phase3_handlers_includes_bionic_header(self) -> None:
         """handlers.h must include dash_bionic_steer.h."""
@@ -573,8 +1087,11 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("dashFogCtrl.startStrobe(", body)
         self.assertIn("dashFogCtrl.startF1Pilot(", body)
         self.assertIn("dashFogCtrl.startContinuous(", body)
-        self.assertIn("dashFogCtrl.stop()", body)
+        self.assertIn("dashFogOffRequested = true", body)
         self.assertIn("dashFogCtrl.isActive()", body)
+        self.assertIn('driverSupported', body)
+        self.assertIn('reason', body)
+        self.assertIn('"driver_not_supported"', body)
 
     def test_phase4_strobe_cont_is_functional(self) -> None:
         """/strobe_cont must be functional, not a stub."""
@@ -583,7 +1100,9 @@ class DashboardApiContractTests(unittest.TestCase):
         body = strobe_handler.group(0)
         self.assertNotIn('"Phase 4"', body)
         self.assertIn("dashFogCtrl.startStrobe(0", body)  # 0 = infinite
-        self.assertIn("dashFogCtrl.stop()", body)
+        self.assertIn("dashFogOffRequested = true", body)
+        self.assertIn('driverSupported', body)
+        self.assertIn('reason', body)
 
     def test_phase4_status_strobeCont_is_dynamic(self) -> None:
         """/status strobeCont must reflect actual state, not hardcoded."""
@@ -599,6 +1118,16 @@ class DashboardApiContractTests(unittest.TestCase):
     def test_phase4_dashboard_has_fog_ctrl_instance(self) -> None:
         """Dashboard must have a DashFogLight instance."""
         self.assertIn("DashFogLight dashFogCtrl", self.dash)
+        self.assertIn("dashFogOffRequested", self.dash)
+
+    def test_phase4_fog_fail_off_is_owned_by_can_task(self) -> None:
+        """CAN task should send a final OFF frame on stop or unsafe/stale gear."""
+        self.assertIn("gearMs", self.dash)
+        self.assertIn("t2canGearIsFreshDrive", self.main)
+        self.assertIn("kT2canGearFreshMs", self.main)
+        self.assertIn("dashFogCtrl.buildFrame(offData, false)", self.main)
+        self.assertIn("CAN_ID_REAR_FOG_LIGHT", self.main)
+        self.assertIn("dashFogOffRequested || (active && !safeGear)", self.main)
 
     def test_phase4_ui_has_strobe_page(self) -> None:
         """UI must have pg-strobe page with all controls."""
@@ -628,10 +1157,145 @@ class DashboardApiContractTests(unittest.TestCase):
         for fn in ["loadStrobePage", "fogTrigger", "saveFogStrategy"]:
             with self.subTest(fn=fn):
                 self.assertIn(f"async function {fn}", self.ui)
+        self.assertIn("这里仅保存默认策略", self.ui)
+        self.assertIn("这些按钮才会触发实际灯光动作", self.ui)
+        self.assertIn("fetchJson('/fog_light')", self.ui)
 
     def test_phase4_js_navigates_to_strobe_page(self) -> None:
         """Page navigation must load strobe page data."""
         self.assertIn("pageId==='pg-strobe')loadStrobePage()", self.ui)
+
+    def test_phase5a_shift_page_loads_read_only_telemetry(self) -> None:
+        """Auto-shift placeholder page must populate its read-only telemetry fields."""
+        self.assertIn("/gear_assist_status", self.ui)
+        self.assertIn("async function pollGearAssist()", self.ui)
+        self.assertIn("pageId==='pg-shift')pollGearAssist()", self.ui)
+        self.assertIn("pid==='pg-shift')pollGearAssist()", self.ui)
+        for token in ["shift-speed", "shift-gear", "shift-brake", "shift-fsd"]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_phase5a_drive_profile_preserves_six_modes(self) -> None:
+        """Drive UI should use driveProfile/driveProfileName so Auto/Sloth/MAX survive polling."""
+        self.assertIn("function driveModeFromProfile(profile,name)", self.ui)
+        self.assertIn("driveModeFromProfile(d.driveProfile,d.driveProfileName)", self.ui)
+        self.assertIn("driveMap[mode]!==undefined?driveMap[mode]:3", self.ui)
+        self.assertNotIn("[mode]||3", self.ui)
+
+    def test_phase5a_temperature_uses_error_style_above_60c(self) -> None:
+        """Temperature >60°C should be red/error, not warning/yellow."""
+        self.assertIn("t>60?'v-err'", self.ui)
+        self.assertNotIn("t>60?'v-warn'", self.ui)
+
+    def test_batch_c_release_ota_ui_is_wired(self) -> None:
+        """OTA page must expose the GitHub release update flow already provided by backend APIs."""
+        for token in [
+            "Release 在线更新",
+            "id=\"rel-check-btn\"",
+            "id=\"rel-install-btn\"",
+            "async function loadOtaReleaseState()",
+            "async function checkReleaseUpdate()",
+            "async function installReleaseUpdate()",
+            "async function toggleUpdateBeta()",
+            "async function toggleAutoUpdate()",
+            "fetch('/update_check')",
+            "postForm('/update_install'",
+            "postForm('/update_beta'",
+            "postForm('/auto_update'",
+            "pageId==='pg-ota'",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_batch_c_release_ota_backend_matches_lilygo_asset(self) -> None:
+        """LILYGO builds must check the fork release and look for the LILYGO-specific artifact."""
+        self.assertIn('#define DASH_GITHUB_REPO "JordanzhaoD/LILYGO-T-2Can"', self.dash)
+        self.assertIn("static const char *GITHUB_REPO = DASH_GITHUB_REPO;", self.dash)
+        self.assertIn("#if defined(DRIVER_T2CAN_DUAL)", self.dash)
+        self.assertIn('return "firmware-lilygo-t2can-dual.bin";', self.dash)
+        self.assertIn('server.on("/update_beta", HTTP_GET, handleUpdateBeta);', self.dash)
+
+    def test_batch_c_sidebar_i18n_and_version_display_are_stable(self) -> None:
+        """New UI pages must not break nav translations, and overview version should use /system_status firmware."""
+        self.assertIn("'灯光特技':'Light Show'", self.ui)
+        self.assertIn("'自动换挡':'Auto Shift'", self.ui)
+        self.assertIn("'模块配置','激活模式','驾驶模式','速度偏移','CAN2控制','灯光特技','FSD防御','OTA升级','网络设置','CAN工具','自动换挡'", self.ui)
+        self.assertIn("d&&(d.firmware||d.version)", self.ui)
+        self.assertIn("setText('s-ver',d.firmware||d.version);", self.ui)
+
+    def test_batch_c_profile_helper_supports_lilygo_dual_driver(self) -> None:
+        """CI profile generation must understand the LILYGO dual-CAN driver."""
+        helper = (ROOT / "scripts" / "platformio_set_profile.py").read_text(encoding="utf-8")
+        profile_example = (ROOT / "platformio_profile.example.h").read_text(encoding="utf-8")
+        self.assertIn('"DRIVER_T2CAN_DUAL"', helper)
+        self.assertIn("#define DRIVER_T2CAN_DUAL", profile_example)
+        self.assertIn("#define HW4", profile_example)
+        self.assertIn("--driver DRIVER_T2CAN_DUAL", self.tests_workflow)
+        self.assertIn("--driver DRIVER_T2CAN_DUAL", self.release_workflow)
+
+    def test_capability_matrix_and_bus2_can2_are_exposed(self) -> None:
+        combined = self.dash
+        # ── Source-level tokens: include, function name, capability helpers ──
+        for token in [
+            '#include "dash_capabilities.h"',
+            'appendCapabilitiesJson',
+            '\\"cap\\"',
+            'dashCapabilityLegacyFsd',
+            'dashCapabilityBionicSteering',
+            'dashCapabilityBanShield',
+            'dashCapabilityLegacyMppCustom',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, combined)
+        # ── Composed JSON tokens from appendCapabilitiesJson string literals ──
+        # These verify the C++ source contains the exact JSON key-value fragments
+        # that will appear in the HTTP response (with C++ escaped quotes as read by Python).
+        for token in [
+            ',\\"legacyFsd\\":\\"',       # j += ",\"legacyFsd\":\""
+            ',\\"serviceMode\\":\\"can_b_direct\\"',  # inline composed
+            ',\\"bionicSteering\\":\\"',   # j += ",\"bionicSteering\":\""
+            ',\\"legacyMppCustom\\":\\"',  # j += ",\"legacyMppCustom\":\""
+            ',\\"gearAssist\\":\\"not_implemented\\"}',  # inline composed, closes cap object
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, combined)
+        # bus2_ids endpoint must include all four can2 diagnostic counters
+        bus2 = re.search(r"static void handleBus2Ids\(\).*?server\.send", combined, re.S)
+        self.assertIsNotNone(bus2)
+        bus2_body = bus2.group(0)
+        for token in ['t2canBus2RxCount()', 't2canBus2TxCount()', 't2canBus2TxErrCount()', 't2canBus2Eflg()']:
+            with self.subTest(token=token):
+                self.assertIn(token, bus2_body)
+
+    def test_ui_explains_legacy_real_wiring_states(self) -> None:
+        for token in [
+            "Legacy 运行时状态",
+            "FSD 注入策略",
+            "稳定模式",
+            "实验模式",
+            "维修模式 0x339",
+            "方向盘免打扰 0x3C2",
+            "Legacy 功能支持矩阵",
+            "仿生转向",
+            "不支持",
+            "未接线",
+            "未实现",
+            "/legacy_fsd_config",
+            "fsdDiag",
+            "serviceDiag",
+            "wheelDndDiag",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
+        """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
+        self.assertEqual("4.1.0", self.version.strip())
+        self.assertIn("## [4.0.2] - 2026-05-31", self.changelog)
+        self.assertIn("lilygo_t2can_dual", self.tests_workflow)
+        self.assertIn("lilygo_t2can_dual", self.release_workflow)
+        self.assertIn("firmware-lilygo-t2can-dual", self.release_workflow)
+        self.assertIn("release-assets/firmware-lilygo-t2can-dual.bin", self.release_workflow)
 
 
 if __name__ == "__main__":

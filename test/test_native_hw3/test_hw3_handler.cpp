@@ -97,6 +97,7 @@ void test_hw3_AD_enabled_only_set_on_mux0()
     TEST_ASSERT_TRUE(handler.ADEnabled);
 
     mock.reset();
+    fusedSpeedLimitRaw = 8;
     CanFrame f2 = {.id = 1021};
     f2.data[0] = 0x02; // mux 2
     f2.data[4] = 0x00; // AD bit not set in this frame
@@ -306,7 +307,7 @@ void test_hw3_fsdTriggered_set_on_mux0()
 
 void test_hw3_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(7, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(8, handler.filterIdCount());
 }
 
 void test_hw3_filter_ids_values()
@@ -319,6 +320,7 @@ void test_hw3_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(1016, ids[4]);
     TEST_ASSERT_EQUAL_UINT32(1021, ids[5]);
     TEST_ASSERT_EQUAL_UINT32(2047, ids[6]);
+    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[7]);
 }
 
 // --- Ban Shield ---
@@ -389,20 +391,27 @@ static void resetSpeedGlobals()
     hw3OffsetLastRaw = 0;
     hw3OffsetLastSentMs = 0;
     hw3OffsetSlewCount = 0;
+    offsetMode = 1;
+    manualOffsetPct = 0;
+    customPct[0] = 30; customPct[1] = 20;
+    customPct[2] = 10; customPct[3] = 10;
+    smoothedOffset = 0.0f;
+    actualOffset = 0.0f;
 }
 
 // Test: custom target lookup at 30 kph bucket (first bucket)
 void test_hw3_mux2_custom_target_lookup()
 {
     resetSpeedGlobals();
-    hw3CustomSpeed = true;
-    // fusedLimitRaw = 8 → 40 kph, which falls in bucket [40,50), index 1 → 60 kph
+    offsetMode = 2;
+    dashSyncLegacyShims();
+    // fusedLimitRaw = 8 → 40 kph, zone <=50 uses +30% → 52 kph
     uint16_t target = dashComputeHw3CustomTargetKph(40);
-    TEST_ASSERT_EQUAL_UINT16(60, target);
+    TEST_ASSERT_EQUAL_UINT16(52, target);
 
-    // 70 kph → bucket [70,80), index 4 → 105 kph target
+    // 70 kph → zone <=70 uses +20% → 84 kph
     target = dashComputeHw3CustomTargetKph(70);
-    TEST_ASSERT_EQUAL_UINT16(105, target);
+    TEST_ASSERT_EQUAL_UINT16(84, target);
 
     // Below 30 kph → 0 (no override)
     target = dashComputeHw3CustomTargetKph(25);
@@ -418,7 +427,7 @@ void test_hw3_mux2_auto_target_below_60()
 {
     resetSpeedGlobals();
     uint8_t t = dashComputeHw3AutoTargetKph(30);
-    TEST_ASSERT_EQUAL_UINT8(64, t); // kHw3AutoTargetBelow60Kph
+    TEST_ASSERT_EQUAL_UINT8(45, t); // +50%, 30 → 45
 }
 
 // Test: auto speed target exactly 60 kph
@@ -426,7 +435,7 @@ void test_hw3_mux2_auto_target_at_60()
 {
     resetSpeedGlobals();
     uint8_t t = dashComputeHw3AutoTargetKph(60);
-    TEST_ASSERT_EQUAL_UINT8(100, t); // kHw3AutoTargetAt60Kph
+    TEST_ASSERT_EQUAL_UINT8(90, t); // +50%, cap 90
 }
 
 // Test: auto speed target between 64 and 80 (visible < 80)
@@ -434,7 +443,7 @@ void test_hw3_mux2_auto_target_visible_80()
 {
     resetSpeedGlobals();
     uint8_t t = dashComputeHw3AutoTargetKph(70);
-    TEST_ASSERT_EQUAL_UINT8(85, t); // kHw3AutoTargetForVisible80Kph
+    TEST_ASSERT_EQUAL_UINT8(91, t); // +30%, 70 → 91
 }
 
 // Test: high-speed percent encoding via PCT4 (default encoding)
@@ -487,6 +496,35 @@ void test_hw3_mux2_wire_format_encoding()
     uint8_t rawOut = (uint8_t)(((mock.sent[0].data[1] & 0x3F) << 2) | ((mock.sent[0].data[0] >> 6) & 0x03));
     // Should be non-zero (custom speed active with a valid offset)
     TEST_ASSERT_TRUE(rawOut > 0);
+}
+
+// Test: SNA/NONE speed-limit values preserve incoming mux-2 raw and do not inject
+void test_hw3_mux2_sna_none_pass_through_without_send()
+{
+    for (uint8_t invalidLimit : {static_cast<uint8_t>(0), static_cast<uint8_t>(31)})
+    {
+        resetSpeedGlobals();
+        fusedSpeedLimitRaw = invalidLimit;
+        actualOffset = 12.0f;
+        smoothedOffset = 12.0f;
+
+        CanFrame f0 = {.id = 1021};
+        f0.data[0] = 0x00;
+        f0.data[4] = 0x40;
+        handler.handleMessage(f0, mock);
+        mock.reset();
+
+        uint8_t stockRaw = 0xA5;
+        CanFrame f2 = {.id = 1021};
+        f2.data[0] = static_cast<uint8_t>(0x02 | ((stockRaw & 0x03) << 6));
+        f2.data[1] = static_cast<uint8_t>((stockRaw >> 2) & 0x3F);
+        handler.handleMessage(f2, mock);
+
+        TEST_ASSERT_EQUAL(0, mock.sent.size());
+        TEST_ASSERT_EQUAL_UINT8(0, hw3OffsetTargetRaw);
+        TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, actualOffset);
+        TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, smoothedOffset);
+    }
 }
 
 // Test: mux 2 sends nothing when fsdTriggered is false
@@ -549,6 +587,198 @@ void test_hw3_mux2_clamp_functions()
     TEST_ASSERT_EQUAL_UINT8(120, dashClampHw3HighSpeedTargetForBucket(0, 200)); // bucket 0 max 120
 }
 
+// ── Phase 2 supplement tests ──────────────────────────────────────────
+// Cover: fixed% mode, smooth decel engine, auto segments 4-5,
+//        custom zones 2-3, dashHw3CustomSpeedActive
+
+// Fixed% mode (offsetMode=0): manualOffsetPct applies directly
+void test_hw3_mux2_fixed_mode_zero_pct()
+{
+    resetSpeedGlobals();
+    offsetMode = 0;
+    manualOffsetPct = 0;
+    dashSyncLegacyShims();
+
+    float off = dashComputeOffset(100.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, off);
+}
+
+void test_hw3_mux2_fixed_mode_20_pct()
+{
+    resetSpeedGlobals();
+    offsetMode = 0;
+    manualOffsetPct = 20;
+    dashSyncLegacyShims();
+
+    // 100 kph * (1 + 0.20) - 100 = 20
+    float off = dashComputeOffset(100.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.0f, off);
+}
+
+void test_hw3_mux2_fixed_mode_50_pct()
+{
+    resetSpeedGlobals();
+    offsetMode = 0;
+    manualOffsetPct = 50;
+    dashSyncLegacyShims();
+
+    // 60 kph * 1.5 - 60 = 30
+    float off = dashComputeOffset(60.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 30.0f, off);
+}
+
+// Auto mode segments 4-5 (90-110, >110 kph)
+void test_hw3_mux2_auto_segment_4_100kph()
+{
+    resetSpeedGlobals();
+    offsetMode = 1;
+    // 100 kph → segment ≤110: target = min(132, 100*1.2) = 120, offset = 20
+    float off = dashComputeOffset(100.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.0f, off);
+}
+
+void test_hw3_mux2_auto_segment_5_120kph()
+{
+    resetSpeedGlobals();
+    offsetMode = 1;
+    // 120 kph → segment >110: target = min(132, 120*1.1) = 132, offset = 12
+    float off = dashComputeOffset(120.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 12.0f, off);
+}
+
+void test_hw3_mux2_auto_segment_5_140kph()
+{
+    resetSpeedGlobals();
+    offsetMode = 1;
+    smoothedOffset = 0.0f;
+    // 140 kph → min(132, 140*1.1=154) = 132, rawOffset = 132-140 = -8
+    // This is a falling edge from 0 → -8, so smooth decel kicks in:
+    // smoothedOffset stays at max(-8, 0 - 5*0.05) = max(-8, -0.25) = -0.25
+    float off = dashComputeOffset(140.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -0.25f, off);
+}
+
+// Custom zones 2 (≤100) and 3 (>100)
+void test_hw3_mux2_custom_zone_2_at_80kph()
+{
+    resetSpeedGlobals();
+    offsetMode = 2;
+    customPct[2] = 15; // zone ≤100 gets 15%
+    dashSyncLegacyShims();
+
+    // 80 kph, zone ≤100: offset = 80 * 0.15 = 12
+    float off = dashComputeOffset(80.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 12.0f, off);
+}
+
+void test_hw3_mux2_custom_zone_3_at_120kph()
+{
+    resetSpeedGlobals();
+    offsetMode = 2;
+    customPct[3] = 8; // zone >100 gets 8%
+    dashSyncLegacyShims();
+
+    // 120 kph, zone >100: offset = 120 * 0.08 = 9.6
+    float off = dashComputeOffset(120.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 9.6f, off);
+}
+
+// Smooth deceleration engine
+void test_hw3_mux2_smooth_decel_rising_edge_instant()
+{
+    resetSpeedGlobals();
+    offsetMode = 0;
+    manualOffsetPct = 20;
+    smoothedOffset = 0.0f;
+
+    // Rising edge: should jump instantly
+    float off = dashComputeOffset(100.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.0f, off);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 20.0f, smoothedOffset);
+}
+
+void test_hw3_mux2_smooth_decel_falling_edge_gradual()
+{
+    resetSpeedGlobals();
+    offsetMode = 0;
+    manualOffsetPct = 0; // target offset = 0
+    smoothedOffset = 20.0f; // start high
+
+    // Falling edge: should decay at 5 km/h/s * 0.05s = 0.25 km/h per tick
+    float off = dashComputeOffset(100.0f, 0.05f);
+    // rawOffset = 0, smoothedOffset was 20, decays by 0.25 → 19.75
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 19.75f, off);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 19.75f, smoothedOffset);
+
+    // Second tick: decays further
+    off = dashComputeOffset(100.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 19.50f, off);
+}
+
+void test_hw3_mux2_smooth_decel_does_not_overshoot()
+{
+    resetSpeedGlobals();
+    offsetMode = 0;
+    manualOffsetPct = 0;
+    smoothedOffset = 0.3f; // very close to target
+
+    // 5 km/h/s * 0.05s = 0.25, rawOffset=0, falling from 0.3
+    // max(0, 0.3 - 0.25) = 0.05 — it can't overshoot because max() clamps
+    float off = dashComputeOffset(100.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.05f, off);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.05f, smoothedOffset);
+
+    // Second tick: now 0.05 - 0.25 = -0.20, clamped to rawOffset=0
+    off = dashComputeOffset(100.0f, 0.05f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, off);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, smoothedOffset);
+}
+
+// dashHw3CustomSpeedActive
+void test_hw3_custom_speed_active_per_mode()
+{
+    resetSpeedGlobals();
+    offsetMode = 0;
+    TEST_ASSERT_FALSE(dashHw3CustomSpeedActive());
+
+    offsetMode = 1;
+    TEST_ASSERT_TRUE(dashHw3CustomSpeedActive());
+
+    offsetMode = 2;
+    TEST_ASSERT_TRUE(dashHw3CustomSpeedActive());
+}
+
+// dashSyncLegacyShims correctness
+void test_hw3_sync_legacy_shims_fixed_mode()
+{
+    resetSpeedGlobals();
+    offsetMode = 0;
+    dashSyncLegacyShims();
+    TEST_ASSERT_FALSE(hw3AutoSpeed);
+    TEST_ASSERT_FALSE(hw3CustomSpeed);
+    TEST_ASSERT_FALSE(hw3HighSpeedEnable);
+}
+
+void test_hw3_sync_legacy_shims_auto_mode()
+{
+    resetSpeedGlobals();
+    offsetMode = 1;
+    dashSyncLegacyShims();
+    TEST_ASSERT_TRUE(hw3AutoSpeed);
+    TEST_ASSERT_FALSE(hw3CustomSpeed);
+    TEST_ASSERT_TRUE(hw3HighSpeedEnable);
+}
+
+void test_hw3_sync_legacy_shims_custom_mode()
+{
+    resetSpeedGlobals();
+    offsetMode = 2;
+    dashSyncLegacyShims();
+    TEST_ASSERT_FALSE(hw3AutoSpeed);
+    TEST_ASSERT_TRUE(hw3CustomSpeed);
+    TEST_ASSERT_TRUE(hw3HighSpeedEnable);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -594,9 +824,35 @@ int main()
     RUN_TEST(test_hw3_mux2_auto_target_visible_80);
     RUN_TEST(test_hw3_mux2_high_speed_pct_encode);
     RUN_TEST(test_hw3_mux2_wire_format_encoding);
+    RUN_TEST(test_hw3_mux2_sna_none_pass_through_without_send);
     RUN_TEST(test_hw3_mux2_no_offset_when_fsd_not_triggered);
     RUN_TEST(test_hw3_mux2_slew_limiter_clamps_drop);
     RUN_TEST(test_hw3_mux2_clamp_functions);
+
+    // Phase 2 supplement: fixed% mode
+    RUN_TEST(test_hw3_mux2_fixed_mode_zero_pct);
+    RUN_TEST(test_hw3_mux2_fixed_mode_20_pct);
+    RUN_TEST(test_hw3_mux2_fixed_mode_50_pct);
+
+    // Phase 2 supplement: auto segments 4-5
+    RUN_TEST(test_hw3_mux2_auto_segment_4_100kph);
+    RUN_TEST(test_hw3_mux2_auto_segment_5_120kph);
+    RUN_TEST(test_hw3_mux2_auto_segment_5_140kph);
+
+    // Phase 2 supplement: custom zones 2-3
+    RUN_TEST(test_hw3_mux2_custom_zone_2_at_80kph);
+    RUN_TEST(test_hw3_mux2_custom_zone_3_at_120kph);
+
+    // Phase 2 supplement: smooth decel engine
+    RUN_TEST(test_hw3_mux2_smooth_decel_rising_edge_instant);
+    RUN_TEST(test_hw3_mux2_smooth_decel_falling_edge_gradual);
+    RUN_TEST(test_hw3_mux2_smooth_decel_does_not_overshoot);
+
+    // Phase 2 supplement: mode helpers
+    RUN_TEST(test_hw3_custom_speed_active_per_mode);
+    RUN_TEST(test_hw3_sync_legacy_shims_fixed_mode);
+    RUN_TEST(test_hw3_sync_legacy_shims_auto_mode);
+    RUN_TEST(test_hw3_sync_legacy_shims_custom_mode);
 
     return UNITY_END();
 }

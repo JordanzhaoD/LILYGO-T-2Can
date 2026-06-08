@@ -546,3 +546,38 @@ full_merged
 6. 使用 full merged 固件通过 USB 重新全量刷机。
 
 优先保证车辆和人员安全，再进行功能排查。
+
+---
+
+## Legacy Real Wiring 实车预检
+
+在实车测试 Legacy 通道功能前，通过 Dashboard 确认以下状态：
+
+### 前置检查
+
+1. **Handler 确认**：`/status` 中 `effectiveHw` 必须为 `0`（显示 `LEGACY`）。
+2. **FSD 策略确认**：`fsdDiag.policy` 必须显示 `legacy_stable`。
+3. **FSD 注入**：
+   - `fsdDiag.mux0.tx` 应在 0x3EE mux0 注入时递增。
+   - `fsdDiag.mux0.lastSkip` 应为 `sent`。
+   - `fsdDiag.mux1.tx` 在 Stable 模式下必须保持 `0`，`lastSkip` 为 `disabled_in_stable`。
+4. **Service 维修模式**：
+   - `serviceDiag.tx.txOk` 应为 `4`（4 帧突发），`txErr` 为 `0`。
+   - `lastData` 应匹配 enter（`80`）/ exit（`00`）命令。
+   - `vehicleResponse` 为 `unknown`，直到实车观察到车辆反应。
+5. **Wheel DND**：
+   - `wheelDndDiag.native3c2Seen` 必须为 `true` 后才能发送。
+   - 未收到原生 0x3C2 时，`baseFrameMode` 为 `waiting_native`（安全默认）。
+
+### Stable vs Experimental
+
+- **默认 Stable**：mux0 仅写 bit46，mux1 不发送，速度 profile 不写入。这是最稳定的 FSD 注入模式。
+- **Experimental**：通过 `/legacy_fsd_config` 开启。可启用 mux1 注入、速度 profile 写入、视觉限速清除。仅用于 A/B 对比测试。
+
+### Dashboard UI 卡片
+
+- **Legacy Runtime Matrix**：显示当前 HW 模式、AP Gate、OTA Guard 等运行时状态。
+- **Legacy FSD Stable**：FSD 注入策略和 mux0/mux1 诊断数据。
+- **Service 0x339**：Service 维修模式 TX 证据。
+- **Wheel DND 0x3C2**：原生帧检测和发送序列状态。
+- **Legacy Support Matrix**：标注 Legacy 不支持的功能（Bionic Steering、Ban Shield 等）。

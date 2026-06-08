@@ -53,16 +53,17 @@
 - [x] FSD 功能解锁（CAN 总线 1）
 - [x] 车速控制（CAN 总线 1）
 - [x] Web 控制面板（WiFi AP 模式）
-- [x] 维修模式开关（Web 面板控制，每 10ms 发送 0x339）
+- [x] 维修模式开关（按 VCSEC 规格发送 0x339 四帧脉冲）
 - [x] Bus2 嗅探器（实时显示 X197 9/10 上的 CAN 帧）
 - [x] USB-Serial/JTAG 控制台输出
 - [x] OTA 固件在线升级
 - [x] 系统状态显示（含开发板名称 LILYGO-T-2CAN）
 
-#### 开发中
+#### 逆向研究结论
 
-- [ ] 远光灯爆闪控制（0x249 SCCMLeftStalk，需车载抓帧验证 CRC）
-- [ ] FSD 激活状态下手动远光灯功能
+- [x] 0x249 SCCMLeftStalk CRC 已验证，可做短时 PULL/PUSH 测试注入。
+- [x] 远光/自适应灯光共享总线注入边界已确认：`0x3F5 byte1 bit7` 为手动/自动模式，`0x3F5 byte3` 为远光开关与驱动来源，`0x293 byte2 bit6` 为自适应大灯使能。
+- [ ] FSD 激活状态下强制覆盖远光暂不实现：车灯 ECU 按内部状态决策，FSD 会强制自适应逻辑；共享总线注入压不过内部逻辑，若要实现需要 inline MITM（剪断 X197 9/10、双 CAN 串接改写）。
 - [ ] Bus2 帧录制与回放
 
 ---
@@ -111,13 +112,14 @@ pio run -e lilygo_t2can_dual -t upload --upload-port COM20
 
 ### 维修模式
 
-在 Web 面板中找到 **Service Mode** 开关，开启后设备每 10ms 向 X197 Pin 9/10 发送：
+在 Web 面板中找到 **Service Mode** 开关。按官方规格（VCSEC_serviceDiagnosticRequest，start bit 47 = byte5 bit7），每次切换发送 **4 帧、间隔 10ms** 的脉冲到 X197 Pin 9/10：
 
 ```
-ID: 0x339  DLC: 8  Data: 00 00 00 00 00 E0 00 00
+开启: ID 0x339  DLC 8  Data 00 00 00 00 00 80 00 00   (byte5 bit7 = 1)
+关闭: ID 0x339  DLC 8  Data 00 00 00 00 00 00 00 00
 ```
 
-关闭开关即停止发送。
+该开关是 RAM-only，重启后默认关闭。
 
 ---
 
@@ -186,16 +188,17 @@ A web dashboard is served over the onboard WiFi hotspot — no app needed, just 
 - [x] FSD unlock (CAN Bus 1)
 - [x] Speed control (CAN Bus 1)
 - [x] Web dashboard (WiFi AP mode)
-- [x] Service mode toggle (web panel, sends 0x339 every 10ms)
+- [x] Service mode toggle (VCSEC-spec 4-frame 0x339 pulse)
 - [x] Bus2 sniffer (live view of CAN frames on X197 Pin 9/10)
 - [x] USB-Serial/JTAG console output
 - [x] OTA firmware updates
 - [x] System status with board name (LILYGO-T-2CAN)
 
-#### In Development
+#### Reverse-Engineering Findings
 
-- [ ] High-beam flash control (0x249 SCCMLeftStalk, pending on-vehicle CRC capture)
-- [ ] Manual high-beam activation during active FSD
+- [x] 0x249 SCCMLeftStalk CRC is verified for short PULL/PUSH test injection.
+- [x] Shared-bus high-beam/adaptive-lighting limits are documented: `0x3F5 byte1 bit7` is manual/auto mode, `0x3F5 byte3` carries high-beam state/source, and `0x293 byte2 bit6` is adaptive-high-beam enable.
+- [ ] Forced high-beam override during active FSD is not implemented: the lighting ECU decides from internal state and FSD forces adaptive logic, so shared-bus injection cannot override it. Achieving this would require inline MITM wiring (cut X197 9/10 and rewrite traffic through two CAN interfaces).
 - [ ] Bus2 frame recording and playback
 
 ---
@@ -244,13 +247,14 @@ pio run -e lilygo_t2can_dual -t upload --upload-port COM20
 
 ### Service Mode
 
-Toggle **Service Mode** in the web dashboard. When enabled, the device sends the following frame every 10ms to X197 Pin 9/10:
+Toggle **Service Mode** in the web dashboard. Per the official VCSEC_serviceDiagnosticRequest spec (start bit 47 = byte5 bit7), each toggle fires a **4-frame burst at 10ms spacing** on X197 Pin 9/10:
 
 ```
-ID: 0x339  DLC: 8  Data: 00 00 00 00 00 E0 00 00
+Enable:  ID 0x339  DLC 8  Data 00 00 00 00 00 80 00 00   (byte5 bit7 = 1)
+Disable: ID 0x339  DLC 8  Data 00 00 00 00 00 00 00 00
 ```
 
-Disable the toggle to stop transmission.
+This switch is RAM-only and defaults to off after reboot.
 
 ---
 

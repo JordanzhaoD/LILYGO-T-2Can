@@ -2,6 +2,7 @@
 
 #include "../can_frame_types.h"
 #include "can_driver.h"
+#include "../dash_twai_diag.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcpp"
 #include <driver/twai.h>
@@ -10,7 +11,7 @@
 #include <freertos/semphr.h>
 
 #ifndef TWAI_RX_QUEUE_LEN
-#define TWAI_RX_QUEUE_LEN 32
+#define TWAI_RX_QUEUE_LEN 128
 #endif
 #ifndef TWAI_TX_QUEUE_LEN
 #define TWAI_TX_QUEUE_LEN 16
@@ -74,6 +75,15 @@ public:
 
     bool enableInterrupt(void (* /*onReady*/)()) override { return false; }
 
+    DashTwaiDiag snapshotDiag()
+    {
+        lock();
+        updateDiagLocked();
+        DashTwaiDiag copy = diag_;
+        unlock();
+        return copy;
+    }
+
     bool read(CanFrame &frame) override
     {
         for (uint8_t attempt = 0; attempt < kReadDrainBudget; attempt++)
@@ -94,7 +104,12 @@ public:
                 unlock();
                 return false;
             }
+            diag_.framesRead++;
             bool accepted = exactFilterMatchesLocked(msg.identifier);
+            if (accepted)
+                diag_.framesAccepted++;
+            else
+                diag_.framesDropped++;
             unlock();
 
             if (!accepted)
@@ -107,6 +122,9 @@ public:
             return true;
         }
 
+        lock();
+        diag_.readDrainBudgetHits++;
+        unlock();
         return false;
     }
 
@@ -147,6 +165,50 @@ private:
     static constexpr uint8_t kReadDrainBudget = 8;
     static constexpr uint32_t BUSOFF_COOLDOWN_MS = 1000;
 
+    void updateDiagLocked()
+    {
+        if (!driverInstalled_)
+        {
+            diag_.state = DashTwaiState::Stopped;
+            return;
+        }
+#ifndef NATIVE_BUILD
+        twai_status_info_t status;
+        if (twai_get_status_info(&status) != ESP_OK)
+        {
+            diag_.state = DashTwaiState::Unknown;
+            return;
+        }
+        switch (status.state)
+        {
+        case TWAI_STATE_RUNNING:
+            diag_.state = DashTwaiState::Running;
+            break;
+        case TWAI_STATE_BUS_OFF:
+            diag_.state = DashTwaiState::BusOff;
+            break;
+        case TWAI_STATE_RECOVERING:
+            diag_.state = DashTwaiState::Recovering;
+            break;
+        case TWAI_STATE_STOPPED:
+            diag_.state = DashTwaiState::Stopped;
+            break;
+        default:
+            diag_.state = DashTwaiState::Unknown;
+            break;
+        }
+        diag_.txErrorCounter = status.tx_error_counter;
+        diag_.rxErrorCounter = status.rx_error_counter;
+        diag_.msgsToTx = status.msgs_to_tx;
+        diag_.msgsToRx = status.msgs_to_rx;
+        diag_.txFailed = status.tx_failed_count;
+        diag_.rxMissed = status.rx_missed_count;
+        diag_.rxOverrun = status.rx_overrun_count;
+        diag_.arbLost = status.arb_lost_count;
+        diag_.busError = status.bus_error_count;
+#endif
+    }
+
     bool exactFilterMatchesLocked(uint32_t id) const
     {
         if (exactFilterCount_ == 0)
@@ -175,6 +237,9 @@ private:
         if (now - lastRecovery_ < BUSOFF_COOLDOWN_MS)
             return;
         lastRecovery_ = now;
+        diag_.recoveries++;
+        diag_.lastRecoveryMs = now;
+        diag_.state = DashTwaiState::Recovering;
 
         stopAndUninstallLocked();
         driverOK_ = installAndStartLocked();
@@ -186,6 +251,9 @@ private:
         if (now - lastRecovery_ < BUSOFF_COOLDOWN_MS * 10)
             return;
         lastRecovery_ = now;
+        diag_.recoveries++;
+        diag_.lastRecoveryMs = now;
+        diag_.state = DashTwaiState::Recovering;
 
         stopAndUninstallLocked();
         driverOK_ = installAndStartLocked();
@@ -230,6 +298,7 @@ private:
         driverOK_ = false;
     }
 
+    DashTwaiDiag diag_;
     gpio_num_t txPin_;
     gpio_num_t rxPin_;
     twai_general_config_t g_config_;

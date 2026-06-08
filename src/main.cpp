@@ -23,6 +23,7 @@
 #endif
 
 #include "app.h"
+#include "dash_tx_evidence.h"
 
 #ifdef DRIVER_T2CAN_DUAL
 #include "drivers/esp32_mcp2515_driver.h"
@@ -94,6 +95,26 @@ static bool appTwaiGpioValid(gpio_num_t pin, bool tx)
 #ifdef DRIVER_T2CAN_DUAL
 static std::unique_ptr<ESP32_MCP2515Driver> appDriverSecondary;
 static volatile uint32_t t2canSecondaryRxCount = 0;
+static volatile uint32_t t2canSecondaryTxCount = 0;
+static volatile uint32_t t2canSecondaryTxErrCount = 0;
+static volatile uint8_t t2canSecondaryEflg = 0;
+static DashTxEvidence serviceTxEvidence;
+static DashTxEvidence fogTxEvidence;
+static DashTxEvidence stalkTxEvidence;
+const DashTxEvidence &t2canFogTxEvidence(void) { return fogTxEvidence; }
+const DashTxEvidence &t2canStalkTxEvidence(void) { return stalkTxEvidence; }
+static volatile uint8_t g_svcLastCommand = 0; // 0=none, 1=enter, 2=exit
+
+static bool t2canTxSecondaryCounted(const CanFrame &f)
+{
+    if (!appDriverSecondary)
+        return false;
+    bool ok = appDriverSecondary->send(f);
+    t2canSecondaryTxCount = t2canSecondaryTxCount + 1;
+    if (!ok)
+        t2canSecondaryTxErrCount = t2canSecondaryTxErrCount + 1;
+    return ok;
+}
 
 static void t2canSetupSecondary()
 {
@@ -124,7 +145,7 @@ bool t2canSendSecondary(const CanFrame &frame)
         return false;
     CanFrame f = frame;
     f.bus = T2CAN_SECONDARY_BUS;
-    return appDriverSecondary->send(f);
+    return t2canTxSecondaryCounted(f);
 }
 
 // ── bus2 discovered-ID table (X197 9/10) — for serial log + dashboard /bus2_ids ──
@@ -142,6 +163,12 @@ static volatile uint16_t g_bus2IdCount = 0;
 // Latest rolling counter seen on the real 0x249 SCCMLeftStalk stream, so an
 // injected test frame can ride just after it with the next counter value.
 static volatile uint8_t g_stalkLastCounter = 0;
+static void t2canBurstCheckTrigger(uint8_t status, uint32_t now);
+
+static void t2canWheelDndRecordNative(const CanFrame &f)
+{
+    dashWheelDndCtrl.recordNative3c2(f.data, millis());
+}
 
 static void t2canRecordBus2(const CanFrame &f)
 {
@@ -149,7 +176,13 @@ static void t2canRecordBus2(const CanFrame &f)
         return; // standard 11-bit IDs only (Tesla lighting/stalk are standard)
     uint16_t sid = (uint16_t)(f.id & 0x7FF);
     if (sid == 0x249 && f.dlc >= 2)
+    {
         g_stalkLastCounter = f.data[1] & 0x0F; // track real stalk counter
+        uint8_t status = (f.data[1] >> 4) & 0x07;
+        t2canBurstCheckTrigger(status, millis());
+    }
+    if (sid == 0x3C2 && f.dlc >= 8)
+        t2canWheelDndRecordNative(f);
     uint16_t n = g_bus2IdCount;
     for (uint16_t i = 0; i < n; i++)
     {
@@ -174,6 +207,12 @@ static void t2canRecordBus2(const CanFrame &f)
 
 // Accessors used by the dashboard /bus2_ids handler.
 uint16_t t2canBus2IdCount(void) { return g_bus2IdCount; }
+uint32_t t2canBus2RxCount(void) { return t2canSecondaryRxCount; }
+uint32_t t2canBus2TxCount(void) { return t2canSecondaryTxCount; }
+uint32_t t2canBus2TxErrCount(void) { return t2canSecondaryTxErrCount; }
+uint8_t t2canBus2Eflg(void) { return t2canSecondaryEflg; }
+const DashTxEvidence &t2canServiceTxEvidence(void) { return serviceTxEvidence; }
+uint8_t t2canServiceLastCommand(void) { return g_svcLastCommand; }
 bool t2canBus2IdAt(uint16_t i, uint16_t *id, uint8_t *dlc, uint8_t data[8], uint32_t *count)
 {
     if (i >= g_bus2IdCount)
@@ -213,17 +252,37 @@ static void t2canDrainSecondary()
     }
 }
 
-// ── Service mode (X197 pin 9/10 / bus B): periodic 0x339 injection ──
-// Owner-provided frame {00,00,00,00,00,E0,00,00}. RAM-only flag, OFF on boot;
-// injects only while explicitly enabled via the dashboard /service_mode toggle.
+// ── Service mode (BODY bus / bus B): VCSEC_serviceDiagnosticRequest 0x339 ──
+// Spec 2.4.1: send 4 frames at 10ms spacing on the BODY bus. The signal lives at
+// start bit 47 (Intel) = byte5 bit7: 1 = enter service mode, 0 = exit.
+//   activate   -> 00 00 00 00 00 80 00 00
+//   deactivate -> 00 00 00 00 00 00 00 00
+// RAM-only flag, OFF on boot; each dashboard /service_mode toggle fires one burst.
 static volatile bool g_t2canServiceMode = false;
+static volatile uint8_t g_svcBurstRemaining = 0;
+static volatile uint8_t g_svcBurstValue = 0;
 
-void t2canSetServiceMode(bool on) { g_t2canServiceMode = on; }
+void t2canSetServiceMode(bool on)
+{
+    g_t2canServiceMode = on;
+    g_svcLastCommand = on ? 1 : 2;
+    g_svcBurstValue = on ? 0x80 : 0x00;
+    g_svcBurstRemaining = 4;
+}
 bool t2canGetServiceMode(void) { return g_t2canServiceMode; }
+uint8_t t2canServiceBurstRemaining(void) { return g_svcBurstRemaining; }
+
+static bool recordServiceTxEvidence(const CanFrame &f, uint32_t now)
+{
+    serviceTxEvidence.recordAttempt(f.id, f.bus, f.dlc, f.data, now);
+    bool ok = t2canTxSecondaryCounted(f);
+    serviceTxEvidence.recordResult(ok);
+    return ok;
+}
 
 static void t2canServiceModeTick()
 {
-    if (!g_t2canServiceMode || !appDriverSecondary)
+    if (g_svcBurstRemaining == 0 || !appDriverSecondary)
         return;
     static uint32_t last = 0;
     uint32_t now = millis();
@@ -233,9 +292,13 @@ static void t2canServiceModeTick()
     CanFrame f = {};
     f.id = 0x339;
     f.dlc = 8;
-    f.data[5] = 0xE0;
+    f.data[5] = g_svcBurstValue;
     f.bus = T2CAN_SECONDARY_BUS;
-    appDriverSecondary->send(f);
+    bool ok = recordServiceTxEvidence(f, now);
+#ifdef ESP32_DASHBOARD
+    dashRecordCanFrame(f, ok ? 'T' : 'E');
+#endif
+    g_svcBurstRemaining = g_svcBurstRemaining - 1;
 }
 
 // ── Stalk injection test (0x249 SCCMLeftStalk on bus B / X197 9/10) ──
@@ -256,10 +319,184 @@ static inline uint8_t t2canStalkCrc(uint8_t counter, uint8_t status)
 static volatile uint8_t g_stalkInjStatus = 0;  // 0=off, 1=PULL, 2=PUSH
 static volatile uint32_t g_stalkInjUntil = 0;  // millis() deadline
 
+// ── Flash Burst (real double-PULL trigger) ───────────────────────
+// RAM-only and OFF on boot. When enabled, two real 0x249 PULL edges within
+// 2 seconds arm a firmware-timed PULL burst that reuses t2canStalkInjectTick().
+static volatile bool g_burstEnabled = false;
+static volatile uint8_t g_burstCount = 3;
+static volatile uint16_t g_burstOnMs = 180;
+static volatile uint16_t g_burstOffMs = 180;
+static volatile uint32_t g_burstLastPullMs = 0;
+static volatile uint32_t g_burstLastTriggerMs = 0;
+static volatile uint8_t g_burstPrevStatus = 0;
+static volatile uint8_t g_burstPhasesLeft = 0;
+static volatile bool g_burstOnPhase = false;
+static volatile bool g_burstPhaseActive = false;
+static volatile uint32_t g_burstPhaseEnd = 0;
+static volatile bool g_burstOwnsStalk = false;
+
+static constexpr uint32_t kBurstDoublePullWindowMs = 2000;
+static constexpr uint8_t kBurstMinCount = 1;
+static constexpr uint8_t kBurstMaxCount = 20;
+static constexpr uint16_t kBurstMinPhaseMs = 80;
+static constexpr uint16_t kBurstMaxPhaseMs = 1000;
+
+static void t2canBurstStop(bool clearOwnedStalk)
+{
+    g_burstPhasesLeft = 0;
+    g_burstOnPhase = false;
+    g_burstPhaseActive = false;
+    g_burstPhaseEnd = 0;
+    g_burstLastPullMs = 0;
+    if (clearOwnedStalk && g_burstOwnsStalk && g_stalkInjStatus == 1)
+    {
+        g_stalkInjStatus = 0;
+        g_stalkInjUntil = 0;
+    }
+    g_burstOwnsStalk = false;
+}
+
+void t2canSetBurstEnabled(bool on)
+{
+    g_burstEnabled = on;
+    if (!on)
+        t2canBurstStop(true);
+}
+
+bool t2canGetBurstEnabled(void) { return g_burstEnabled; }
+
+void t2canSetBurstParams(uint8_t count, uint16_t onMs, uint16_t offMs)
+{
+    if (count < kBurstMinCount)
+        count = kBurstMinCount;
+    if (count > kBurstMaxCount)
+        count = kBurstMaxCount;
+    if (onMs < kBurstMinPhaseMs)
+        onMs = kBurstMinPhaseMs;
+    if (onMs > kBurstMaxPhaseMs)
+        onMs = kBurstMaxPhaseMs;
+    if (offMs < kBurstMinPhaseMs)
+        offMs = kBurstMinPhaseMs;
+    if (offMs > kBurstMaxPhaseMs)
+        offMs = kBurstMaxPhaseMs;
+    g_burstCount = count;
+    g_burstOnMs = onMs;
+    g_burstOffMs = offMs;
+}
+
+uint8_t t2canGetBurstCount(void) { return g_burstCount; }
+uint16_t t2canGetBurstOnMs(void) { return g_burstOnMs; }
+uint16_t t2canGetBurstOffMs(void) { return g_burstOffMs; }
+bool t2canBurstIsRunning(void) { return g_burstPhaseActive || g_burstPhasesLeft > 0; }
+uint8_t t2canBurstPhasesLeft(void) { return g_burstPhasesLeft; }
+uint32_t t2canBurstLastPullMs(void) { return g_burstLastPullMs; }
+uint32_t t2canBurstLastTriggerMs(void) { return g_burstLastTriggerMs; }
+uint8_t t2canBurstPrevStatus(void) { return g_burstPrevStatus; }
+
+static void t2canBurstStart(uint32_t now)
+{
+    t2canBurstStop(true);
+    g_burstLastTriggerMs = now;
+    g_burstPhasesLeft = static_cast<uint8_t>(g_burstCount * 2);
+    g_burstOnPhase = false;
+    g_burstPhaseActive = false;
+    g_burstPhaseEnd = now;
+}
+
+static void t2canBurstCheckTrigger(uint8_t status, uint32_t now)
+{
+    if (!g_burstEnabled)
+    {
+        g_burstPrevStatus = status;
+        g_burstLastPullMs = 0;
+        return;
+    }
+    bool pullEdge = g_burstPrevStatus != 1 && status == 1;
+    g_burstPrevStatus = status;
+    if (!pullEdge || t2canBurstIsRunning())
+        return;
+    if (g_burstLastPullMs != 0 && (uint32_t)(now - g_burstLastPullMs) <= kBurstDoublePullWindowMs)
+    {
+        t2canBurstStart(now);
+        g_burstLastPullMs = 0;
+        return;
+    }
+    g_burstLastPullMs = now;
+}
+
+static void t2canBurstTick()
+{
+    if (!g_burstEnabled || (!g_burstPhaseActive && g_burstPhasesLeft == 0))
+    {
+        if (!g_burstEnabled)
+            t2canBurstStop(true);
+        return;
+    }
+    uint32_t now = millis();
+    if (g_burstPhaseActive && (int32_t)(now - g_burstPhaseEnd) < 0)
+    {
+        if (g_burstOnPhase)
+        {
+            g_stalkInjStatus = 1;
+            g_stalkInjUntil = g_burstPhaseEnd + 30;
+            g_burstOwnsStalk = true;
+        }
+        return;
+    }
+    if (g_burstPhaseActive)
+    {
+        if (g_burstOnPhase && g_burstOwnsStalk && g_stalkInjStatus == 1)
+        {
+            g_stalkInjStatus = 0;
+            g_stalkInjUntil = 0;
+            g_burstOwnsStalk = false;
+        }
+        g_burstPhaseActive = false;
+        if (g_burstPhasesLeft == 0)
+        {
+            g_burstOnPhase = false;
+            return;
+        }
+    }
+    g_burstOnPhase = !g_burstOnPhase;
+    g_burstPhaseActive = true;
+    g_burstPhasesLeft = g_burstPhasesLeft - 1;
+    if (g_burstOnPhase)
+    {
+        g_stalkInjStatus = 1;
+        g_burstPhaseEnd = now + g_burstOnMs;
+        g_stalkInjUntil = g_burstPhaseEnd + 30;
+        g_burstOwnsStalk = true;
+    }
+    else
+    {
+        if (g_burstOwnsStalk && g_stalkInjStatus == 1)
+        {
+            g_stalkInjStatus = 0;
+            g_stalkInjUntil = 0;
+        }
+        g_burstOwnsStalk = false;
+        g_burstPhaseEnd = now + g_burstOffMs;
+    }
+}
+
 void t2canStalkTest(uint8_t status, uint16_t durationMs)
 {
+    t2canBurstStop(true);
     g_stalkInjStatus = status;
     g_stalkInjUntil = millis() + durationMs;
+}
+
+static void t2canBus2HealthTick()
+{
+    if (!appDriverSecondary)
+        return;
+    static uint32_t last = 0;
+    uint32_t now = millis();
+    if (now - last < 500)
+        return;
+    last = now;
+    t2canSecondaryEflg = appDriverSecondary->mcp().getErrorFlags();
 }
 
 static void t2canStalkInjectTick()
@@ -286,37 +523,111 @@ static void t2canStalkInjectTick()
     f.data[2] = 0;
     f.data[3] = 0;
     f.bus = T2CAN_SECONDARY_BUS;
-    appDriverSecondary->send(f);
+    stalkTxEvidence.recordAttempt(f.id, f.bus, f.dlc, f.data, now);
+    bool ok = t2canTxSecondaryCounted(f);
+    stalkTxEvidence.recordResult(ok);
 #ifdef ESP32_DASHBOARD
-    dashRecordCanFrame(f, 'T');
+    dashRecordCanFrame(f, ok ? 'T' : 'E');
 #endif
 }
 
 // ── Fog light tick (Phase 4: 0x273 on bus B) ──────────────────
 static uint32_t g_fogLastMs = 0;
+static constexpr uint32_t kT2canGearFreshMs = 500;
+
+static void t2canSendFogFrame(const uint8_t data[8])
+{
+    CanFrame f = {};
+    f.id = CAN_ID_REAR_FOG_LIGHT;
+    f.dlc = 8;
+    memcpy(f.data, data, 8);
+    f.bus = T2CAN_SECONDARY_BUS;
+    uint32_t now = millis();
+    fogTxEvidence.recordAttempt(f.id, f.bus, f.dlc, f.data, now);
+    bool ok = t2canTxSecondaryCounted(f);
+    fogTxEvidence.recordResult(ok);
+#ifdef ESP32_DASHBOARD
+    dashRecordCanFrame(f, ok ? 'T' : 'E');
+#endif
+}
+
+static bool t2canGearIsFreshDrive(uint32_t now)
+{
+    return apRestoreState.gearSeen && apRestoreState.gearRaw == 4 &&
+           (now - apRestoreState.gearMs) <= kT2canGearFreshMs;
+}
 
 static void t2canFogLightTick()
 {
-    if (!appDriverSecondary || !dashFogCtrl.isActive())
+    if (!appDriverSecondary)
         return;
     uint32_t now = millis();
+    bool active = dashFogCtrl.isActive();
+    bool safeGear = t2canGearIsFreshDrive(now);
+
+    if (dashFogOffRequested || (active && !safeGear))
+    {
+        uint8_t offData[8];
+        dashFogCtrl.buildFrame(offData, false);
+        t2canSendFogFrame(offData);
+        dashFogCtrl.stop();
+        dashFogOffRequested = false;
+        g_fogLastMs = 0;
+        return;
+    }
+
+    if (!active)
+        return;
+
     uint32_t elapsed = g_fogLastMs ? (now - g_fogLastMs) : 0;
     g_fogLastMs = now;
     uint8_t data[8];
     if (dashFogCtrl.tick((int)elapsed, apRestoreState.gearRaw, data))
+        t2canSendFogFrame(data);
+    if (!dashFogCtrl.isActive())
+        g_fogLastMs = 0;
+}
+
+// ── Wheel DND tick (Phase 3: 0x3C2 on bus B) ──────────────────
+static bool g_wheelDndGateWasOpen = false;
+
+static void t2canWheelDndTick()
+{
+    if (!appDriverSecondary)
+        return;
+    bool gateOpen = canActive && dashDefenseEnabled && (dashDndVolume || dashDndSpeed);
+    if (!gateOpen)
+    {
+        dashWheelDndCtrl.reset();
+        g_wheelDndGateWasOpen = false;
+        return;
+    }
+    if (!g_wheelDndGateWasOpen)
+    {
+        if (dashDndVolume)
+            dashWheelDndCtrl.startVolume();
+        if (dashDndSpeed)
+            dashWheelDndCtrl.startSpeed();
+        g_wheelDndGateWasOpen = true;
+    }
+    if (!dashWheelDndCtrl.isRunning())
+        return;
+    uint8_t data[8];
+    if (dashWheelDndCtrl.tick((int)millis(), data))
     {
         CanFrame f = {};
-        f.id = 0x273;
+        f.id = 0x3C2;
         f.dlc = 8;
         memcpy(f.data, data, 8);
         f.bus = T2CAN_SECONDARY_BUS;
-        appDriverSecondary->send(f);
+        dashWheelDndCtrl.diag.tx.recordAttempt(f.id, f.bus, f.dlc, f.data, millis());
+        bool ok = t2canTxSecondaryCounted(f);
+        dashWheelDndCtrl.diag.tx.recordResult(ok);
+        dashWheelDndCtrl.diag.sequenceState = ok ? "sent" : "failed";
 #ifdef ESP32_DASHBOARD
-        dashRecordCanFrame(f, 'T');
+        dashRecordCanFrame(f, ok ? 'T' : 'E');
 #endif
     }
-    if (!dashFogCtrl.isActive())
-        g_fogLastMs = 0;
 }
 #endif
 
@@ -417,8 +728,11 @@ static void app_can_task(void *)
 #ifdef DRIVER_T2CAN_DUAL
         t2canDrainSecondary();
         t2canServiceModeTick();
+        t2canBus2HealthTick();
+        t2canBurstTick();
         t2canStalkInjectTick();
         t2canFogLightTick();
+        t2canWheelDndTick();
 #endif
         appCanTaskLoops = appCanTaskLoops + 1;
         if (!processed)
