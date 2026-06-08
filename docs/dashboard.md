@@ -5,12 +5,13 @@
 The dashboard is available on ESP32 builds that include `ESP32_DASHBOARD`. It runs from the device itself and is intended for local management at `http://100.100.1.1/` while connected to the device hotspot.
 ![Dashboard](img/dashboard.png)
 
-## Core Runtime Controls
+## Dashboard Surfaces
 
-- **Hardware**: switch the active runtime mode between `Legacy`, `HW3`, and `HW4`
-- **Speed Profile**: follow the stalk automatically or lock a manual profile; HW4 adds `Max` and `Sloth`
-- **Features**: only `Enable Logging` remains on the main card; the other vehicle overrides are no longer exposed there
-- **Injection control**: stop or resume CAN injection without reflashing, then reboot from the UI when needed
+The dashboard is organized around three usage surfaces:
+
+- **驾驶状态**: the default driving-first home page. It shows the FSD injection state, CAN health, hardware mode, drive style, speed strategy, runtime, firmware version, and safety warnings without exposing dense debug tables.
+- **现场遥控**: the mobile layout for hotspot use from a phone. It keeps the primary FSD injection action large, moves risky operations away from the first screen, and keeps status cards short enough for one-handed use.
+- **CAN 诊断**: the engineering mode for live frames, recording, controller status, debug logs, and last-write checks. This is where high-density CAN data belongs.
 
 ## CAN Tools
 
@@ -45,3 +46,7 @@ The dashboard is available on ESP32 builds that include `ESP32_DASHBOARD`. It ru
 - WiFi hotspot settings, WiFi internet settings, update flags, CAN pins, and several runtime defaults are stored in NVS
 - Installed plugins live on SPIFFS, start disabled after install, and restore their enabled or disabled state on boot
 - On AtomS3 Mini builds, the built-in button can toggle injection and that state is also persisted
+
+## UI Copy Notes
+
+The default dashboard UI uses Chinese labels for all user-facing controls. Technical acronyms such as FSD, CAN, HW, NVS, OTA, TX/RX, EFLG, DBC, and GPIO are intentionally kept in English because they are standard protocol or firmware terms.
