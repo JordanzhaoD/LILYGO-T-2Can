@@ -153,6 +153,16 @@ class SimState:
             "options": options,
         }
 
+    def gear_assist_status(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "enabled": False,
+            "armed": False,
+            "state": "standby",
+            "lastAction": "none",
+            "reason": "simulator",
+        }
+
     def status(self) -> dict[str, Any]:
         self.rx += random.randint(3, 18)
         if self.injection:
@@ -471,6 +481,8 @@ class Handler(BaseHTTPRequestHandler):
                     "otaClearCount": STATE.ota_clear_count,
                 }
             )
+        elif path == "/gear_assist_status":
+            self.send_obj(STATE.gear_assist_status())
         elif path == "/gear_status":
             self.send_obj(
                 {

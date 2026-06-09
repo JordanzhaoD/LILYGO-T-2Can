@@ -42,6 +42,11 @@ static const char DASH_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   --cockpit-radius-xl: 28px;
   --cockpit-radius-lg: 20px;
   --cockpit-shadow: 0 24px 64px rgba(0,0,0,0.35);
+  --cockpit-glow-purple: 0 0 42px rgba(124,58,237,0.22);
+  --cockpit-glow-cyan: 0 0 34px rgba(56,189,248,0.18);
+  --cockpit-glow-danger: 0 0 34px rgba(248,113,113,0.22);
+  --cockpit-glow-ok: 0 0 34px rgba(74,222,128,0.20);
+  --cockpit-card-blur: blur(22px) saturate(1.16);
 }
 /* === Reset & Base === */
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -327,57 +332,80 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .overlay.active { display: block; }
 
 /* === Atlas driving-first redesign === */
-.cockpit-home { display: grid; gap: 16px; }
+.cockpit-shell { position: relative; overflow: hidden; border: 1px solid var(--cockpit-stroke); border-radius: 30px; padding: 18px; background: radial-gradient(circle at 14% 0%, rgba(124,58,237,.20), transparent 34%), radial-gradient(circle at 88% 12%, rgba(56,189,248,.14), transparent 32%), linear-gradient(145deg, rgba(2,6,23,.84), rgba(8,13,24,.64)); box-shadow: var(--cockpit-shadow); }
+.cockpit-ambient { position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(148,163,184,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.035) 1px, transparent 1px); background-size: 44px 44px; mask-image: radial-gradient(circle at center, black, transparent 74%); opacity: .82; }
+.cockpit-home { position: relative; z-index: 1; display: grid; gap: 16px; }
 .cockpit-status-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
-.cockpit-title small { display: block; color: var(--cockpit-muted); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-.cockpit-title h2 { margin: 4px 0 0; font-size: 30px; line-height: 1; letter-spacing: -0.04em; }
-.cockpit-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
-.cockpit-chip { border: 1px solid var(--cockpit-stroke); border-radius: 999px; padding: 8px 12px; background: rgba(15,23,42,.62); color: var(--tx3); font-size: 12px; font-weight: 800; }
-.cockpit-chip.ok { color: var(--ok); border-color: rgba(74,222,128,.35); background: rgba(74,222,128,.08); }
-.cockpit-chip.warn { color: var(--warn); border-color: rgba(251,191,36,.35); background: rgba(251,191,36,.08); }
-.cockpit-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(320px, .88fr); gap: 16px; }
-.cockpit-primary { min-height: 340px; border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-xl); padding: 24px; background: radial-gradient(circle at 85% 0%, rgba(124,58,237,.18), transparent 32%), linear-gradient(145deg, rgba(15,23,42,.92), rgba(8,13,24,.78)); box-shadow: var(--cockpit-shadow); display: grid; grid-template-rows: 1fr auto; gap: 18px; overflow: hidden; }
-.cockpit-state-panel { min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-.cockpit-state-label { color: var(--cockpit-muted); font-size: 12px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
-.cockpit-state { width: 100%; font-size: clamp(74px, 11vw, 132px); line-height: .82; font-weight: 900; letter-spacing: -.055em; margin: 18px 0 10px; color: var(--err); text-align: center; text-shadow: 0 0 26px rgba(248,113,113,.18); }
-.cockpit-state.on { color: var(--ok); text-shadow: 0 0 30px rgba(74,222,128,.22); }
-.cockpit-state-desc { color: var(--tx2); font-size: 14px; line-height: 1.55; max-width: 520px; margin: 0 auto; }
-.cockpit-hold { width: 100%; min-height: 68px; margin-top: 18px; border: none; border-radius: 22px; background: linear-gradient(135deg, #991b1b, #ef4444); color: white; font-size: 16px; font-weight: 900; letter-spacing: .04em; cursor: pointer; box-shadow: 0 16px 36px rgba(239,68,68,.20); }
-.cockpit-hold.on { background: linear-gradient(135deg, #047857, #22c55e); box-shadow: 0 16px 36px rgba(34,197,94,.20); }
+.cockpit-title small { display: block; color: var(--cockpit-muted); font-size: 11px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
+.cockpit-title h2 { margin: 4px 0 0; font-size: 32px; line-height: .98; letter-spacing: -0.05em; }
+.cockpit-chip-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.cockpit-chip { border: 1px solid var(--cockpit-stroke); border-radius: 999px; padding: 8px 12px; background: rgba(15,23,42,.62); color: var(--tx3); font-size: 12px; font-weight: 850; backdrop-filter: var(--cockpit-card-blur); }
+.cockpit-chip.ok { color: var(--ok); border-color: rgba(74,222,128,.35); background: rgba(74,222,128,.09); }
+.cockpit-chip.warn { color: var(--warn); border-color: rgba(251,191,36,.35); background: rgba(251,191,36,.09); }
+.cockpit-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(360px, .95fr); gap: 16px; }
+.cockpit-home-main { display: grid; gap: 12px; }
+.cockpit-primary { min-height: 360px; border: 1px solid var(--cockpit-stroke-strong); border-radius: var(--cockpit-radius-xl); padding: 24px; background: radial-gradient(circle at 86% 0%, rgba(124,58,237,.24), transparent 34%), linear-gradient(145deg, rgba(15,23,42,.90), rgba(8,13,24,.70)); box-shadow: var(--cockpit-shadow), var(--cockpit-glow-purple); display: grid; grid-template-rows: 1fr auto; gap: 18px; overflow: hidden; backdrop-filter: var(--cockpit-card-blur); }
+.cockpit-state-panel { min-height: 230px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.cockpit-state-label { color: var(--cockpit-muted); font-size: 12px; font-weight: 950; letter-spacing: .16em; text-transform: uppercase; }
+.cockpit-state { width: 100%; font-size: clamp(86px, 12vw, 152px); line-height: .78; font-weight: 950; letter-spacing: -.075em; margin: 18px 0 12px; color: var(--err); text-align: center; text-shadow: var(--cockpit-glow-danger); }
+.cockpit-state.on { color: var(--ok); text-shadow: var(--cockpit-glow-ok); }
+.cockpit-state-desc { color: var(--tx2); font-size: 14px; line-height: 1.55; max-width: 540px; margin: 0 auto; }
+.cockpit-hold { width: 100%; min-height: 72px; margin-top: 18px; border: none; border-radius: 24px; background: linear-gradient(135deg, #991b1b, #ef4444); color: white; font-size: 16px; font-weight: 950; letter-spacing: .045em; cursor: pointer; box-shadow: 0 18px 42px rgba(239,68,68,.24); }
+.cockpit-hold.on { background: linear-gradient(135deg, #047857, #22c55e); box-shadow: 0 18px 42px rgba(34,197,94,.22); }
 .cockpit-metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
-.cockpit-metric { min-height: 92px; border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-lg); background: rgba(15,23,42,.58); padding: 14px; }
-.cockpit-metric .lbl { color: var(--cockpit-muted); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
-.cockpit-metric .val { margin-top: 8px; color: var(--tx1); font-size: 24px; font-weight: 900; letter-spacing: -0.04em; overflow-wrap: anywhere; }
+.cockpit-metric { min-height: 96px; border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-lg); background: rgba(15,23,42,.58); padding: 14px; backdrop-filter: var(--cockpit-card-blur); }
+.cockpit-metric .lbl { color: var(--cockpit-muted); font-size: 10px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+.cockpit-metric .val { margin-top: 8px; color: var(--tx1); font-size: 24px; font-weight: 900; letter-spacing: -0.045em; overflow-wrap: anywhere; }
 .cockpit-metric .hint { margin-top: 4px; color: var(--cockpit-dim); font-size: 11px; }
-.cockpit-vehicle { border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-xl); background: linear-gradient(145deg, rgba(15,23,42,.68), rgba(8,13,24,.86)); padding: 20px; box-shadow: var(--cockpit-shadow); }
+.cockpit-vehicle { border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-xl); background: linear-gradient(145deg, rgba(15,23,42,.60), rgba(8,13,24,.82)); padding: 20px; box-shadow: var(--cockpit-shadow), var(--cockpit-glow-cyan); backdrop-filter: var(--cockpit-card-blur); }
+.cockpit-vehicle-visual { position: relative; min-height: 220px; display: grid; place-items: center; margin: 14px 0; border-radius: 24px; overflow: hidden; background: radial-gradient(circle at 50% 45%, rgba(56,189,248,.17), transparent 38%), linear-gradient(180deg, rgba(2,6,23,.30), rgba(2,6,23,.72)); }
+.vehicle-lane { position: absolute; inset: 0; background: linear-gradient(90deg, transparent 18%, rgba(56,189,248,.20) 50%, transparent 82%); clip-path: polygon(43% 0, 57% 0, 82% 100%, 18% 100%); opacity: .72; }
+.vehicle-silhouette { position: relative; width: 46%; min-width: 180px; height: 132px; border-radius: 42% 42% 28% 28%; background: linear-gradient(145deg, rgba(226,232,240,.94), rgba(100,116,139,.22)); box-shadow: 0 24px 70px rgba(56,189,248,.18); }
+.vehicle-silhouette::before { content: ''; position: absolute; inset: 18px 32px 54px; border-radius: 999px 999px 18px 18px; background: linear-gradient(90deg, rgba(15,23,42,.86), rgba(56,189,248,.22)); }
+.vehicle-silhouette::after { content: ''; position: absolute; left: 18%; right: 18%; bottom: 18px; height: 10px; border-radius: 999px; background: rgba(56,189,248,.72); box-shadow: 0 0 24px rgba(56,189,248,.45); }
 .cockpit-mode-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin-top: 14px; }
 .cockpit-mode { border: 1px solid var(--cockpit-stroke); border-radius: 18px; background: rgba(15,23,42,.55); padding: 14px; }
 .cockpit-mode.active { border-color: rgba(124,58,237,.58); background: rgba(124,58,237,.16); }
 .cockpit-mode strong { display: block; margin-top: 5px; font-size: 16px; }
 .cockpit-mode span { display: block; margin-top: 4px; color: var(--tx3); font-size: 11px; line-height: 1.35; }
-.cockpit-warning { border: 1px solid rgba(251,191,36,.35); border-radius: 18px; background: rgba(251,191,36,.08); padding: 14px; color: var(--tx2); font-size: 13px; line-height: 1.45; }
+.cockpit-safety-strip, .cockpit-warning { border: 1px solid rgba(251,191,36,.35); border-radius: 18px; background: rgba(251,191,36,.08); padding: 14px; color: var(--tx2); font-size: 13px; line-height: 1.45; }
 .mobile-remote { display: none; }
-.mobile-primary-card { border-radius: 26px; padding: 20px; color: #fff; background: radial-gradient(circle at 82% 0%, rgba(96,165,250,.32), transparent 34%), linear-gradient(145deg, #111827, #312e81); box-shadow: 0 18px 42px rgba(49,46,129,.28); }
-.mobile-primary-card .mobile-state { font-size: 58px; line-height: .9; font-weight: 900; letter-spacing: -.08em; margin: 12px 0 4px; color: #fecaca; }
-.mobile-primary-card .mobile-state.on { color: #bbf7d0; }
+.mobile-app-shell { border-radius: 28px; padding: 16px; background: linear-gradient(180deg, #f8fafc, #e9eef7); color: #111827; box-shadow: 0 18px 50px rgba(0,0,0,.22); }
+.mobile-app-shell .cockpit-title small { color: #64748b; }
+.mobile-app-shell .cockpit-title h2 { color: #0f172a; }
+.mobile-app-shell .cockpit-chip { background: #fff; color: #334155; border-color: #e2e8f0; }
+.mobile-primary-card { margin-top: 14px; border-radius: 30px; padding: 22px; color: white; background: radial-gradient(circle at 86% 0%, rgba(56,189,248,.34), transparent 34%), linear-gradient(145deg, #111827, #312e81); box-shadow: 0 18px 42px rgba(49,46,129,.28); }
+.mobile-primary-card .cockpit-state-label { color: #c4b5fd; }
+.mobile-primary-card .mobile-state { font-size: 74px; line-height: .86; font-weight: 950; letter-spacing: -.1em; margin: 14px 0 4px; color: #ffb4bd; text-shadow: 0 0 24px rgba(255,180,189,.24); }
+.mobile-primary-card .mobile-state.on { color: #adffc8; text-shadow: 0 0 24px rgba(173,255,200,.26); }
 .mobile-primary-card p { color: #cbd5e1; font-size: 13px; line-height: 1.45; margin: 0; }
-.mobile-hold { width: 100%; min-height: 54px; margin-top: 14px; border: none; border-radius: 18px; background: #ef4444; color: white; font-weight: 900; }
-.mobile-hold.on { background: #16a34a; }
+.mobile-hold { width: 100%; min-height: 58px; margin-top: 14px; border: none; border-radius: 22px; background: #ef4444; color: white; font-weight: 950; letter-spacing: .04em; box-shadow: 0 12px 26px rgba(239,68,68,.25); }
+.mobile-hold.on { background: #16a34a; box-shadow: 0 12px 26px rgba(22,163,74,.24); }
 .mobile-remote-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; margin-top: 12px; }
-.mobile-remote-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 18px; padding: 12px; }
-.mobile-remote-card .lbl { color: var(--tx3); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
-.mobile-remote-card .val { margin-top: 7px; font-size: 20px; font-weight: 900; overflow-wrap: anywhere; }
-.mobile-alert-card { margin-top: 12px; border: 1px solid rgba(251,191,36,.35); border-radius: 18px; background: rgba(251,191,36,.08); padding: 12px; color: var(--tx2); font-size: 12px; line-height: 1.45; }
+.mobile-remote-card { background: white; border: 1px solid #e2e8f0; border-radius: 22px; padding: 14px; min-height: 86px; }
+.mobile-remote-card .lbl { color: #64748b; font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.mobile-remote-card .val { margin-top: 7px; color: #0f172a; font-size: 21px; font-weight: 900; overflow-wrap: anywhere; }
+.mobile-risk-note, .mobile-alert-card { margin-top: 12px; border-radius: 22px; padding: 14px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 13px; line-height: 1.45; }
 .diag-shell { display: grid; grid-template-columns: 260px minmax(0,1fr); gap: 14px; }
+.diag-console { align-items: start; }
 .diag-kpi-rail { display: grid; gap: 10px; }
 .diag-kpi { border: 1px solid var(--border); border-radius: 16px; background: var(--card-bg); padding: 13px; }
+.diag-kpi-rail .diag-kpi { min-height: 92px; }
 .diag-kpi .lbl { color: var(--tx3); font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
 .diag-kpi .val { margin-top: 7px; font-size: 22px; font-weight: 900; overflow-wrap: anywhere; }
 .diag-main-panel { min-width: 0; }
 .diag-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
 .diag-toolbar .inp { flex: 1; }
-.diag-table-shell { max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: 16px; }
-.diag-table-shell .tbl th { position: sticky; top: 0; background: var(--card-bg); z-index: 1; }
+.diag-table-shell { max-height: 390px; overflow: auto; border: 1px solid var(--cockpit-stroke); border-radius: 20px; background: rgba(2,6,23,.42); }
+.diag-priority-row { display: grid; grid-template-columns: 96px 62px 54px minmax(220px, 1fr) 76px; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid rgba(148,163,184,.11); font-family: 'SF Mono', 'Courier New', monospace; font-size: 12px; }
+.diag-priority-row.header { background: rgba(15,23,42,.86); color: var(--tx3); font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; position: sticky; top: 0; z-index: 1; }
+.diag-priority-row.warn { background: rgba(251,191,36,.08); }
+.diag-priority-row.err { background: rgba(248,113,113,.09); }
+.diag-timeline { margin-top: 14px; border: 1px solid var(--cockpit-stroke); border-radius: 18px; padding: 14px; background: rgba(15,23,42,.48); }
+.diag-timeline .label { color: var(--cockpit-muted); font-size: 10px; font-weight: 900; letter-spacing: .10em; text-transform: uppercase; }
+.diag-bars { display: grid; gap: 8px; margin-top: 10px; }
+.diag-bar { height: 9px; border-radius: 999px; overflow: hidden; background: rgba(15,23,42,.90); }
+.diag-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--info)); }
 .diag-row-warn { background: rgba(251,191,36,.08); }
 .diag-row-error { background: rgba(248,113,113,.10); }
 @media (max-width: 900px) {
@@ -397,6 +425,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .cockpit-hold { min-height: 56px; border-radius: 18px; font-size: 14px; }
   .cockpit-mode-grid { grid-template-columns: 1fr; }
   .diag-toolbar { flex-direction: column; }
+  .diag-priority-row { grid-template-columns: 78px 46px 42px minmax(150px, 1fr) 54px; gap: 6px; font-size: 11px; padding: 9px 10px; }
 }
 
 /* === Scrollbar === */
@@ -517,7 +546,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <!-- Page 1: Overview -->
     <div class="page active" id="pg-overview">
       <div class="desktop-home">
-        <div class="cockpit-home">
+        <div class="cockpit-shell">
+          <div class="cockpit-ambient"></div>
+          <div class="cockpit-home">
         <div class="cockpit-status-bar">
           <div class="cockpit-title">
             <small>ATLAS T-2CAN</small>
@@ -560,9 +591,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
             <div class="cockpit-status-bar">
               <div class="cockpit-title">
                 <small>车辆与防护</small>
-                <h2>现场状态</h2>
+                <h2>车辆态势</h2>
               </div>
               <span class="cockpit-chip warn" id="tb-fsd-local">FSD 防护</span>
+            </div>
+            <div class="cockpit-vehicle-visual" aria-label="车辆态势视觉">
+              <div class="vehicle-lane"></div>
+              <div class="vehicle-silhouette"></div>
             </div>
             <div class="cockpit-mode-grid">
               <div class="cockpit-mode active"><div>🎯</div><strong id="ov-drive-current">Normal</strong><span>当前驾驶风格</span></div>
@@ -574,7 +609,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
               <div class="cockpit-mode"><div>📦</div><strong id="s-ver">--</strong><span>固件版本</span></div>
               <div class="cockpit-mode"><div>📡</div><strong id="m-rxtx">0 / 0</strong><span>RX / TX</span></div>
             </div>
-            <div class="cockpit-warning" id="m-alert">暂无异常。实验功能请在停车和安全环境下验证。</div>
+            <div class="cockpit-safety-strip" id="m-alert">安全优先：暂无异常。实验功能请在停车和安全环境下验证。</div>
           </div>
         </div>
 
@@ -708,10 +743,12 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
             <div class="stat"><div class="stat-lbl">换挡辅助</div><div class="stat-val" style="color:var(--tx3)">未实现</div></div>
           </div>
         </div>
+          </div>
         </div>
       </div>
 
       <div class="mobile-remote">
+        <div class="mobile-app-shell">
         <div class="cockpit-status-bar">
           <div class="cockpit-title">
             <small>ATLAS REMOTE</small>
@@ -731,7 +768,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           <div class="mobile-remote-card"><div class="lbl">硬件模式</div><div class="val" id="m-hw">Auto</div></div>
           <div class="mobile-remote-card"><div class="lbl">帧率</div><div class="val" id="m-fps">0.0 Hz</div></div>
         </div>
-        <div class="mobile-alert-card">底部导航保留常用入口；重启、爆闪、维修模式等危险操作移入 More 和二级页面。</div>
+        <div class="mobile-risk-note">危险操作已收纳到底部导航的“更多”和对应二级页面；首页只保留现场安全遥控。</div>
+        </div>
       </div>
     </div>
 
@@ -1452,12 +1490,22 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <!-- Page 10: CAN Tools -->
     <div class="page" id="pg-can">
 <div class="page-title">CAN 诊断</div>
-<div class="diag-shell">
+<!-- legacy contract marker: class="diag-shell" -->
+<div class="diag-shell diag-console">
   <aside class="diag-kpi-rail">
     <div class="diag-kpi"><div class="lbl">CAN1 RX/TX</div><div class="val" id="diag-rxtx">0 / 0</div></div>
     <div class="diag-kpi"><div class="lbl">CAN2 EFLG</div><div class="val" id="diag-eflg">0x00</div></div>
     <div class="diag-kpi"><div class="lbl">发送错误</div><div class="val" id="diag-txerr">0</div></div>
     <div class="diag-kpi"><div class="lbl">最近写入</div><div class="val" id="diag-last-write">--</div></div>
+    <div class="diag-kpi"><div class="lbl">发现 ID</div><div class="val" id="diag-id-count">--</div></div>
+    <div class="diag-timeline">
+      <div class="label">LIVE TIMELINE</div>
+      <div class="diag-bars">
+        <div class="diag-bar"><span style="width:82%"></span></div>
+        <div class="diag-bar"><span style="width:54%"></span></div>
+        <div class="diag-bar"><span style="width:28%"></span></div>
+      </div>
+    </div>
     <div class="card">
       <div class="card-title">CAN 引脚</div>
       <div class="diag-grid">
@@ -1498,10 +1546,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <span style="color:var(--tx3);font-size:11px" id="sniff-count">0 实时帧</span>
     </div>
     <div class="diag-table-shell">
-      <table class="tbl">
-        <thead><tr><th>ID</th><th>Dir</th><th>数据</th><th>Age</th></tr></thead>
-        <tbody id="sniff-rows"></tbody>
-      </table>
+      <div class="diag-priority-row"><span>ID</span><span>DIR</span><span>DLC</span><span>DATA / EVENT</span><span>AGE</span></div>
+      <div id="sniff-rows"></div>
     </div>
   </div>
 </div>
@@ -3168,11 +3214,14 @@ function renderSniffer(){
     count++;
     var dataStr='';
     if(fr.data){for(var j=0;j<fr.data.length;j++){if(j)dataStr+=' ';dataStr+=('0'+fr.data[j].toString(16).toUpperCase()).slice(-2)}}
-    html+='<tr><td class="hex">'+idStr+(name?' <span style="color:var(--tx3);font-size:10px">'+escHtml(name)+'</span>':'')
-      +'</td><td>RX</td><td class="hex">'+dataStr+'</td><td>--</td></tr>';
+    var rowCls=(name.toLowerCase().indexOf('err')>=0||idStr.toLowerCase().indexOf('txerr')>=0)?'warn':'';
+    var dlc=(fr.dlc!==undefined)?fr.dlc:(fr.data?fr.data.length:'--');
+    html+='<div class="diag-priority-row '+rowCls+'"><span class="hex">'+idStr+(name?' <span style="color:var(--tx3);font-size:10px">'+escHtml(name)+'</span>':'')
+      +'</span><span>RX</span><span>'+dlc+'</span><span class="hex">'+dataStr+'</span><span>--</span></div>';
   }
   rows.innerHTML=html;
   setText('sniff-count',count+' 实时帧');
+  setText('diag-id-count',count||'--');
 }
 
 function toggleSniffPause(){

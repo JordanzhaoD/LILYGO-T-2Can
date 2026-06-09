@@ -9,9 +9,9 @@ The dashboard is available on ESP32 builds that include `ESP32_DASHBOARD`. It ru
 
 The dashboard is organized around three usage surfaces:
 
-- **驾驶状态 / 驾驶状态中心**: the default driving-first home page. It shows the FSD injection state, CAN health, hardware mode, drive style, speed strategy, runtime, firmware version, and safety warnings without exposing dense debug tables.
-- **现场遥控**: the mobile layout for hotspot use from a phone. It keeps the primary FSD injection action large, moves risky operations away from the first screen, and keeps status cards short enough for one-handed use.
-- **CAN 诊断**: the engineering mode for live frames, recording, controller status, debug logs, and last-write checks. This is where high-density CAN data belongs.
+- **驾驶状态 / 驾驶状态中心**: the default driving-first home page. It now uses a cockpit shell, ambient grid, large FSD state, vehicle attitude visual, safety strip, CAN health, hardware mode, drive style, speed strategy, runtime, firmware version, and grouped runtime metrics without exposing dense debug tables.
+- **现场遥控**: the mobile layout for hotspot use from a phone. It uses a native-app-style card with one primary long-press FSD action, status cards short enough for one-handed use, and secondary risky actions kept out of the first screen.
+- **CAN 诊断**: the engineering mode for live frames, recording, controller status, debug logs, and last-write checks. It uses an engineering-console hierarchy with KPI rail, frame filter, error-priority table, live timeline, recorder, controller, and debug surfaces.
 
 ## CAN Tools
 

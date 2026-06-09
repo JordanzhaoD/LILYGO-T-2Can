@@ -1513,6 +1513,67 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, body)
 
+    def test_atlas_polish_cockpit_visual_depth_is_present(self) -> None:
+        """Cockpit home should feel like a car display without losing production ids."""
+        overview_page = re.search(r'id="pg-overview".*?id="pg-hardware"', self.ui, re.S)
+        self.assertIsNotNone(overview_page)
+        body = overview_page.group(0)
+        for token in [
+            'class="cockpit-shell"',
+            'class="cockpit-ambient"',
+            'class="cockpit-vehicle-visual"',
+            'class="vehicle-lane"',
+            'class="vehicle-silhouette"',
+            'class="cockpit-safety-strip"',
+            'id="ov-drive-current"',
+            'id="tb-fsd-local"',
+            '驾驶状态中心',
+            '车辆态势',
+            '安全优先',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, body)
+
+    def test_atlas_polish_mobile_remote_app_surface_is_present(self) -> None:
+        """Mobile home should use a native remote-card visual hierarchy."""
+        for token in [
+            'class="mobile-app-shell"',
+            'class="mobile-primary-card"',
+            'class="mobile-remote-grid"',
+            'class="mobile-risk-note"',
+            '现场遥控',
+            '长按启用',
+            '危险操作已收纳',
+            '底部导航',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_atlas_polish_can_engineering_console_is_present(self) -> None:
+        """CAN diagnostics should expose a deliberate engineering-console hierarchy."""
+        can_page = re.search(r'id="pg-can".*?id="pg-shift"', self.ui, re.S)
+        self.assertIsNotNone(can_page)
+        body = can_page.group(0)
+        for token in [
+            'class="diag-shell diag-console"',
+            'class="diag-timeline"',
+            'class="diag-kpi-rail"',
+            'class="diag-table-shell"',
+            'class="diag-priority-row"',
+            '工程模式',
+            '错误优先',
+            '发现 ID',
+            'LIVE TIMELINE',
+            'DLC',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, body)
+
+    def test_webui_simulator_serves_gear_assist_status(self) -> None:
+        """Local browser verification should not produce a 404 for gear assist status."""
+        self.assertIn('"/gear_assist_status"', self.simulator)
+        self.assertIn('gear_assist_status', self.simulator)
+
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
         self.assertEqual("4.1.0", self.version.strip())
