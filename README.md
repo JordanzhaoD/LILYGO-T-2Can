@@ -43,6 +43,16 @@
 
 > **注意：** CAN 总线需要 120Ω 终端电阻。请确认车辆端已有终端电阻，否则需外接。
 
+### Waveshare 单 CAN 独立版
+
+微雪 ESP32-S3-RS485-CAN 请使用 `waveshare_single_can_standalone` 环境。该版本只使用单路 TWAI CAN（GPIO15 TX / GPIO16 RX），保留 FSD 激活、速度策略、驾驶风格、网络设置、OTA 升级和单 CAN 诊断；CAN2、MCP2515、Bus2、Service Mode、Stalk/highbeam、灯光特技入口会按 capabilities 隐藏或不注册。
+
+```bash
+pio run -e waveshare_single_can_standalone
+```
+
+AP Injection Gate 安全策略对齐 `ev-open-can-tools v3.0.2-beta.3`：Legacy `0x3EE mux0` 在 gate 开启时必须等待 AP active 连续 2 秒；unknown/invalid/SNA gear 默认 fail-closed。该策略降低 2026.8.3.6 相关误注入风险，但不承诺全车型直接兼容。
+
 ---
 
 ### 功能列表

@@ -18,6 +18,24 @@ The project is PlatformIO-only. Pick the correct board environment in `platformi
 | `esp32_ext_mcp2515` | ESP32-S3 + external MCP2515 | Dashboard build for SPI MCP2515 hardware |
 | `waveshare_ESP32_S3_RS485_CAN` | Waveshare ESP32-S3 RS485/CAN | TWAI dashboard build |
 
+## Waveshare 单 CAN 独立版
+
+`waveshare_single_can_standalone` 是微雪 ESP32-S3-RS485-CAN 的长期维护入口。它使用 ESP32-S3 内置 TWAI 单路 CAN，不初始化 MCP2515，也不暴露 CAN2、Bus2、Service Mode、Stalk/highbeam 或灯光特技执行入口。
+
+Build:
+
+```bash
+pio run -e waveshare_single_can_standalone
+```
+
+Upload:
+
+```bash
+pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbmodem21101
+```
+
+首次接车前先连接 Dashboard，确认 `/status.capabilities.singleCan=true`、`/status.capabilities.can2Available=false`，并确认 FSD 注入处于关闭状态。
+
 ## Hardware Notes
 
 Some CAN boards and adapters include an onboard 120 ohm termination resistor. When installing on an existing vehicle CAN bus, do not add another termination point: cut or remove the board's 120 ohm resistor if the adapter has one fitted.
