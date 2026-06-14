@@ -98,6 +98,73 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("d.hwName||hwLabel(d.hw)", self.ui)
         self.assertIn("d.uiBuildUtc||d.uiBuildId||d.buildEnv", self.ui)
 
+    def test_waveshare_single_can_standalone_env_is_declared(self) -> None:
+        pio = (ROOT / "platformio.ini").read_text(encoding="utf-8")
+        self.assertIn("[env:waveshare_single_can_standalone]", pio)
+        self.assertIn("-DDRIVER_TWAI", pio)
+        self.assertIn("-DESP32_DASHBOARD", pio)
+        self.assertIn("-DDASH_SINGLE_CAN_STANDALONE=1", pio)
+        self.assertIn("-DDASH_INITIAL_HW_MODE=3", pio)
+        self.assertIn("-DTWAI_TX_PIN=GPIO_NUM_15", pio)
+        self.assertIn("-DTWAI_RX_PIN=GPIO_NUM_16", pio)
+        self.assertIn("partitions_16mb_ota_4096k_nvs64.csv", pio)
+
+    def test_status_exposes_single_can_capabilities(self) -> None:
+        for token in [
+            "dashCapabilitiesJson",
+            '"capabilities"',
+            '"singleCan"',
+            '"can2Available"',
+            '"lightingBusSupported"',
+            '"serviceModeSupported"',
+            '"stalkTestSupported"',
+            '"bus2SnifferSupported"',
+            '"fsdActivation"',
+            '"speedStrategy"',
+            '"driveProfile"',
+            '"networkSettings"',
+            '"otaUpdate"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+    def test_single_can_build_gates_can2_only_routes(self) -> None:
+        for token in [
+            "DASH_SINGLE_CAN_STANDALONE",
+            "server.on(\"/service_mode\", HTTP_GET, handleServiceMode);",
+            "server.on(\"/stalk_test\", HTTP_GET, handleStalkTest);",
+            "server.on(\"/burst\", HTTP_GET, handleBurst);",
+            "server.on(\"/bus2_ids\", HTTP_GET, handleBus2Ids);",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        self.assertRegex(
+            self.dash,
+            r"#if defined\(DRIVER_T2CAN_DUAL\) && !defined\(DASH_SINGLE_CAN_STANDALONE\).*?/bus2_ids",
+        )
+        self.assertRegex(
+            self.dash,
+            r"#if !defined\(DASH_SINGLE_CAN_STANDALONE\).*?/lighting_config",
+        )
+
+    def test_single_can_ui_uses_capabilities_to_hide_can2_and_lighting(self) -> None:
+        for token in [
+            "var CAP=",
+            "function applyCapabilities(c)",
+            "data-cap=\"can2\"",
+            "data-cap=\"lighting\"",
+            "cap-hidden",
+            "applyCapabilities(d.capabilities||{})",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_single_can_docs_are_present(self) -> None:
+        building = (ROOT / "docs" / "building.md").read_text(encoding="utf-8")
+        self.assertIn("waveshare_single_can_standalone", building)
+        self.assertIn("Waveshare 单 CAN", self.readme)
+        self.assertIn("DASH_SINGLE_CAN_STANDALONE", self.changelog)
+
     def test_legacy_fsd_diag_and_config_are_exposed(self) -> None:
         for token in [
             '"fsdDiag"',
