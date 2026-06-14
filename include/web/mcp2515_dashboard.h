@@ -225,7 +225,7 @@ static constexpr bool kDashBus2SnifferSupported = kDashCan2Available;
 static String dashCapabilitiesJson()
 {
     String j = "{";
-    j += "singleCan"; j += "\":";           // "singleCan":
+    j += "\""; j += "singleCan"; j += "\":";           // "singleCan":
     j += kDashSingleCanStandalone ? "true" : "false";
     j += ",\""; j += "can2Available"; j += "\":";   // "can2Available":
     j += kDashCan2Available ? "true" : "false";
