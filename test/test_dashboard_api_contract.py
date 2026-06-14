@@ -214,6 +214,9 @@ class DashboardApiContractTests(unittest.TestCase):
             'firstMux0RxMs',
             'firstTxOkMs',
             'firstTxFailMs',
+            'LegacyFsdSettle',
+            'legacy_fsd_settle',
+            'legacyFsdActivationAllowed',
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.handlers + (ROOT / "include" / "dash_fsd_diag.h").read_text(encoding="utf-8"))
@@ -235,6 +238,10 @@ class DashboardApiContractTests(unittest.TestCase):
             'FsdGateBlockReason::Ota',
             'FsdGateBlockReason::ApGate',
             'FsdGateBlockReason::CompileGate',
+            'dashLegacyFsdActivationAllowed',
+            'requiredStableMs',
+            'legacyFsdAllowed',
+            'blockedFrame',
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.dash)

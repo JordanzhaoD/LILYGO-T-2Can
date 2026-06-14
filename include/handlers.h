@@ -136,6 +136,7 @@ struct CarManagerBase
     bool (*checkIsa)() = nullptr;
     bool (*checkEvd)() = nullptr;
     FsdGateBlockReason (*gateBlockReason)() = nullptr;
+    bool (*legacyFsdActivationAllowed)(uint32_t nowMs) = nullptr;
 
     bool injectionGateOpen() const
     {
@@ -373,11 +374,16 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.health = FsdHealthState::NotTriggered;
                     return;
                 }
-                if (!injectionAllowed())
+                bool legacyActivationAllowed = legacyFsdActivationAllowed
+                    ? legacyFsdActivationAllowed(nowMs)
+                    : injectionAllowed();
+                if (!legacyActivationAllowed)
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
-                    legacyFsdDiag.lastBlockedBy = currentGateBlockReason();
+                    legacyFsdDiag.lastBlockedBy = legacyFsdActivationAllowed
+                        ? FsdGateBlockReason::LegacyFsdSettle
+                        : currentGateBlockReason();
                     return;
                 }
 

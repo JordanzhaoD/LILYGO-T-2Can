@@ -157,6 +157,14 @@ static bool apAutoRestore = false;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
 static volatile uint32_t lastInjectMs = 0;
+// Legacy FSD (0x3EE mux0) AP-settle activation gate — upstream beta3 parity.
+// Legacy injection must wait ~2 s after APActive first rises (and CAN must be
+// active, OTA not blocking, apInjectionGate open) before mux0 bit46 fires.
+static constexpr uint32_t kLegacyFsdActivationSettleMs = 2000;
+static uint32_t legacyFsdApActiveSinceMs = 0;
+static uint32_t legacyFsdRequiredStableMs = kLegacyFsdActivationSettleMs;
+static uint32_t legacyFsdLastBlockedMs = 0;
+static bool legacyFsdLastAllowed = false;
 static bool dashSpeedProfileAuto = true;
 static uint8_t dashManualSpeedProfile = 1;
 static uint8_t dashDriveProfile = 0;      // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
@@ -863,6 +871,52 @@ static bool dashApInjectionAllowed()
     return !apInjectionGate || (dashHandler && dashHandler->injectionGateOpen());
 }
 
+// Legacy FSD (0x3EE mux0) activation gate with a ~2 s AP-settle hold-off.
+// Mirrors upstream ev-open-can-tools v3.0.2-beta.3 safety parity: once AP
+// becomes active (and CAN/OTA/gate all allow), hold off legacy mux0 bit46
+// injection until APActive has been continuously asserted for
+// kLegacyFsdActivationSettleMs. Any loss of CAN / OTA / gate / APActive
+// resets the settle timer. nowMs is the same monotonically-increasing
+// millisecond counter the handler path uses (millis() in firmware,
+// dashDiagNowMs() in native tests) so the hold-off interval is consistent.
+static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
+{
+    if (!canActive)
+    {
+        legacyFsdApActiveSinceMs = 0;
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+    if (!dashOtaGuardAllowInjection())
+    {
+        legacyFsdApActiveSinceMs = 0;
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+    if (!apInjectionGate)
+    {
+        legacyFsdLastAllowed = true;
+        return true;
+    }
+    bool apActive = dashHandler && (bool)dashHandler->APActive;
+    if (!apActive)
+    {
+        legacyFsdApActiveSinceMs = 0;
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+    if (legacyFsdApActiveSinceMs == 0)
+        legacyFsdApActiveSinceMs = nowMs;
+    bool stable = (nowMs - legacyFsdApActiveSinceMs) >= kLegacyFsdActivationSettleMs;
+    legacyFsdLastAllowed = stable;
+    if (!stable)
+        legacyFsdLastBlockedMs = nowMs;
+    return stable;
+}
+
 static FsdGateBlockReason dashCurrentGateBlockReason()
 {
     if (!canActive)
@@ -1161,6 +1215,7 @@ static void dashApplyRuntimeState()
     {
         dashHandler->checkAD = dashCheckADEnabled;
         dashHandler->gateBlockReason = dashCurrentGateBlockReason;
+        dashHandler->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
@@ -1994,6 +2049,13 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     j += parked ? "true" : "false";
     j += ",\"apActive\":";
     j += apActive ? "true" : "false";
+    j += ",\"apStableMs\":";
+    j += (apActive && legacyFsdApActiveSinceMs > 0) ? String(now - legacyFsdApActiveSinceMs) : String(0);
+    j += ",\"requiredStableMs\":";
+    j += legacyFsdRequiredStableMs;
+    j += ",\"legacyFsdAllowed\":";
+    j += legacyFsdLastAllowed ? "true" : "false";
+    j += ",\"blockedFrame\":\"0x3EE mux0\"";
     j += ",\"summoning\":";
     j += summoning ? "true" : "false";
     j += R"JSON(,"finalAllowed":)JSON";
@@ -6206,6 +6268,7 @@ static void dashInitHandlers()
     {
         handlerPool[i]->onFrame = mcpDashOnFrame;
         handlerPool[i]->gateBlockReason = dashCurrentGateBlockReason;
+        handlerPool[i]->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
     }
 }
 
