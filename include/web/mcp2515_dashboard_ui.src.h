@@ -479,6 +479,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .hero-status { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
 .feature-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
 .mode-note { margin-top: 10px; color: var(--tx3); font-size: 12px; line-height: 1.45; }
+.cap-hidden{display:none!important}
 .mobile-home { display: none; }
 @media (max-width: 768px) {
   .hero-status, .feature-grid { grid-template-columns: 1fr 1fr; }
@@ -511,8 +512,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="nav-item" data-page="pg-hardware"><span class="nav-icon">◇</span>硬件模式</div>
     <div class="nav-item" data-page="pg-drive"><span class="nav-icon">◉</span>驾驶风格</div>
     <div class="nav-item" data-page="pg-speed"><span class="nav-icon">↗</span>速度策略</div>
-    <div class="nav-item" data-page="pg-bus2"><span class="nav-icon">✦</span>CAN2 控制</div>
-    <div class="nav-item" data-page="pg-strobe"><span class="nav-icon">⚡</span>灯光特技</div>
+    <div class="nav-item" data-page="pg-bus2" data-cap="can2"><span class="nav-icon">✦</span>CAN2 控制</div>
+    <div class="nav-item" data-page="pg-strobe" data-cap="lighting"><span class="nav-icon">⚡</span>灯光特技</div>
     <div class="nav-item" data-page="pg-defense"><span class="nav-icon">◈</span>FSD 防护</div>
     <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA 升级</div>
     <div class="nav-item" data-page="pg-network"><span class="nav-icon">◎</span>网络设置</div>
@@ -974,7 +975,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
 
     <!-- Page 5: CAN2 Control -->
-    <div class="page" id="pg-bus2">
+    <div class="page" id="pg-bus2" data-cap="can2">
 <div class="page-title">CAN2 控制 <span class="exp-badge">未验证/实验</span></div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-light-ui">待同步</div></div>
@@ -1093,7 +1094,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
 
     <!-- Page 5.5: Light Stunt (Phase 4) -->
-    <div class="page" id="pg-strobe">
+    <div class="page" id="pg-strobe" data-cap="lighting">
 <div class="page-title">灯光特技 <span class="exp-badge">实验</span></div>
 <div class="card">
   <div class="card-title">后雾灯策略</div>
@@ -1840,6 +1841,25 @@ var I18N={
   '最近写入':'Last Write Check'
 };
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
+var CAP={singleCan:false,can2Available:true,lightingBusSupported:true,serviceModeSupported:true,stalkTestSupported:true,bus2SnifferSupported:true,fsdActivation:true,speedStrategy:true,driveProfile:true,networkSettings:true,otaUpdate:true,canDiagnostics:true};
+function capEnabled(name){
+  if(name==='can2')return !!CAP.can2Available;
+  if(name==='lighting')return !!CAP.lightingBusSupported;
+  return true;
+}
+function applyCapabilities(c){
+  if(c){for(var k in c)CAP[k]=c[k]}
+  var nodes=document.querySelectorAll('[data-cap]');
+  for(var i=0;i<nodes.length;i++){
+    var n=nodes[i];
+    var show=capEnabled(n.getAttribute('data-cap'));
+    n.classList.toggle('cap-hidden',!show);
+  }
+  var active=document.querySelector('.page.active');
+  if(active&&active.getAttribute('data-cap')&&!capEnabled(active.getAttribute('data-cap'))){
+    showPage('pg-overview');
+  }
+}
 function applyI18n(){
   var navs=document.querySelectorAll('.nav-item');
   var zhTexts=['驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动换挡'];
@@ -1898,11 +1918,11 @@ function showPage(pageId){
   if(typeof updateMobTabs==='function')updateMobTabs(pageId);
   if(pageId==='pg-can')pollCanTab();
   if(pageId==='pg-drive')loadDriveProfile();
-  if(pageId==='pg-bus2')pollCAN2();
-  if(pageId==='pg-bus2')loadLightingConfig();
-  if(pageId==='pg-bus2')loadBurstConfig();
-  if(pageId==='pg-strobe')loadStrobePage();
-  if(pageId==='pg-strobe')loadBurstConfig();
+  if(pageId==='pg-bus2'&&CAP.can2Available)pollCAN2();
+  if(pageId==='pg-bus2'&&CAP.lightingBusSupported)loadLightingConfig();
+  if(pageId==='pg-bus2'&&CAP.can2Available)loadBurstConfig();
+  if(pageId==='pg-strobe'&&CAP.lightingBusSupported)loadStrobePage();
+  if(pageId==='pg-strobe'&&CAP.can2Available)loadBurstConfig();
   if(pageId==='pg-speed')loadSpeedStrategy();
   if(pageId==='pg-defense')loadDefenseConfig();
   if(pageId==='pg-shift')pollGearAssist();
@@ -1955,6 +1975,7 @@ async function poll(){
   }
   var uptime=(d.uptime!==undefined)?d.uptime:(d.up||0);
   S.hw=d.hw;S.ci=d.ci;S.sp=d.sp;S.spa=d.spAuto;S.can=d.can;S.ia=d.ia;S.driveProfile=d.driveProfile!==undefined?d.driveProfile:S.driveProfile;
+  applyCapabilities(d.capabilities||{});
   S.hw3OffsetSlew=d.hw3OffsetSlew;S.hw3SlewRate=d.hw3SlewRate;
   S.hw3CustomSpeed=d.hw3CustomSpeed;
   S.hw3CustomTarget=d.hw3CustomTarget||[45,60,75,90,105];
