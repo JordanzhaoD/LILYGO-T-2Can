@@ -134,7 +134,10 @@ static uint8_t mcpEflg = 0;
 static const uint8_t mcpEflg = 0;
 #endif
 
-static uint8_t hwMode = DASH_DEFAULT_HW;
+#ifndef DASH_INITIAL_HW_MODE
+#define DASH_INITIAL_HW_MODE DASH_DEFAULT_HW
+#endif
+static uint8_t hwMode = DASH_INITIAL_HW_MODE;
 static bool canActive = kDashInjectionDefaultEnabled;
 static bool forceActivate = false;
 static bool bootCanActive = kDashInjectionDefaultEnabled;
