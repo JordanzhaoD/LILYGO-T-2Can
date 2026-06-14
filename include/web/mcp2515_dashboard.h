@@ -205,6 +205,47 @@ static constexpr uint8_t kDashLedBrightnessDefault = 32;
 #endif
 static constexpr uint8_t dashLedBrightness = kDashLedBrightnessDefault;
 
+#if defined(DASH_SINGLE_CAN_STANDALONE)
+static constexpr bool kDashSingleCanStandalone = true;
+#else
+static constexpr bool kDashSingleCanStandalone = false;
+#endif
+
+#if defined(DRIVER_T2CAN_DUAL) && !defined(DASH_SINGLE_CAN_STANDALONE)
+static constexpr bool kDashCan2Available = true;
+#else
+static constexpr bool kDashCan2Available = false;
+#endif
+
+static constexpr bool kDashLightingBusSupported = kDashCan2Available;
+static constexpr bool kDashServiceModeSupported = kDashCan2Available;
+static constexpr bool kDashStalkTestSupported = kDashCan2Available;
+static constexpr bool kDashBus2SnifferSupported = kDashCan2Available;
+
+static String dashCapabilitiesJson()
+{
+    String j = "{";
+    j += "singleCan"; j += "\":";           // "singleCan":
+    j += kDashSingleCanStandalone ? "true" : "false";
+    j += ",\""; j += "can2Available"; j += "\":";   // "can2Available":
+    j += kDashCan2Available ? "true" : "false";
+    j += ",\""; j += "lightingBusSupported"; j += "\":"; // "lightingBusSupported":
+    j += kDashLightingBusSupported ? "true" : "false";
+    j += ",\""; j += "serviceModeSupported"; j += "\":"; // "serviceModeSupported":
+    j += kDashServiceModeSupported ? "true" : "false";
+    j += ",\""; j += "stalkTestSupported"; j += "\":";   // "stalkTestSupported":
+    j += kDashStalkTestSupported ? "true" : "false";
+    j += ",\""; j += "bus2SnifferSupported"; j += "\":"; // "bus2SnifferSupported":
+    j += kDashBus2SnifferSupported ? "true" : "false";
+    j += ",\""; j += "fsdActivation"; j += "\":true";    // "fsdActivation":true
+    j += ",\""; j += "speedStrategy"; j += "\":true";    // "speedStrategy":true
+    j += ",\""; j += "driveProfile"; j += "\":true";     // "driveProfile":true
+    j += ",\""; j += "networkSettings"; j += "\":true";  // "networkSettings":true
+    j += ",\""; j += "otaUpdate"; j += "\":true";        // "otaUpdate":true
+    j += ",\""; j += "canDiagnostics"; j += "\":true}";  // "canDiagnostics":true}
+    return j;
+}
+
 // WiFi AP (hotspot) — overridable at runtime
 static char apSSID[33] = "";
 static char apPass[65] = "";
@@ -2009,6 +2050,9 @@ static void handleStatus()
     j += ",\"buildEnv\":\"" DASH_BUILD_ENV "\"";
     j += ",\"uiBuildId\":\"" DASH_UI_BUILD_ID "\"";
     j += ",\"uiBuildUtc\":\"" DASH_UI_BUILD_UTC "\"";
+    j += ",\"";
+    j += "capabilities"; j += "\":";        // "capabilities":
+    j += dashCapabilitiesJson();
     j += ",\"sp\":";
     j += sp;
     j += ",\"spAuto\":";
@@ -6281,8 +6325,10 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/speed_strategy", HTTP_POST, handleSpeedStrategy);
     server.on("/speed_custom", HTTP_GET, handleSpeedCustomGet);
     server.on("/speed_custom", HTTP_POST, handleSpeedCustom);
+#if !defined(DASH_SINGLE_CAN_STANDALONE)
     server.on("/lighting_config", HTTP_GET, handleLightingConfig);
     server.on("/lighting_config", HTTP_POST, handleLightingConfig);
+#endif
     server.on("/defense_config", HTTP_GET, handleDefenseConfig);
     server.on("/defense_config", HTTP_POST, handleDefenseConfig);
     server.on("/legacy_fsd_config", HTTP_GET, handleLegacyFsdConfig);
@@ -6292,9 +6338,11 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/power_mgmt",       HTTP_GET,  handlePowerMgmt);
     server.on("/power_mgmt",       HTTP_POST, handlePowerMgmt);
     server.on("/vehicle_ota_status", HTTP_GET, handleVehicleOtaStatus);
+#if !defined(DASH_SINGLE_CAN_STANDALONE)
     server.on("/fog_light",        HTTP_GET,  handleFogLight);
     server.on("/fog_light",        HTTP_POST, handleFogLight);
     server.on("/strobe_cont",      HTTP_POST, handleStrobeCont);
+#endif
     server.on("/hotspot_config", HTTP_GET, handleHotspotConfig);
     server.on("/hotspot_config", HTTP_POST, handleHotspotConfig);
     server.on("/relay_wifi_test", HTTP_POST, handleRelayWifiTest);
@@ -6308,7 +6356,7 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/rec_start", HTTP_POST, handleRecStart);
     server.on("/rec_stop", HTTP_POST, handleRecStop);
     server.on("/rec_status", HTTP_GET, handleRecStatus);
-#ifdef DRIVER_T2CAN_DUAL
+#if defined(DRIVER_T2CAN_DUAL) && !defined(DASH_SINGLE_CAN_STANDALONE)
     server.on("/service_mode", HTTP_GET, handleServiceMode);
     server.on("/service_mode", HTTP_POST, handleServiceMode);
     server.on("/stalk_test", HTTP_GET, handleStalkTest);
