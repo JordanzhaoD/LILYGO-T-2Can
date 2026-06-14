@@ -100,14 +100,16 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_waveshare_single_can_standalone_env_is_declared(self) -> None:
         pio = (ROOT / "platformio.ini").read_text(encoding="utf-8")
-        self.assertIn("[env:waveshare_single_can_standalone]", pio)
-        self.assertIn("-DDRIVER_TWAI", pio)
-        self.assertIn("-DESP32_DASHBOARD", pio)
-        self.assertIn("-DDASH_SINGLE_CAN_STANDALONE=1", pio)
-        self.assertIn("-DDASH_INITIAL_HW_MODE=3", pio)
-        self.assertIn("-DTWAI_TX_PIN=GPIO_NUM_15", pio)
-        self.assertIn("-DTWAI_RX_PIN=GPIO_NUM_16", pio)
-        self.assertIn("partitions_16mb_ota_4096k_nvs64.csv", pio)
+        match = re.search(r"(?ms)^\[env:waveshare_single_can_standalone\]\n.*?(?=^\[|\Z)", pio)
+        self.assertIsNotNone(match)
+        standalone_env = match.group(0)
+        self.assertIn("-DDRIVER_TWAI", standalone_env)
+        self.assertIn("-DESP32_DASHBOARD", standalone_env)
+        self.assertIn("-DDASH_SINGLE_CAN_STANDALONE=1", standalone_env)
+        self.assertIn("-DDASH_INITIAL_HW_MODE=3", standalone_env)
+        self.assertIn("-DTWAI_TX_PIN=GPIO_NUM_15", standalone_env)
+        self.assertIn("-DTWAI_RX_PIN=GPIO_NUM_16", standalone_env)
+        self.assertIn("partitions_16mb_ota_4096k_nvs64.csv", standalone_env)
 
     def test_status_exposes_single_can_capabilities(self) -> None:
         for token in [
@@ -140,11 +142,11 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.dash)
         self.assertRegex(
             self.dash,
-            r"#if defined\(DRIVER_T2CAN_DUAL\) && !defined\(DASH_SINGLE_CAN_STANDALONE\).*?/bus2_ids",
+            r"#if defined\(DRIVER_T2CAN_DUAL\) && !defined\(DASH_SINGLE_CAN_STANDALONE\)(?s:.*?)/bus2_ids",
         )
         self.assertRegex(
             self.dash,
-            r"#if !defined\(DASH_SINGLE_CAN_STANDALONE\).*?/lighting_config",
+            r"#if !defined\(DASH_SINGLE_CAN_STANDALONE\)(?s:.*?)/lighting_config",
         )
 
     def test_single_can_ui_uses_capabilities_to_hide_can2_and_lighting(self) -> None:
