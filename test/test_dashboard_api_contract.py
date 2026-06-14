@@ -1302,8 +1302,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("fetchJson('/fog_light')", self.ui)
 
     def test_phase4_js_navigates_to_strobe_page(self) -> None:
-        """Page navigation must load strobe page data."""
-        self.assertIn("pageId==='pg-strobe')loadStrobePage()", self.ui)
+        """Page navigation must load strobe page data when lighting bus is supported."""
+        self.assertIn("pageId==='pg-strobe'&&CAP.lightingBusSupported)loadStrobePage()", self.ui)
 
     def test_phase5a_shift_page_loads_read_only_telemetry(self) -> None:
         """Auto-shift placeholder page must populate its read-only telemetry fields."""
