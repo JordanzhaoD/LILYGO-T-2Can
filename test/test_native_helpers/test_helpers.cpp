@@ -181,18 +181,16 @@ void test_isVehicleParked_false_for_drive()
     TEST_ASSERT_FALSE(isVehicleParked(4));
 }
 
-void test_isVehicleParked_true_for_sna()
+void test_isVehicleParked_false_for_sna()
 {
-    // SNA (7) reported by DI while car asleep / locked with Sentry: gate
-    // must still open so summon-unlock injection works on cold approach.
-    TEST_ASSERT_TRUE(isVehicleParked(7));
+    // Live SNA must fail closed. It must not open AP Injection Gate as Park.
+    TEST_ASSERT_FALSE(isVehicleParked(7));
 }
 
-void test_isVehicleParked_true_for_invalid()
+void test_isVehicleParked_false_for_invalid()
 {
-    // INVALID (0) reported by DI before it has fully come up: same
-    // rationale as SNA, treat as parked.
-    TEST_ASSERT_TRUE(isVehicleParked(0));
+    // Live INVALID must fail closed. It must not open AP Injection Gate as Park.
+    TEST_ASSERT_FALSE(isVehicleParked(0));
 }
 
 void test_isVehicleParked_false_for_reverse_neutral()
@@ -308,8 +306,8 @@ int main()
     RUN_TEST(test_readVehicleGear_extracts_dif_gear_bits);
     RUN_TEST(test_isVehicleParked_true_for_park);
     RUN_TEST(test_isVehicleParked_false_for_drive);
-    RUN_TEST(test_isVehicleParked_true_for_sna);
-    RUN_TEST(test_isVehicleParked_true_for_invalid);
+    RUN_TEST(test_isVehicleParked_false_for_sna);
+    RUN_TEST(test_isVehicleParked_false_for_invalid);
     RUN_TEST(test_isVehicleParked_false_for_reverse_neutral);
 
     RUN_TEST(test_setSpeedProfileV12V13_sets_profile_0);
