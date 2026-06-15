@@ -879,7 +879,7 @@ static bool dashApInjectionAllowed()
 // Mirrors upstream ev-open-can-tools v3.0.2-beta.3 safety parity: once AP
 // becomes active (and CAN/OTA/gate all allow), hold off legacy mux0 bit46
 // injection until APActive has been continuously asserted for
-// kLegacyFsdActivationSettleMs. Any loss of CAN / OTA / gate / APActive
+// legacyFsdRequiredStableMs. Any loss of CAN / OTA / gate / APActive
 // resets the settle timer. nowMs is the same monotonically-increasing
 // millisecond counter the handler path uses (millis() in firmware,
 // dashDiagNowMs() in native tests) so the hold-off interval is consistent.

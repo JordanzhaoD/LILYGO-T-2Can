@@ -262,8 +262,8 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.ui)
 
         for token in [
-            '"apDelayMs"',
-            '"apInjectionState"',
+            r'\"apDelayMs\"',
+            r'\"apInjectionState\"',
             '"apAutoRestore"',
             'server.hasArg("ap_delay_ms")',
             'server.hasArg("ap_auto_restore")',
