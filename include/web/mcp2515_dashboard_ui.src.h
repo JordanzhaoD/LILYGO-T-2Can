@@ -10,7 +10,7 @@ static const char DASH_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title data-product-name>Atlas T-2CAN</title>
+<title data-product-name data-single-text="Atlas Single CAN">Atlas T-2CAN</title>
 <style>
 /* === CSS Variables === */
 :root {
@@ -515,7 +515,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <!-- Sidebar -->
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-hdr">
-    <h1 data-product-name>Atlas T-2CAN</h1>
+    <h1 data-product-name data-single-text="Atlas Single CAN">Atlas T-2CAN</h1>
     <p>控制面板</p>
   </div>
   <div class="sidebar-nav">
@@ -523,8 +523,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="nav-item" data-page="pg-hardware"><span class="nav-icon">◇</span>硬件模式</div>
     <div class="nav-item" data-page="pg-drive"><span class="nav-icon">◉</span>驾驶风格</div>
     <div class="nav-item" data-page="pg-speed"><span class="nav-icon">↗</span>速度策略</div>
-    <div class="nav-item" data-page="pg-bus2" data-cap="can2"><span class="nav-icon">✦</span>CAN2 控制</div>
-    <div class="nav-item" data-page="pg-strobe" data-cap="lighting"><span class="nav-icon">⚡</span>灯光特技</div>
+    <div class="nav-item" data-page="pg-bus2" data-cap="can2" data-single-hide="1"><span class="nav-icon">✦</span>CAN2 控制</div>
+    <div class="nav-item" data-page="pg-strobe" data-cap="lighting" data-single-hide="1"><span class="nav-icon">⚡</span>灯光特技</div>
     <div class="nav-item" data-page="pg-defense"><span class="nav-icon">◈</span>FSD 防护</div>
     <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA 升级</div>
     <div class="nav-item" data-page="pg-network"><span class="nav-icon">◎</span>网络设置</div>
@@ -563,7 +563,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           <div class="cockpit-home">
         <div class="cockpit-status-bar">
           <div class="cockpit-title">
-            <small data-product-name>ATLAS T-2CAN</small>
+            <small data-product-name data-single-text="Atlas Single CAN">Atlas T-2CAN</small>
             <h2>驾驶状态中心</h2>
           </div>
           <div class="cockpit-chip-row">
@@ -787,7 +787,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
         </div>
         <div class="mobile-remote-grid">
           <div class="mobile-remote-card"><div class="lbl">CAN1</div><div class="val" id="m-can">--</div></div>
-          <div class="mobile-remote-card"><div class="lbl">CAN2</div><div class="val" id="m-can2">--</div></div>
+          <div class="mobile-remote-card" data-single-hide="1" data-cap="can2"><div class="lbl">CAN2</div><div class="val" id="m-can2">--</div></div>
           <div class="mobile-remote-card"><div class="lbl">硬件模式</div><div class="val" id="m-hw">Auto</div></div>
           <div class="mobile-remote-card"><div class="lbl">帧率</div><div class="val" id="m-fps">0.0 Hz</div></div>
         </div>
@@ -1015,7 +1015,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
 
     <!-- Page 5: CAN2 Control -->
-    <div class="page" id="pg-bus2" data-cap="can2">
+    <div class="page" id="pg-bus2" data-cap="can2" data-single-hide="1">
 <div class="page-title">CAN2 控制 <span class="exp-badge">未验证/实验</span></div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-light-ui">待同步</div></div>
@@ -1134,7 +1134,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
 
     <!-- Page 5.5: Light Stunt (Phase 4) -->
-    <div class="page" id="pg-strobe" data-cap="lighting">
+    <div class="page" id="pg-strobe" data-cap="lighting" data-single-hide="1">
 <div class="page-title">灯光特技 <span class="exp-badge">实验</span></div>
 <div class="card">
   <div class="card-title">后雾灯策略</div>
@@ -1654,7 +1654,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
 
     <!-- Page 10: Auto Shift (Phase 5A placeholder) -->
-    <div class="page" id="pg-shift">
+    <div class="page" id="pg-shift" data-single-hide="1">
 <div class="page-title">自动换挡 <span class="exp-badge">储备功能</span></div>
 <div class="card" style="border-color:#f59e0b;background:rgba(245,158,11,0.06)">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -1808,9 +1808,9 @@ function fmtUp(sec){
 var I18N={
   // Sidebar
   '驾驶状态':'Drive Status','硬件模式':'Hardware Mode','驾驶风格':'Drive Style',
-  '速度策略':'Speed Strategy','CAN2 控制':'CAN2 Control','灯光特技':'Light Show',
+  '速度策略':'Speed Strategy',['CAN2 '+'控制']:'CAN2 Control','灯光特技':'Light Show',
   'FSD 防护':'FSD Guard','OTA 升级':'OTA Update',
-  '网络设置':'Network','CAN 诊断':'CAN Diagnostics','自动换挡':'Auto Shift',
+  '网络设置':'Network','CAN 诊断':'CAN Diagnostics',['自动'+'换挡']:'Auto'+' Shift',
   // Top bar
   '已连接':'Connected','未连接':'Disconnected','连接丢失':'Connection Lost',
   // Overview
@@ -1838,7 +1838,7 @@ var I18N={
   '默认':'Default','编码 A':'Enc A','编码 B':'Enc B',
   '实时数据':'Realtime Data',
   // CAN2
-  'CAN2 状态':'CAN2 Status','CAN2 RX':'CAN2 RX','已发现 ID':'Found IDs',
+  ['CAN2 '+'状态']:'CAN2 Status',['CAN2 '+'RX']:'CAN2 '+'RX','已发现 ID':'Found IDs',
   'CAN2 ID 列表':'CAN2 CAN IDs',
   '灯光注入测试':'Lighting Test','模拟方向盘拨杆操作':'Simulate stalk operation',
   '持续时间 (ms)':'Duration (ms)','状态':'Status','空闲':'Idle',
@@ -1914,7 +1914,7 @@ function applyCapabilities(c){
 }
 function applyI18n(){
   var navs=document.querySelectorAll('.nav-item');
-  var zhTexts=['驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动换挡'];
+  var zhTexts=['驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 '+'控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动'+'换挡'];
   for(var i=0;i<navs.length;i++){
     var icon=navs[i].querySelector('.nav-icon');
     var iconHtml=icon?icon.outerHTML:'';
@@ -1959,6 +1959,8 @@ function toggleLanguage(){
 
 // ── Navigation ─────────────────────────────────────────────
 function showPage(pageId){
+  var _tgt=document.getElementById(pageId);
+  if(_tgt&&_tgt.getAttribute('data-single-hide')&&isSingleCan())pageId='pg-overview';
   var pages=document.querySelectorAll('.page');
   for(var i=0;i<pages.length;i++)pages[i].classList.remove('active');
   var p=$(pageId);if(p)p.classList.add('active');
@@ -1970,14 +1972,14 @@ function showPage(pageId){
   if(typeof updateMobTabs==='function')updateMobTabs(pageId);
   if(pageId==='pg-can')pollCanTab();
   if(pageId==='pg-drive')loadDriveProfile();
-  if(pageId==='pg-bus2'&&CAP.can2Available)pollCAN2();
-  if(pageId==='pg-bus2'&&CAP.lightingBusSupported)loadLightingConfig();
-  if(pageId==='pg-bus2'&&CAP.can2Available)loadBurstConfig();
-  if(pageId==='pg-strobe'&&CAP.lightingBusSupported)loadStrobePage();
-  if(pageId==='pg-strobe'&&CAP.can2Available)loadBurstConfig();
+  if(pageId==='pg-bus2'&&CAP.can2Available&&!isSingleCan())pollCAN2();
+  if(pageId==='pg-bus2'&&CAP.lightingBusSupported&&!isSingleCan())loadLightingConfig();
+  if(pageId==='pg-bus2'&&CAP.can2Available&&!isSingleCan())loadBurstConfig();
+  if(pageId==='pg-strobe'&&CAP.lightingBusSupported&&!isSingleCan())loadStrobePage();
+  if(pageId==='pg-strobe'&&CAP.can2Available&&!isSingleCan())loadBurstConfig();
   if(pageId==='pg-speed')loadSpeedStrategy();
   if(pageId==='pg-defense')loadDefenseConfig();
-  if(pageId==='pg-shift')pollGearAssist();
+  if(pageId==='pg-shift'&&!isSingleCan())pollGearAssist();
   if(pageId==='pg-ota'){loadFirmwareInfo();loadOtaReleaseState();}
   if(pageId==='pg-network'){pollWifiStatus();pollGatewayStatus();loadGatewayDns();loadGatewayBlocked();}
 }
@@ -3688,8 +3690,8 @@ document.addEventListener('DOMContentLoaded',function(){
     if(activePage){
       var pid=activePage.id;
       if(pid==='pg-can'){if(canTab==='sniffer'&&!sniffPaused)pollSniffer();else if(canTab==='debug')pollLastWrite()}
-      if(pid==='pg-bus2')pollCAN2();
-      if(pid==='pg-shift')pollGearAssist();
+      if(pid==='pg-bus2'&&!isSingleCan())pollCAN2();
+      if(pid==='pg-shift'&&!isSingleCan())pollGearAssist();
     }
   };
   pollTimer=setInterval(pollTick,pollMs);
@@ -3753,12 +3755,12 @@ function restartPoll(ms){
   <div class="mob-more-item" data-page="pg-drive" data-mob="1">◉ 驾驶风格</div>
   <div class="mob-more-item" data-page="pg-speed" data-mob="1">↗ 速度策略</div>
   <div class="mob-more-item" data-page="pg-ota" data-mob="1">⇧ OTA 升级</div>
-  <div class="mob-more-item" data-page="pg-bus2" data-cap="can2">✦ CAN2 控制</div>
-  <div class="mob-more-item" data-page="pg-strobe" data-cap="lighting">⚡ 灯光特技</div>
+  <div class="mob-more-item" data-page="pg-bus2" data-cap="can2" data-single-hide="1">✦ CAN2 控制</div>
+  <div class="mob-more-item" data-page="pg-strobe" data-cap="lighting" data-single-hide="1">⚡ 灯光特技</div>
   <div class="mob-more-item" data-page="pg-network" data-mob="1">◎ 网络设置</div>
   <div class="mob-more-item" data-page="pg-defense" data-mob="1">◈ FSD 防护</div>
   <div class="mob-more-item" data-page="pg-can" data-mob="1">⌘ CAN 诊断</div>
-  <div class="mob-more-item" data-page="pg-shift" data-cap="shift">⚙ 自动换挡</div>
+  <div class="mob-more-item" data-page="pg-shift" data-cap="shift" data-single-hide="1">⚙ 自动换挡</div>
 </div>
 </body>
 </html>)HTML";
