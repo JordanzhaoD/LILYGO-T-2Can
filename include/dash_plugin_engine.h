@@ -297,6 +297,19 @@ public:
 
     size_t pluginCount() const { return plugins_.size(); }
 
+    // Returns true if any enabled+compatible plugin has a rule matching canId.
+    // Used to detect when a plugin owns a frame (e.g. FSD activation 1006/1021
+    // / 2047) so the built-in injection can be suppressed.
+    bool hasEnabledRuleFor(uint32_t canId) const
+    {
+        for (const DashPlugin &p : plugins_)
+            if (p.enabled && p.compatible)
+                for (const DashPluginRule &r : p.rules)
+                    if (r.id == canId)
+                        return true;
+        return false;
+    }
+
     const DashPlugin &pluginAt(size_t index) const { return plugins_.at(index); }
 
     uint8_t replayCount() const { return replayCount_; }

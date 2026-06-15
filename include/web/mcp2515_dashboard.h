@@ -959,15 +959,38 @@ static bool dashInjectionActive()
 // Builds the runtime context handed to DashPluginEngine.applyToFrame() /
 // tickPeriodic(). Mirrors the dashboard injection gates (CAN active + OTA guard
 // + AP gate + legacy FSD settle) so plugins only act when injection is allowed.
+//
+// IMPORTANT: this is called every CAN frame in appLoop, so it must be free of
+// side effects. We do NOT call dashLegacyFsdActivationAllowed() here (it resets
+// the settle timer / writes legacyFsdLastAllowed) — instead we read
+// legacyFsdLastAllowed, the latched result of the last handler-path gate check.
+// dashLegacyFsdActivationAllowed() is still invoked by the real handler gate
+// path (via legacyFsdActivationAllowed callback) and updates the latch.
 static DashPluginContext dashPluginContext()
 {
     DashPluginContext ctx{};
     ctx.canActive = canActive;
     ctx.otaAllowed = dashOtaGuardAllowInjection();
-    ctx.apGateAllowed = dashApInjectionAllowed() && dashLegacyFsdActivationAllowed(millis());
+    ctx.apGateAllowed = dashApInjectionAllowed() && legacyFsdLastAllowed;
     ctx.fsdMasterEnabled = canActive;
     ctx.defaultBus = CAN_BUS_DEFAULT;
     return ctx;
+}
+
+// Returns true when any enabled+compatible plugin declares a rule for an FSD
+// activation frame id (1006 / 1021 / 2047). Used to suppress the built-in FSD
+// injection so the plugin owns those frames. Guarded-out builds always return
+// false, so the built-in path stays active (no behavior change).
+static bool dashPluginOwnsFsdActivation()
+{
+    return dashPluginEngine.hasEnabledRuleFor(1006) ||
+           dashPluginEngine.hasEnabledRuleFor(1021) ||
+           dashPluginEngine.hasEnabledRuleFor(2047);
+}
+#else
+static bool dashPluginOwnsFsdActivation()
+{
+    return false;
 }
 #endif
 
@@ -1262,6 +1285,7 @@ static void dashApplyRuntimeState()
         dashHandler->checkAD = dashCheckADEnabled;
         dashHandler->gateBlockReason = dashCurrentGateBlockReason;
         dashHandler->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
+        dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
@@ -2216,6 +2240,13 @@ static void handleStatus()
     j += legacyFsdRequiredStableMs;
     j += ",\"apInjectionState\":\"";
     j += dashApInjectionStateName();
+    j += "\"";
+    j += ",\"injectionSource\":\"";
+#if defined(DASH_PLUGIN_ENGINE)
+    j += dashPluginOwnsFsdActivation() ? "Plugin" : (canActive ? "Built-in" : "Disabled");
+#else
+    j += canActive ? "Built-in" : "Disabled";
+#endif
     j += "\"";
     j += ",\"ia\":";
     j += dashInjectionActive() ? "true" : "false";
@@ -6489,6 +6520,7 @@ static void dashInitHandlers()
         handlerPool[i]->onFrame = mcpDashOnFrame;
         handlerPool[i]->gateBlockReason = dashCurrentGateBlockReason;
         handlerPool[i]->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
+        handlerPool[i]->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
     }
 }
 

@@ -251,6 +251,11 @@ static bool appLoop()
         CanFrame original = frame;
 #endif
         h->handleMessage(frame, *appDriver);
+#if defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD) && defined(DASH_PLUGIN_ENGINE)
+        DashPluginApplyResult pluginApplied = dashPluginEngine.applyToFrame(original, dashPluginContext(), *appDriver);
+        if (pluginApplied.sent)
+            lastInjectMs = millis();
+#endif
 #if defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD)
         dashPostProcessFrame(original, *appDriver);
 #endif
@@ -264,6 +269,9 @@ static bool appLoop()
     }
 #if !(defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD) && defined(DASH_RGB_STATUS_LED))
     digitalWrite(PIN_LED, HIGH);
+#endif
+#if defined(ESP32_DASHBOARD) && !defined(NATIVE_BUILD) && defined(DASH_PLUGIN_ENGINE)
+    dashPluginEngine.tickPeriodic(millis(), dashPluginContext(), *appDriver);
 #endif
     return processedFrame;
 }

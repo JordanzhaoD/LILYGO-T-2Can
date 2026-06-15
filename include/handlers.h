@@ -137,6 +137,21 @@ struct CarManagerBase
     bool (*checkEvd)() = nullptr;
     FsdGateBlockReason (*gateBlockReason)() = nullptr;
     bool (*legacyFsdActivationAllowed)(uint32_t nowMs) = nullptr;
+    // When set and returns true, an installed plugin owns the FSD activation
+    // frames (1006/1021/2047) and the built-in handler must suppress its own
+    // injection to avoid duplicate frames. Defaults to nullptr so the built-in
+    // path is always allowed (no behavior change for dual CAN / native tests).
+    bool (*pluginOwnsFsdActivation)() = nullptr;
+
+    // Returns false only when a plugin currently owns FSD activation, so the
+    // built-in send paths should skip. With no callback (default) the built-in
+    // path is always allowed.
+    bool builtInFsdInjectionAllowed() const
+    {
+        if (pluginOwnsFsdActivation && pluginOwnsFsdActivation())
+            return false;
+        return true;
+    }
 
     bool injectionGateOpen() const
     {
@@ -387,6 +402,14 @@ struct LegacyHandler : public CarManagerBase
                     return;
                 }
 
+                // Plugin owns FSD activation frames: suppress built-in injection.
+                if (!builtInFsdInjectionAllowed())
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    return;
+                }
+
                 legacyFsdDiag.mux0.recordBefore(frame.data);
                 setBit(frame, 46, true);
                 if (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
@@ -425,6 +448,14 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
                     legacyFsdDiag.lastBlockedBy = currentGateBlockReason();
+                    return;
+                }
+
+                // Plugin owns FSD activation frames: suppress built-in injection.
+                if (!builtInFsdInjectionAllowed())
+                {
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
                     return;
                 }
 
@@ -555,7 +586,7 @@ struct HW3Handler : public CarManagerBase
                 fsdTriggered = fsdRequested;
                 ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && (bool)fsdTriggered && injectionAllowed())
+            if (index == 0 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
             {
                 speedOffset = std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
                 hw3StockOffsetKph = (int)speedOffset;
@@ -568,7 +599,7 @@ struct HW3Handler : public CarManagerBase
             }
 
             // ── Mux 1: Nag suppression ─────────────────────────────────────
-            if (index == 1 && (bool)fsdTriggered && injectionAllowed())
+            if (index == 1 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
             {
                 setBit(frame, 19, false);
                 framesSent++;
@@ -577,7 +608,7 @@ struct HW3Handler : public CarManagerBase
             }
 
             // ── Mux 2: Speed offset (three-layer + slew limiter) ──────────
-            if (index == 2 && (bool)fsdTriggered && injectionAllowed())
+            if (index == 2 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
             {
                 uint8_t stockRaw = static_cast<uint8_t>(((frame.data[0] >> 6) & 0x03) |
                                                         ((frame.data[1] & 0x3F) << 2));
@@ -901,7 +932,7 @@ struct HW4Handler : public CarManagerBase
                 fsdTriggered = fsdRequested;
                 ADEnabled = (bool)fsdTriggered;
             }
-            if (index == 0 && (bool)fsdTriggered && injectionAllowed())
+            if (index == 0 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
             {
                 setBit(frame, 46, true);
                 setBit(frame, 60, true);
@@ -913,7 +944,7 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 1: Nag suppression + FSD ready signal
-            if (index == 1 && (bool)fsdTriggered && injectionAllowed())
+            if (index == 1 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
             {
                 setBit(frame, 19, false);
                 setBit(frame, 47, true);
@@ -923,7 +954,7 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 2: Speed profile + offset
-            if (index == 2 && (bool)fsdTriggered && injectionAllowed())
+            if (index == 2 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
             {
                 // Speed profile
                 frame.data[7] &= static_cast<uint8_t>(~(0x07 << 4));
