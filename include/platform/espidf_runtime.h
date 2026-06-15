@@ -354,10 +354,12 @@ public:
     bool isKey(const char *key);
     int8_t getChar(const char *key, int8_t defaultValue = 0);
     uint8_t getUChar(const char *key, uint8_t defaultValue = 0);
+    uint32_t getUInt(const char *key, uint32_t defaultValue = 0);
     bool getBool(const char *key, bool defaultValue = false);
     String getString(const char *key, const char *defaultValue = "");
     void putChar(const char *key, int8_t value);
     void putUChar(const char *key, uint8_t value);
+    void putUInt(const char *key, uint32_t value);
     void putBool(const char *key, bool value);
     void putString(const char *key, const String &value);
     void remove(const char *key);

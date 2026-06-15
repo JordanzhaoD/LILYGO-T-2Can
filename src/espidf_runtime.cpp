@@ -303,6 +303,14 @@ uint8_t Preferences::getUChar(const char *key, uint8_t defaultValue)
     return value;
 }
 
+uint32_t Preferences::getUInt(const char *key, uint32_t defaultValue)
+{
+    uint32_t value = defaultValue;
+    if (open_)
+        nvs_get_u32(handle_, key, &value);
+    return value;
+}
+
 bool Preferences::getBool(const char *key, bool defaultValue)
 {
     uint8_t value = defaultValue ? 1 : 0;
@@ -338,6 +346,15 @@ void Preferences::putUChar(const char *key, uint8_t value)
     if (open_ && !readOnly_)
     {
         nvs_set_u8(handle_, key, value);
+        nvs_commit(handle_);
+    }
+}
+
+void Preferences::putUInt(const char *key, uint32_t value)
+{
+    if (open_ && !readOnly_)
+    {
+        nvs_set_u32(handle_, key, value);
         nvs_commit(handle_);
     }
 }
