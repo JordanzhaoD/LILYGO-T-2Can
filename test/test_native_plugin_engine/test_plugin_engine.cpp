@@ -34,6 +34,14 @@ static DashPluginContext allowedContext()
     return ctx;
 }
 
+static uint8_t pluginTestChecksumByte(const CanFrame &frame)
+{
+    uint16_t sum = static_cast<uint16_t>(frame.id & 0xFF) + static_cast<uint16_t>((frame.id >> 8) & 0xFF);
+    for (uint8_t i = 0; i < 7; ++i)
+        sum += frame.data[i];
+    return static_cast<uint8_t>(sum & 0xFF);
+}
+
 void setUp()
 {
     driver.reset();
@@ -209,6 +217,202 @@ void test_gtw_silent_unavailable_without_custom_key()
     TEST_ASSERT_TRUE(engine.statusJson().indexOf("custom key build required") >= 0);
 }
 
+void test_disabling_periodic_plugin_clears_cached_frame()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"Periodic","rules":[{"id":2047,"mux":3,"mux_mask":255,"ops":[{"type":"set_byte","byte":1,"val":17},{"type":"emit_periodic","interval":10}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("Periodic", true).ok);
+
+    CanFrame f = frame2047(3);
+    TEST_ASSERT_TRUE(engine.applyToFrame(f, allowedContext(), driver).sent);
+    driver.reset();
+
+    TEST_ASSERT_TRUE(engine.setEnabled("Periodic", false).ok);
+    engine.tickPeriodic(10, allowedContext(), driver);
+
+    TEST_ASSERT_EQUAL(0, driver.sent.size());
+}
+
+void test_replacing_plugin_clears_old_periodic_cache()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"ReplacePeriodic","rules":[{"id":2047,"mux":3,"mux_mask":255,"ops":[{"type":"set_byte","byte":1,"val":34},{"type":"emit_periodic","interval":10}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("ReplacePeriodic", true).ok);
+
+    CanFrame f = frame2047(3);
+    TEST_ASSERT_TRUE(engine.applyToFrame(f, allowedContext(), driver).sent);
+    driver.reset();
+
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"ReplacePeriodic","version":"2.0","rules":[{"id":921,"ops":[{"type":"set_bit","bit":13}],"send":true}]})json", false).ok);
+    engine.tickPeriodic(10, allowedContext(), driver);
+
+    TEST_ASSERT_EQUAL(0, driver.sent.size());
+}
+
+void test_gate_failure_clears_periodic_cache_before_next_allowed_tick()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"GatePeriodic","rules":[{"id":2047,"mux":3,"mux_mask":255,"ops":[{"type":"set_byte","byte":1,"val":51},{"type":"emit_periodic","interval":10}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("GatePeriodic", true).ok);
+
+    CanFrame f = frame2047(3);
+    TEST_ASSERT_TRUE(engine.applyToFrame(f, allowedContext(), driver).sent);
+    driver.reset();
+
+    DashPluginContext blocked = allowedContext();
+    blocked.apGateAllowed = false;
+    engine.tickPeriodic(10, blocked, driver);
+    engine.tickPeriodic(20, allowedContext(), driver);
+
+    TEST_ASSERT_EQUAL(0, driver.sent.size());
+}
+
+void test_checksum_recomputed_after_payload_ops_even_when_byte7_owned()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"High","rules":[{"id":921,"ops":[{"type":"set_byte","byte":7,"val":0}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"Low","rules":[{"id":921,"ops":[{"type":"set_byte","byte":1,"val":170},{"type":"checksum"}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("High", true).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("Low", true).ok);
+    TEST_ASSERT_TRUE(engine.setPriority("High", 1).ok);
+    TEST_ASSERT_TRUE(engine.setPriority("Low", 2).ok);
+
+    CanFrame f = frame921();
+    TEST_ASSERT_TRUE(engine.applyToFrame(f, allowedContext(), driver).sent);
+
+    TEST_ASSERT_EQUAL(1, driver.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0xAA, driver.sent[0].data[1]);
+    TEST_ASSERT_EQUAL_HEX8(pluginTestChecksumByte(driver.sent[0]), driver.sent[0].data[7]);
+}
+
+void test_same_plugin_can_apply_multiple_ops_to_same_bit_without_priority_overlap()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"SamePlugin","rules":[{"id":921,"ops":[{"type":"set_bit","bit":13,"val":1},{"type":"set_bit","bit":13,"val":0}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("SamePlugin", true).ok);
+
+    CanFrame f = frame921();
+    TEST_ASSERT_TRUE(engine.applyToFrame(f, allowedContext(), driver).sent);
+
+    TEST_ASSERT_EQUAL(1, driver.sent.size());
+    TEST_ASSERT_FALSE((driver.sent[0].data[1] & 0x20) != 0);
+    TEST_ASSERT_TRUE(engine.statusJson().indexOf("Priority overlap") < 0);
+}
+
+void test_emit_periodic_caches_final_rule_frame()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"FinalPeriodic","rules":[{"id":2047,"mux":3,"mux_mask":255,"ops":[{"type":"emit_periodic","interval":10},{"type":"set_byte","byte":1,"val":68},{"type":"checksum"}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("FinalPeriodic", true).ok);
+
+    CanFrame f = frame2047(3);
+    TEST_ASSERT_TRUE(engine.applyToFrame(f, allowedContext(), driver).sent);
+    driver.reset();
+
+    engine.tickPeriodic(10, allowedContext(), driver);
+
+    TEST_ASSERT_EQUAL(1, driver.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x44, driver.sent[0].data[1]);
+    TEST_ASSERT_EQUAL_HEX8(pluginTestChecksumByte(driver.sent[0]), driver.sent[0].data[7]);
+}
+
+void test_blocked_apply_to_frame_clears_periodic_cache()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"ApplyGatePeriodic","rules":[{"id":2047,"mux":3,"mux_mask":255,"ops":[{"type":"set_byte","byte":1,"val":85},{"type":"emit_periodic","interval":10}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("ApplyGatePeriodic", true).ok);
+
+    CanFrame f = frame2047(3);
+    TEST_ASSERT_TRUE(engine.applyToFrame(f, allowedContext(), driver).sent);
+    driver.reset();
+
+    DashPluginContext blocked = allowedContext();
+    blocked.canActive = false;
+    DashPluginApplyResult blockedResult = engine.applyToFrame(f, blocked, driver);
+    TEST_ASSERT_FALSE(blockedResult.sent);
+
+    engine.tickPeriodic(10, allowedContext(), driver);
+
+    TEST_ASSERT_EQUAL(0, driver.sent.size());
+}
+
+void test_disabling_non_emitter_plugin_clears_periodic_cache()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"Mutator","rules":[{"id":2047,"mux":3,"mux_mask":255,"ops":[{"type":"set_byte","byte":2,"val":102}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"Emitter","rules":[{"id":2047,"mux":3,"mux_mask":255,"ops":[{"type":"emit_periodic","interval":10}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("Mutator", true).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("Emitter", true).ok);
+
+    CanFrame f = frame2047(3);
+    TEST_ASSERT_TRUE(engine.applyToFrame(f, allowedContext(), driver).sent);
+    driver.reset();
+
+    TEST_ASSERT_TRUE(engine.setEnabled("Mutator", false).ok);
+    engine.tickPeriodic(10, allowedContext(), driver);
+
+    TEST_ASSERT_EQUAL(0, driver.sent.size());
+}
+
+void test_gtw2047_replay_advances_counter_and_checksum_per_copy()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"ReplayCounter","rules":[{"id":2047,"mux":3,"mux_mask":255,"ops":[{"type":"counter","byte":1,"mask":15,"step":1},{"type":"checksum"}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("ReplayCounter", true).ok);
+    TEST_ASSERT_TRUE(engine.setReplayCount(3).ok);
+
+    CanFrame f = frame2047(3);
+    f.data[1] = 0x00;
+    DashPluginApplyResult applied = engine.applyToFrame(f, allowedContext(), driver);
+
+    TEST_ASSERT_TRUE(applied.sent);
+    TEST_ASSERT_EQUAL(3, driver.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x01, driver.sent[0].data[1] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(0x02, driver.sent[1].data[1] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(0x03, driver.sent[2].data[1] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(pluginTestChecksumByte(driver.sent[0]), driver.sent[0].data[7]);
+    TEST_ASSERT_EQUAL_HEX8(pluginTestChecksumByte(driver.sent[1]), driver.sent[1].data[7]);
+    TEST_ASSERT_EQUAL_HEX8(pluginTestChecksumByte(driver.sent[2]), driver.sent[2].data[7]);
+}
+
+void test_periodic_send_advances_counter_and_checksum_each_tick()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"PeriodicCounter","rules":[{"id":2047,"mux":3,"mux_mask":255,"ops":[{"type":"counter","byte":1,"mask":15,"step":1},{"type":"checksum"},{"type":"emit_periodic","interval":10}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("PeriodicCounter", true).ok);
+
+    CanFrame f = frame2047(3);
+    TEST_ASSERT_TRUE(engine.applyToFrame(f, allowedContext(), driver).sent);
+    driver.reset();
+
+    engine.tickPeriodic(10, allowedContext(), driver);
+    engine.tickPeriodic(20, allowedContext(), driver);
+
+    TEST_ASSERT_EQUAL(2, driver.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x02, driver.sent[0].data[1] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(0x03, driver.sent[1].data[1] & 0x0F);
+    TEST_ASSERT_EQUAL_HEX8(pluginTestChecksumByte(driver.sent[0]), driver.sent[0].data[7]);
+    TEST_ASSERT_EQUAL_HEX8(pluginTestChecksumByte(driver.sent[1]), driver.sent[1].data[7]);
+}
+
+void test_gtw2047_no_checksum_op_preserves_byte7_on_first_and_replay_sends()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"NoChecksumReplay","rules":[{"id":2047,"mux":3,"mux_mask":255,"ops":[{"type":"set_byte","byte":1,"val":34}],"send":true}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("NoChecksumReplay", true).ok);
+    TEST_ASSERT_TRUE(engine.setReplayCount(3).ok);
+
+    CanFrame f = frame2047(3);
+    f.data[7] = 0xA5;
+    DashPluginApplyResult applied = engine.applyToFrame(f, allowedContext(), driver);
+
+    TEST_ASSERT_TRUE(applied.sent);
+    TEST_ASSERT_EQUAL(3, driver.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0xA5, driver.sent[0].data[7]);
+    TEST_ASSERT_EQUAL_HEX8(0xA5, driver.sent[1].data[7]);
+    TEST_ASSERT_EQUAL_HEX8(0xA5, driver.sent[2].data[7]);
+}
+
 int main(int, char **)
 {
     UNITY_BEGIN();
@@ -224,5 +428,16 @@ int main(int, char **)
     RUN_TEST(test_replay_count_does_not_repeat_non_2047_frames);
     RUN_TEST(test_emit_periodic_requires_gtw2047_mux3);
     RUN_TEST(test_gtw_silent_unavailable_without_custom_key);
+    RUN_TEST(test_disabling_periodic_plugin_clears_cached_frame);
+    RUN_TEST(test_replacing_plugin_clears_old_periodic_cache);
+    RUN_TEST(test_gate_failure_clears_periodic_cache_before_next_allowed_tick);
+    RUN_TEST(test_checksum_recomputed_after_payload_ops_even_when_byte7_owned);
+    RUN_TEST(test_same_plugin_can_apply_multiple_ops_to_same_bit_without_priority_overlap);
+    RUN_TEST(test_emit_periodic_caches_final_rule_frame);
+    RUN_TEST(test_blocked_apply_to_frame_clears_periodic_cache);
+    RUN_TEST(test_disabling_non_emitter_plugin_clears_periodic_cache);
+    RUN_TEST(test_gtw2047_replay_advances_counter_and_checksum_per_copy);
+    RUN_TEST(test_periodic_send_advances_counter_and_checksum_each_tick);
+    RUN_TEST(test_gtw2047_no_checksum_op_preserves_byte7_on_first_and_replay_sends);
     return UNITY_END();
 }

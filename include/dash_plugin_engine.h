@@ -278,6 +278,7 @@ public:
         });
         if (existing != plugins_.end())
         {
+            clearPeriodicCache();
             plugin.priority = existing->priority;
             *existing = plugin;
             normalizePriorities(plugin.name.c_str());
@@ -287,6 +288,7 @@ public:
         if (plugins_.size() >= kDashPluginMaxPlugins)
             return DashPluginResult::fail("max plugins reached");
 
+        clearPeriodicCache();
         plugin.priority = static_cast<uint8_t>(plugins_.size() + 1);
         plugins_.push_back(plugin);
         normalizePriorities(plugin.name.c_str());
@@ -304,6 +306,7 @@ public:
         DashPlugin *plugin = findPlugin(name);
         if (plugin == nullptr)
             return DashPluginResult::fail("plugin not found");
+        clearPeriodicCache();
         plugin->enabled = enabled;
         return DashPluginResult::success();
     }
@@ -315,6 +318,7 @@ public:
             return DashPluginResult::fail("plugin not found");
         const size_t count = plugins_.size();
         const uint8_t clamped = static_cast<uint8_t>(std::max<size_t>(1, std::min<size_t>(count, priority)));
+        clearPeriodicCache();
         plugin->priority = clamped;
         normalizePriorities(name);
         return DashPluginResult::success();
@@ -378,14 +382,340 @@ public:
         return DashPluginStatusString(out);
     }
 
-    DashPluginApplyResult applyToFrame(const CanFrame &, const DashPluginContext &, CanDriver &)
+    DashPluginApplyResult applyToFrame(const CanFrame &frame, const DashPluginContext &ctx, CanDriver &driver)
     {
-        return DashPluginApplyResult{};
+        DashPluginApplyResult result{};
+        if (!ctx.canActive)
+        {
+            result.blockedBy = "can_active";
+            clearPeriodicCache();
+            return result;
+        }
+        if (!ctx.otaAllowed)
+        {
+            result.blockedBy = "ota";
+            clearPeriodicCache();
+            return result;
+        }
+        if (!ctx.apGateAllowed)
+        {
+            result.blockedBy = "ap_gate";
+            clearPeriodicCache();
+            return result;
+        }
+        if (!ctx.fsdMasterEnabled)
+        {
+            result.blockedBy = "fsd_master";
+            clearPeriodicCache();
+            return result;
+        }
+
+        std::vector<DashPlugin *> ordered;
+        ordered.reserve(plugins_.size());
+        for (DashPlugin &plugin : plugins_)
+        {
+            plugin.conflicts.clear();
+            if (plugin.enabled && plugin.compatible)
+                ordered.push_back(&plugin);
+        }
+        std::sort(ordered.begin(), ordered.end(), [](const DashPlugin *a, const DashPlugin *b) {
+            return a->priority < b->priority;
+        });
+
+        CanFrame out = frame;
+        if (out.bus == CAN_BUS_ANY)
+            out.bus = ctx.defaultBus;
+
+        std::array<DashPluginOwnership, 64> owned{};
+        bool shouldSend = false;
+        DashPluginSendPlan sendPlan;
+        bool periodicRequested = false;
+        DashPluginOp periodicOp{};
+        std::string periodicPluginName;
+
+        for (DashPlugin *plugin : ordered)
+        {
+            for (const DashPluginRule &rule : plugin->rules)
+            {
+                if (!ruleMatches(rule, frame, ctx.defaultBus))
+                    continue;
+                result.matched = true;
+                if (!rule.send)
+                    continue;
+
+                for (const DashPluginOp &op : rule.ops)
+                    executeOp(*plugin, out, frame, op, owned, result, sendPlan, periodicRequested, periodicOp, periodicPluginName);
+                shouldSend = true;
+            }
+        }
+
+        if (sendPlan.checksumRequested)
+        {
+            const uint8_t previous = out.data[7];
+            out.data[7] = checksumByte(out);
+            if (out.data[7] != previous)
+                result.modified = true;
+        }
+        if (periodicRequested)
+            cachePeriodic(out, periodicOp, periodicPluginName, sendPlan);
+
+        if (!shouldSend || !result.modified)
+            return result;
+
+        const uint8_t sends = out.id == 2047 ? replayCount_ : 1;
+        CanFrame sendFrame = out;
+        for (uint8_t i = 0; i < sends; ++i)
+        {
+            if (i > 0)
+                applySendPlan(sendFrame, sendPlan);
+            if (driver.send(sendFrame))
+            {
+                result.sent = true;
+                ++result.sendCount;
+            }
+        }
+        return result;
     }
 
-    void tickPeriodic(uint32_t, const DashPluginContext &, CanDriver &) {}
+    void tickPeriodic(uint32_t nowMs, const DashPluginContext &ctx, CanDriver &driver)
+    {
+        if (!periodicValid_)
+            return;
+        if (!ctx.canActive || !ctx.otaAllowed || !ctx.apGateAllowed || !ctx.fsdMasterEnabled)
+        {
+            clearPeriodicCache();
+            return;
+        }
+        const DashPlugin *plugin = findPluginConst(periodicPluginName_.c_str());
+        if (plugin == nullptr || !plugin->enabled || !plugin->compatible)
+        {
+            clearPeriodicCache();
+            return;
+        }
+        if (periodicLastMs_ && nowMs - periodicLastMs_ < periodicIntervalMs_)
+            return;
+        periodicLastMs_ = nowMs;
+        applySendPlan(periodicFrame_, periodicSendPlan_);
+        driver.send(periodicFrame_);
+    }
 
 private:
+    struct DashPluginOwnership
+    {
+        const DashPlugin *plugin = nullptr;
+        uint8_t priority = 0;
+    };
+
+    struct DashPluginSendPlan
+    {
+        std::vector<DashPluginOp> counterOps;
+        bool checksumRequested = false;
+    };
+
+    static bool ruleMatches(const DashPluginRule &rule, const CanFrame &frame, uint8_t defaultBus)
+    {
+        if (frame.id != rule.id)
+            return false;
+        if (rule.hasBus)
+        {
+            uint8_t frameMask = dashPluginDefaultBusMask(frame.bus == CAN_BUS_ANY ? defaultBus : frame.bus);
+            if ((rule.busMask & frameMask) == 0)
+                return false;
+        }
+        if (rule.mux >= 0)
+        {
+            uint8_t mask = static_cast<uint8_t>(rule.muxMask ? rule.muxMask : 0xFF);
+            if ((frame.data[0] & mask) != (static_cast<uint8_t>(rule.mux) & mask))
+                return false;
+        }
+        if (rule.hasMatch)
+        {
+            if (rule.matchByte > 7)
+                return false;
+            if ((frame.data[rule.matchByte] & rule.matchMask) != (rule.matchVal & rule.matchMask))
+                return false;
+        }
+        return true;
+    }
+
+    static uint8_t checksumByte(const CanFrame &frame)
+    {
+        uint16_t sum = static_cast<uint16_t>(frame.id & 0xFF) + static_cast<uint16_t>((frame.id >> 8) & 0xFF);
+        for (uint8_t i = 0; i < 7; ++i)
+            sum += frame.data[i];
+        return static_cast<uint8_t>(sum & 0xFF);
+    }
+
+    static void applyCounter(CanFrame &frame, const DashPluginOp &op)
+    {
+        uint8_t mask = op.mask ? op.mask : 0x0F;
+        uint8_t shift = 0;
+        while (shift < 8 && ((mask >> shift) & 0x01) == 0)
+            ++shift;
+        uint8_t field = static_cast<uint8_t>((frame.data[op.byte] & mask) >> shift);
+        uint8_t widthMask = static_cast<uint8_t>(mask >> shift);
+        field = static_cast<uint8_t>((field + (op.step ? op.step : 1)) & widthMask);
+        frame.data[op.byte] = static_cast<uint8_t>((frame.data[op.byte] & ~mask) | ((field << shift) & mask));
+    }
+
+    static bool bitBlockedByOtherPlugin(const std::array<DashPluginOwnership, 64> &owned, const DashPlugin &plugin, uint8_t bit)
+    {
+        if (bit >= owned.size())
+            return false;
+        const DashPluginOwnership &owner = owned[bit];
+        return owner.plugin != nullptr && owner.plugin != &plugin && owner.priority <= plugin.priority;
+    }
+
+    static void markByteMaskOwned(std::array<DashPluginOwnership, 64> &owned, const DashPlugin &plugin, uint8_t byte, uint8_t mask)
+    {
+        if (byte > 7)
+            return;
+        for (uint8_t b = 0; b < 8; ++b)
+            if (mask & (1u << b))
+                owned[byte * 8 + b] = {&plugin, plugin.priority};
+    }
+
+    static uint8_t writableMask(const std::array<DashPluginOwnership, 64> &owned, const DashPlugin &plugin, uint8_t byte, uint8_t mask)
+    {
+        if (byte > 7)
+            return 0;
+        uint8_t available = 0;
+        for (uint8_t b = 0; b < 8; ++b)
+        {
+            if ((mask & (1u << b)) == 0)
+                continue;
+            const DashPluginOwnership &owner = owned[byte * 8 + b];
+            if (owner.plugin == nullptr || owner.plugin == &plugin || owner.priority > plugin.priority)
+                available |= static_cast<uint8_t>(1u << b);
+        }
+        return available;
+    }
+
+    static bool hasBlockedOverlap(const std::array<DashPluginOwnership, 64> &owned, const DashPlugin &plugin, uint8_t byte, uint8_t mask)
+    {
+        if (byte > 7)
+            return false;
+        for (uint8_t b = 0; b < 8; ++b)
+            if ((mask & (1u << b)) && bitBlockedByOtherPlugin(owned, plugin, byte * 8 + b))
+                return true;
+        return false;
+    }
+
+    static void recordPriorityOverlap(DashPlugin &plugin)
+    {
+        plugin.conflicts.push_back("Priority overlap");
+    }
+
+    void clearPeriodicCache()
+    {
+        periodicValid_ = false;
+        periodicPluginName_.clear();
+        periodicSendPlan_ = DashPluginSendPlan{};
+        periodicLastMs_ = 0;
+        gtwSilentRequested_ = false;
+    }
+
+    void cachePeriodic(const CanFrame &frame, const DashPluginOp &op, const std::string &pluginName, const DashPluginSendPlan &sendPlan)
+    {
+        periodicFrame_ = frame;
+        periodicSendPlan_ = sendPlan;
+        periodicIntervalMs_ = op.intervalMs ? op.intervalMs : 100;
+        periodicValid_ = true;
+        periodicPluginName_ = pluginName;
+        gtwSilentRequested_ = op.gtwSilent;
+    }
+
+    static void applySendPlan(CanFrame &frame, const DashPluginSendPlan &sendPlan)
+    {
+        for (const DashPluginOp &op : sendPlan.counterOps)
+            applyCounter(frame, op);
+        if (sendPlan.checksumRequested)
+            frame.data[7] = checksumByte(frame);
+    }
+
+    void applyByteOp(DashPlugin &plugin, CanFrame &out, uint8_t byte, uint8_t mask, uint8_t nextByte,
+                     std::array<DashPluginOwnership, 64> &owned, DashPluginApplyResult &result)
+    {
+        if (byte > 7)
+            return;
+        if (hasBlockedOverlap(owned, plugin, byte, mask))
+            recordPriorityOverlap(plugin);
+        const uint8_t writable = writableMask(owned, plugin, byte, mask);
+        if (writable == 0)
+            return;
+        const uint8_t previous = out.data[byte];
+        out.data[byte] = static_cast<uint8_t>((previous & ~writable) | (nextByte & writable));
+        markByteMaskOwned(owned, plugin, byte, writable);
+        if (out.data[byte] != previous)
+            result.modified = true;
+    }
+
+    void executeOp(DashPlugin &plugin, CanFrame &out, const CanFrame &original, const DashPluginOp &op,
+                   std::array<DashPluginOwnership, 64> &owned, DashPluginApplyResult &result,
+                   DashPluginSendPlan &sendPlan, bool &periodicRequested, DashPluginOp &periodicOp, std::string &periodicPluginName)
+    {
+        switch (op.type)
+        {
+        case DashPluginOpType::SetBit:
+            if (bitBlockedByOtherPlugin(owned, plugin, op.bit))
+            {
+                plugin.conflicts.push_back("Priority overlap on bit " + std::to_string(op.bit));
+                break;
+            }
+            {
+                const uint8_t byte = static_cast<uint8_t>(op.bit / 8);
+                const uint8_t bitMask = static_cast<uint8_t>(1u << (op.bit % 8));
+                const uint8_t before = out.data[byte];
+                setBit(out, op.bit, op.val != 0);
+                markByteMaskOwned(owned, plugin, byte, bitMask);
+                if (out.data[byte] != before)
+                    result.modified = true;
+            }
+            break;
+        case DashPluginOpType::SetByte:
+        {
+            const uint8_t mask = op.mask ? op.mask : 0xFF;
+            const uint8_t nextByte = static_cast<uint8_t>((out.data[op.byte] & ~mask) | (op.val & mask));
+            applyByteOp(plugin, out, op.byte, mask, nextByte, owned, result);
+            break;
+        }
+        case DashPluginOpType::OrByte:
+        {
+            const uint8_t mask = op.mask ? op.mask : 0xFF;
+            const uint8_t nextByte = static_cast<uint8_t>(out.data[op.byte] | (op.val & mask));
+            applyByteOp(plugin, out, op.byte, mask, nextByte, owned, result);
+            break;
+        }
+        case DashPluginOpType::AndByte:
+        {
+            const uint8_t mask = op.mask ? op.mask : 0xFF;
+            const uint8_t nextByte = static_cast<uint8_t>((out.data[op.byte] & ~mask) | ((out.data[op.byte] & op.val) & mask));
+            applyByteOp(plugin, out, op.byte, mask, nextByte, owned, result);
+            break;
+        }
+        case DashPluginOpType::Counter:
+        {
+            CanFrame counted = out;
+            applyCounter(counted, op);
+            const uint8_t mask = op.mask ? op.mask : 0x0F;
+            const uint8_t writable = op.byte <= 7 ? writableMask(owned, plugin, op.byte, mask) : 0;
+            applyByteOp(plugin, out, op.byte, mask, counted.data[op.byte], owned, result);
+            if (writable != 0)
+                sendPlan.counterOps.push_back(op);
+            break;
+        }
+        case DashPluginOpType::Checksum:
+            sendPlan.checksumRequested = true;
+            break;
+        case DashPluginOpType::EmitPeriodic:
+            periodicRequested = true;
+            periodicOp = op;
+            periodicPluginName = plugin.name;
+            break;
+        }
+        (void)original;
+    }
+
     DashPluginResult parsePlugin(JsonObjectConst obj, DashPlugin &plugin) const
     {
         const std::string name = dashPluginString(obj["name"]);
@@ -631,6 +961,14 @@ private:
         return it == plugins_.end() ? nullptr : &(*it);
     }
 
+    const DashPlugin *findPluginConst(const char *name) const
+    {
+        if (name == nullptr)
+            return nullptr;
+        auto it = std::find_if(plugins_.begin(), plugins_.end(), [&](const DashPlugin &plugin) { return plugin.name == name; });
+        return it == plugins_.end() ? nullptr : &(*it);
+    }
+
     static bool pluginRequestsGtwSilent(const DashPlugin &plugin)
     {
         if (plugin.gtwSilentRequested)
@@ -711,4 +1049,11 @@ private:
 
     std::vector<DashPlugin> plugins_;
     uint8_t replayCount_ = 1;
+    bool periodicValid_ = false;
+    CanFrame periodicFrame_{};
+    DashPluginSendPlan periodicSendPlan_{};
+    uint16_t periodicIntervalMs_ = 100;
+    uint32_t periodicLastMs_ = 0;
+    std::string periodicPluginName_;
+    bool gtwSilentRequested_ = false;
 };
