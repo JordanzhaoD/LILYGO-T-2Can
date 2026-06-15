@@ -1970,6 +1970,14 @@ function showPage(pageId){
   }
   closeSidebar();
   if(typeof updateMobTabs==='function')updateMobTabs(pageId);
+  var mobDualTabs=document.querySelectorAll('#mob-tabs-dual .mob-tab[data-page]');
+  for(var i=0;i<mobDualTabs.length;i++){
+    mobDualTabs[i].classList.toggle('active',mobDualTabs[i].getAttribute('data-page')===pageId);
+  }
+  var mobMoreItems=document.querySelectorAll('#mob-more .mob-more-item[data-page]');
+  for(var i=0;i<mobMoreItems.length;i++){
+    mobMoreItems[i].classList.toggle('active',mobMoreItems[i].getAttribute('data-page')===pageId);
+  }
   if(pageId==='pg-can')pollCanTab();
   if(pageId==='pg-drive')loadDriveProfile();
   if(pageId==='pg-bus2'&&CAP.can2Available&&!isSingleCan())pollCAN2();
@@ -3668,7 +3676,12 @@ document.addEventListener('DOMContentLoaded',function(){
     });
   }
 
-  // Mobile bottom tab bar is wired inline via showMobilePage().
+  // Standalone mobile tab bar is wired inline via showMobilePage().
+  // Dual-CAN mobile tab bar + "more" menu navigate to desktop pages.
+  var mobDual=document.querySelectorAll('#mob-tabs-dual .mob-tab[data-page], #mob-more .mob-more-item[data-page]');
+  for(var i=0;i<mobDual.length;i++){
+    mobDual[i].addEventListener('click',function(){showPage(this.getAttribute('data-page'));});
+  }
 
   // Initial page
   showMobilePage('home');
