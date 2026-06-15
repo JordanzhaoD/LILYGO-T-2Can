@@ -332,6 +332,22 @@ public:
         return DashPluginResult::success();
     }
 
+    DashPluginResult remove(const char *name)
+    {
+        if (!name)
+            return DashPluginResult::fail("plugin not found");
+        const size_t before = plugins_.size();
+        plugins_.erase(std::remove_if(plugins_.begin(), plugins_.end(),
+                                      [&](const DashPlugin &p) { return p.name == name; }),
+                       plugins_.end());
+        if (plugins_.size() == before)
+            return DashPluginResult::fail("plugin not found");
+        // No preferred plugin after a removal: re-pack priorities 1..N in the
+        // surviving order. normalizePriorities() handles nullptr preferredName.
+        normalizePriorities(nullptr);
+        return DashPluginResult::success("removed");
+    }
+
     DashPluginStatusString statusJson() const
     {
         JsonDocument doc;

@@ -49,6 +49,9 @@
 #include "dash_tx_evidence.h"
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
+#if defined(DASH_PLUGIN_ENGINE)
+#include "dash_plugin_engine.h"
+#endif
 #if defined(ESP_PLATFORM) && defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
 #include "drivers/twai_driver.h"
 #endif
@@ -141,6 +144,10 @@ static uint8_t hwMode = DASH_INITIAL_HW_MODE;
 static bool canActive = kDashInjectionDefaultEnabled;
 static bool forceActivate = false;
 static bool bootCanActive = kDashInjectionDefaultEnabled;
+#if defined(DASH_PLUGIN_ENGINE)
+static DashPluginEngine dashPluginEngine;
+static String dashPluginUploadBuffer;
+#endif
 #ifndef DASH_AP_GATE_DEFAULT
 #if defined(INJECTION_AFTER_AP) || defined(DASH_INJECTION_AFTER_AP)
 #define DASH_AP_GATE_DEFAULT true
@@ -254,7 +261,14 @@ static String dashCapabilitiesJson()
     j += ",\""; j += "driveProfile"; j += "\":true";     // "driveProfile":true
     j += ",\""; j += "networkSettings"; j += "\":true";  // "networkSettings":true
     j += ",\""; j += "otaUpdate"; j += "\":true";        // "otaUpdate":true
-    j += ",\""; j += "canDiagnostics"; j += "\":true}";  // "canDiagnostics":true}
+    j += ",\""; j += "canDiagnostics"; j += "\":true";   // "canDiagnostics":true
+    j += ",\""; j += "pluginEngine"; j += "\":";
+#if defined(DASH_PLUGIN_ENGINE)
+    j += "true";
+#else
+    j += "false";
+#endif
+    j += "}";                                              // close capabilities object
     return j;
 }
 
@@ -940,6 +954,22 @@ static bool dashInjectionActive()
     if (!dashOtaGuardAllowInjection()) return false;
     return canActive && dashApInjectionAllowed();
 }
+
+#if defined(DASH_PLUGIN_ENGINE)
+// Builds the runtime context handed to DashPluginEngine.applyToFrame() /
+// tickPeriodic(). Mirrors the dashboard injection gates (CAN active + OTA guard
+// + AP gate + legacy FSD settle) so plugins only act when injection is allowed.
+static DashPluginContext dashPluginContext()
+{
+    DashPluginContext ctx{};
+    ctx.canActive = canActive;
+    ctx.otaAllowed = dashOtaGuardAllowInjection();
+    ctx.apGateAllowed = dashApInjectionAllowed() && dashLegacyFsdActivationAllowed(millis());
+    ctx.fsdMasterEnabled = canActive;
+    ctx.defaultBus = CAN_BUS_DEFAULT;
+    return ctx;
+}
+#endif
 
 static bool dashApRestoreBraking()
 {
@@ -3697,6 +3727,141 @@ static void handleOtaUpload()
         Update.abort();
     }
 }
+
+#if defined(DASH_PLUGIN_ENGINE)
+// --- Plugin manager persistence helpers -------------------------------------
+// First pass: save() persists the engine status JSON to SPIFFS so the UI can
+// recover the last known state across reboots. load() is intentionally a
+// no-op stub here because status JSON is not an install source; actual
+// installed-plugin file loading lands in the storage hardening task. Replay
+// count remains persisted by NVS if/when added.
+static void dashSavePluginState()
+{
+    SPIFFS.begin(true);
+    File f = SPIFFS.open("/plugins_state.json", "w");
+    if (!f)
+        return;
+    std::string json = dashPluginEngine.statusJson();
+    f.print(json.c_str());
+}
+
+static void dashLoadPluginState()
+{
+    SPIFFS.begin(true);
+}
+
+// --- Plugin manager HTTP handlers -------------------------------------------
+static void handlePluginsStatus()
+{
+    server.send(200, "application/json", String(dashPluginEngine.statusJson().c_str()));
+}
+
+static void handlePluginsInstallJson()
+{
+    if (!server.hasArg("plain") && !server.hasArg("json"))
+    {
+        server.send(400, "application/json", "{\"error\":\"json body required\"}");
+        return;
+    }
+    String body = server.hasArg("plain") ? server.arg("plain") : server.arg("json");
+    DashPluginResult r = dashPluginEngine.installJson(body.c_str(), false);
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 400, "application/json",
+               String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
+}
+
+static void handlePluginsInstallUrl()
+{
+    if (!server.hasArg("url"))
+    {
+        server.send(400, "application/json", "{\"error\":\"url required\"}");
+        return;
+    }
+    String url = server.arg("url");
+    if (!url.startsWith("http://") && !url.startsWith("https://"))
+    {
+        server.send(400, "application/json", "{\"error\":\"http or https url required\"}");
+        return;
+    }
+    HTTPClient http;
+    WiFiClientSecure client;
+    client.setInsecure();
+    http.begin(client, url);
+    int code = http.GET();
+    if (code != HTTP_CODE_OK)
+    {
+        http.end();
+        server.send(502, "application/json", "{\"error\":\"plugin fetch failed\"}");
+        return;
+    }
+    String body = http.getString();
+    http.end();
+    DashPluginResult r = dashPluginEngine.installJson(body.c_str(), false);
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 400, "application/json",
+               String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
+}
+
+// Upload chunk callback: only buffers the incoming bytes; the final response
+// is sent by handlePluginsUpload() once the body is fully received (avoids a
+// double-send across the WebServer fn + uploadFn callbacks).
+static void handlePluginsUploadChunks()
+{
+    HTTPUpload &upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START)
+        dashPluginUploadBuffer = "";
+    else if (upload.status == UPLOAD_FILE_WRITE)
+        dashPluginUploadBuffer += String(reinterpret_cast<const char *>(upload.buf)).substring(0, upload.currentSize);
+    else if (upload.status == UPLOAD_FILE_ABORTED)
+        dashPluginUploadBuffer = "";
+}
+
+// Final response handler for the multipart upload route. WebServer invokes
+// the upload callback per chunk and this handler exactly once after the body
+// arrives, so install + persist + respond happen here.
+static void handlePluginsUpload()
+{
+    DashPluginResult r = dashPluginEngine.installJson(dashPluginUploadBuffer.c_str(), false);
+    dashSavePluginState();
+    dashPluginUploadBuffer = "";
+    server.send(r.ok ? 200 : 400, "application/json",
+               String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
+}
+
+static void handlePluginsToggle()
+{
+    DashPluginResult r = dashPluginEngine.setEnabled(server.arg("name").c_str(), dashArgTruthy(server.arg("enabled")));
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 404, "application/json", String("{\"ok\":") + (r.ok ? "true" : "false") + "}");
+}
+
+static void handlePluginsPriority()
+{
+    DashPluginResult r = dashPluginEngine.setPriority(server.arg("name").c_str(),
+                                                      static_cast<uint8_t>(server.arg("priority").toInt()));
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 404, "application/json", String("{\"ok\":") + (r.ok ? "true" : "false") + "}");
+}
+
+static void handlePluginsRemove()
+{
+    DashPluginResult r = dashPluginEngine.remove(server.arg("name").c_str());
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 404, "application/json", String("{\"ok\":") + (r.ok ? "true" : "false") + "}");
+}
+
+static void handlePluginsReplayCount()
+{
+    DashPluginResult r = dashPluginEngine.setReplayCount(server.arg("count").toInt());
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 400, "application/json", String("{\"ok\":") + (r.ok ? "true" : "false") + "}");
+}
+
+static void handlePluginsRuleTest()
+{
+    server.send(200, "application/json", "{\"ok\":true,\"mode\":\"manual_preview_reserved\"}");
+}
+#endif
 
 // CAN RUNTIME MANAGEMENT
 
@@ -6517,6 +6682,17 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/gateway_whitelist_add", HTTP_POST, handleGatewayWhitelistAdd);
     server.on("/gateway_blocked", HTTP_GET, handleGatewayBlocked);
     server.on("/gateway_blocked_clear", HTTP_POST, handleGatewayBlockedClear);
+#endif
+#if defined(DASH_PLUGIN_ENGINE)
+    server.on("/plugins/status", HTTP_GET, handlePluginsStatus);
+    server.on("/plugins/install_url", HTTP_POST, handlePluginsInstallUrl);
+    server.on("/plugins/upload", HTTP_POST, handlePluginsUpload, handlePluginsUploadChunks);
+    server.on("/plugins/install_json", HTTP_POST, handlePluginsInstallJson);
+    server.on("/plugins/toggle", HTTP_POST, handlePluginsToggle);
+    server.on("/plugins/priority", HTTP_POST, handlePluginsPriority);
+    server.on("/plugins/remove", HTTP_POST, handlePluginsRemove);
+    server.on("/plugins/replay_count", HTTP_POST, handlePluginsReplayCount);
+    server.on("/plugins/rule_test", HTTP_POST, handlePluginsRuleTest);
 #endif
 
     server.begin();
