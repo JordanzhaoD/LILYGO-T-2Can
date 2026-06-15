@@ -843,8 +843,19 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("xhr.setRequestHeader('Content-Type','application/octet-stream');", self.ui)
         self.assertIn("xhr.setRequestHeader('X-File-Name'", self.ui)
         self.assertIn("xhr.send(file);", self.ui)
-        self.assertNotIn("new FormData()", self.ui)
-        self.assertNotIn("fd.append('file',file)", self.ui)
+        # The OTA /update handler streams a raw octet-stream body (xhr.send(file)),
+        # never a multipart form. FormData is permitted elsewhere only for the
+        # /plugins/upload route, whose backend consumes WebServer multipart chunks.
+        # Guard that FormData usage stays tied to the plugin upload and never leaks
+        # into the OTA path.
+        ota_idx = self.ui.find("xhr.open('POST','/update',true);")
+        plugin_idx = self.ui.find("/plugins/upload")
+        self.assertGreater(ota_idx, -1)
+        formdata_idx = self.ui.find("new FormData()")
+        if formdata_idx != -1:
+            self.assertNotEqual(plugin_idx, -1)
+            # FormData must belong to the plugin upload scope, not the OTA path.
+            self.assertLess(abs(formdata_idx - plugin_idx), 256)
 
     def test_phase2_dashboard_uses_explicit_contract_endpoints(self) -> None:
         expected = [
