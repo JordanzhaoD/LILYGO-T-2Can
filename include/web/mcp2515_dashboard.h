@@ -160,9 +160,13 @@ static volatile uint32_t lastInjectMs = 0;
 // Legacy FSD (0x3EE mux0) AP-settle activation gate — upstream beta3 parity.
 // Legacy injection must wait ~2 s after APActive first rises (and CAN must be
 // active, OTA not blocking, apInjectionGate open) before mux0 bit46 fires.
-static constexpr uint32_t kLegacyFsdActivationSettleMs = 2000;
+// AP settle delay is configurable (0-3000 ms, default 2000) so the standalone
+// single-CAN build can expose it through /config and persist across reboots.
+static constexpr uint32_t kLegacyFsdActivationSettleDefaultMs = 2000;
+static constexpr uint32_t kLegacyFsdActivationSettleMinMs = 0;
+static constexpr uint32_t kLegacyFsdActivationSettleMaxMs = 3000;
 static uint32_t legacyFsdApActiveSinceMs = 0;
-static uint32_t legacyFsdRequiredStableMs = kLegacyFsdActivationSettleMs;
+static uint32_t legacyFsdRequiredStableMs = kLegacyFsdActivationSettleDefaultMs;
 static uint32_t legacyFsdLastBlockedMs = 0;
 static bool legacyFsdLastAllowed = false;
 static bool dashSpeedProfileAuto = true;
@@ -910,7 +914,7 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
     }
     if (legacyFsdApActiveSinceMs == 0)
         legacyFsdApActiveSinceMs = nowMs;
-    bool stable = (nowMs - legacyFsdApActiveSinceMs) >= kLegacyFsdActivationSettleMs;
+    bool stable = (nowMs - legacyFsdApActiveSinceMs) >= legacyFsdRequiredStableMs;
     legacyFsdLastAllowed = stable;
     if (!stable)
         legacyFsdLastBlockedMs = nowMs;
@@ -1026,6 +1030,18 @@ static uint8_t dashClampSpeedProfileForHw(uint8_t hw, int profile)
 static bool dashArgTruthy(const String &v)
 {
     return v == "1" || v == "true" || v == "on" || v == "yes";
+}
+
+// Clamp an AP settle delay (ms) parsed from /config into the valid range so a
+// bad or out-of-range request can never disable the legacy FSD activation gate
+// accidentally. Mirrors dashClampSpeedProfileForHw / dashClampHw3SlewRate style.
+static uint32_t dashClampApDelayMs(int value)
+{
+    if (value < static_cast<int>(kLegacyFsdActivationSettleMinMs))
+        return kLegacyFsdActivationSettleMinMs;
+    if (value > static_cast<int>(kLegacyFsdActivationSettleMaxMs))
+        return kLegacyFsdActivationSettleMaxMs;
+    return static_cast<uint32_t>(value);
 }
 
 static uint8_t dashClampSpeedCustomPct(int v)
@@ -1255,6 +1271,7 @@ static void dashSavePrefs()
     prefs.putBool("boot_can", bootCanActive);
     prefs.putBool("ap_gate", apInjectionGate);
     prefs.putBool("ap_rst", apAutoRestore);
+    prefs.putUInt("ap_dly", legacyFsdRequiredStableMs);
     prefs.putBool("sp_auto", dashSpeedProfileAuto);
     prefs.putUChar("sp_sel", dashManualSpeedProfile);
     prefs.putUChar("drv_prof", dashDriveProfile);
@@ -1442,6 +1459,7 @@ static void dashLoadPrefs()
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
     apInjectionGate = prefs.getBool("ap_gate", DASH_AP_GATE_DEFAULT);
     apAutoRestore = prefs.getBool("ap_rst", false);
+    legacyFsdRequiredStableMs = dashClampApDelayMs(static_cast<int>(prefs.getUInt("ap_dly", kLegacyFsdActivationSettleDefaultMs)));
     dashSpeedProfileAuto = prefs.getBool("sp_auto", true);
     dashManualSpeedProfile = dashClampSpeedProfileForHw(hwMode, prefs.getUChar("sp_sel", 1));
     dashDriveProfile = prefs.getUChar("drv_prof", dashSpeedProfileAuto ? 0 : 3);
@@ -2001,6 +2019,24 @@ static void appendFsdMuxDiagJson(String &j, const char *name, const FsdMuxDiag &
     j += "}";
 }
 
+// Human-readable summary of the legacy FSD injection state machine for /status.
+// Mirrors the gate order in dashLegacyFsdActivationAllowed() so the dashboard UI
+// can render the same 等待 AP / 稳定计时中 / 正在注入 / 已阻断 bucket the firmware uses.
+static const char *dashApInjectionStateName()
+{
+    if (!canActive)
+        return "blocked";
+    if (!dashOtaGuardAllowInjection())
+        return "blocked";
+    if (apInjectionGate && !(dashHandler && (bool)dashHandler->APActive))
+        return "waiting_ap";
+    if (apInjectionGate && !legacyFsdLastAllowed)
+        return "settling";
+    if (legacyFsdLastAllowed || (lastInjectMs && millis() - lastInjectMs < 1000))
+        return "injecting";
+    return "blocked";
+}
+
 static void appendFsdDiagJson(String &j, unsigned long now)
 {
     LegacyFsdDiag diag{};
@@ -2146,6 +2182,11 @@ static void handleStatus()
     j += apInjectionGate ? "true" : "false";
     j += ",\"apAutoRestore\":";
     j += apAutoRestore ? "true" : "false";
+    j += ",\"apDelayMs\":";
+    j += legacyFsdRequiredStableMs;
+    j += ",\"apInjectionState\":\"";
+    j += dashApInjectionStateName();
+    j += "\"";
     j += ",\"ia\":";
     j += dashInjectionActive() ? "true" : "false";
     j += ",\"lastInjectMs\":";
@@ -2447,6 +2488,20 @@ static void handleConfig()
             dashLog("[CFG] AP injection gate " + String(v ? "ON" : "OFF"));
         }
     }
+    if (server.hasArg("ap_delay_ms"))
+    {
+        uint32_t v = dashClampApDelayMs(server.arg("ap_delay_ms").toInt());
+        if (v != legacyFsdRequiredStableMs)
+        {
+            legacyFsdRequiredStableMs = v;
+            dashLog("[CFG] AP settle delay " + String(v) + " ms");
+        }
+    }
+    if (server.hasArg("ap_auto_restore"))
+        apAutoRestore = dashArgTruthy(server.arg("ap_auto_restore"));
+    // ap_rst kept as a stable alias for older clients / backup-restore payloads.
+    if (server.hasArg("ap_rst"))
+        apAutoRestore = dashArgTruthy(server.arg("ap_rst"));
     if (server.hasArg("hw3OffsetSlew"))
     {
         bool v = server.arg("hw3OffsetSlew") == "1";
