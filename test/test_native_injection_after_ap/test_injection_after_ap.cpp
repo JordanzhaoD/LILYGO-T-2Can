@@ -70,6 +70,25 @@ static void activateAp(CarManagerBase &handler)
     mock.reset();
 }
 
+static CanFrame legacyMux0Frame(bool fsdSelected = true)
+{
+    CanFrame f = {.id = 1006, .dlc = 8};
+    f.data[0] = 0x00;
+    if (fsdSelected)
+        markFsdSelectedInUI(f);
+    return f;
+}
+
+static bool legacyGateAllowAfter2000(uint32_t nowMs)
+{
+    return nowMs >= 2000;
+}
+
+static bool legacyGateAlwaysBlocks(uint32_t)
+{
+    return false;
+}
+
 void test_hw3_enhanced_autopilot_waits_for_ap_before_mux1_injection()
 {
     HW3Handler handler;
@@ -309,6 +328,43 @@ void test_hw4_summon_request_survives_aca_while_still_in_park()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
+void test_legacy_mux0_waits_for_explicit_activation_gate_even_when_parked()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    handler.legacyFsdActivationAllowed = legacyGateAlwaysBlocks;
+
+    CanFrame park = gearFrame(1);
+    handler.handleMessage(park, mock);
+    TEST_ASSERT_TRUE(handler.Parked);
+
+    CanFrame mux0 = legacyMux0Frame();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(FsdGateBlockReason::LegacyFsdSettle, handler.legacyFsdDiag.lastBlockedBy);
+    TEST_ASSERT_EQUAL(FsdSkipReason::GateBlocked, handler.legacyFsdDiag.mux0.lastSkip);
+}
+
+void test_legacy_mux0_sends_after_explicit_activation_gate_allows()
+{
+    LegacyHandler handler;
+    handler.enablePrint = false;
+    handler.legacyFsdActivationAllowed = legacyGateAllowAfter2000;
+
+    CanFrame drive = gearFrame(4);
+    handler.handleMessage(drive, mock);
+    TEST_ASSERT_FALSE(handler.Parked);
+
+    CanFrame mux0 = legacyMux0Frame();
+    for (int i = 0; i < 1998; ++i)
+        (void)dashDiagNowMs();
+    handler.handleMessage(mux0, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_TRUE((mock.sent[0].data[5] >> 6) & 0x01);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -321,6 +377,8 @@ int main()
     RUN_TEST(test_hw4_enhanced_autopilot_allows_mux1_injection_while_parked);
     RUN_TEST(test_hw4_enhanced_autopilot_stops_mux1_injection_when_shifted_to_drive);
     RUN_TEST(test_hw4_summon_request_survives_aca_while_still_in_park);
+    RUN_TEST(test_legacy_mux0_waits_for_explicit_activation_gate_even_when_parked);
+    RUN_TEST(test_legacy_mux0_sends_after_explicit_activation_gate_allows);
 
     return UNITY_END();
 }

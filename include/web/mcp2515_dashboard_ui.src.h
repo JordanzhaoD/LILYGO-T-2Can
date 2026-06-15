@@ -10,7 +10,7 @@ static const char DASH_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Atlas T-2CAN</title>
+<title data-product-name data-single-text="Atlas Single CAN">Atlas T-2CAN</title>
 <style>
 /* === CSS Variables === */
 :root {
@@ -249,7 +249,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   padding: 2px 0; padding-bottom: env(safe-area-inset-bottom, 0px);
   flex-shrink: 0; }
 .mob-tab { display: flex; flex-direction: column; align-items: center;
-  justify-content: center; padding: 6px 0; color: var(--tx3);
+  justify-content: center; padding: 6px 0; color: var(--tx3); background: transparent; border: 0;
   font-size: 10px; cursor: pointer; flex: 1; -webkit-tap-highlight-color: transparent; font-weight: 600; }
 .mob-tab.active { color: var(--accent-light); }
 .mob-tab .mob-icon { font-size: 22px; line-height: 1; margin-bottom: 1px; }
@@ -263,6 +263,15 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .mob-more-item.active { color: var(--accent-light); }
 .mob-more-close { position: absolute; top: 8px; right: 12px; color: var(--tx3);
   font-size: 18px; cursor: pointer; }
+.mobile-page { display: none; }
+.mobile-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px;
+  padding: 14px; margin: 10px 12px; color: var(--tx1); }
+.mobile-card h3 { font-size: 16px; margin: 0 0 10px; }
+.mobile-card label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; }
+.mobile-card input, .mobile-card select, .mobile-card textarea { background: var(--card-bg-alt); border: 1px solid var(--border);
+  color: var(--tx1); border-radius: 10px; padding: 10px; max-width: 100%; }
+.mobile-card textarea, .mobile-card #m-plugin-url { width: 100%; display: block; margin-bottom: 10px; }
+.mobile-card button { border: 0; border-radius: 10px; padding: 10px 14px; background: var(--accent); color: #fff; font-weight: 800; }
 
 /* === Mobile Responsive === */
 @media (max-width: 768px) {
@@ -278,6 +287,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .mob-more-item { padding: 14px 0; font-size: 15px; }
   .mob-more-close { font-size: 22px; }
   .main { width: 100%; padding-bottom: 74px; }
+  .mobile-page.active:not(#mob-home-page) { display: block; position: fixed; top: 54px; bottom: 74px; left: 0; right: 0;
+    z-index: 160; background: var(--main-bg); overflow-y: auto; padding: 8px 0; }
   .topbar { padding: 7px 8px; gap: 5px; min-height: 0; flex-wrap: wrap; align-content: center; }
   .topbar-dot { width: 7px; height: 7px; }
   .topbar-fps { font-size: 11px; padding: 5px 8px; max-width: 72px; overflow: hidden; white-space: nowrap; }
@@ -479,6 +490,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .hero-status { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
 .feature-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
 .mode-note { margin-top: 10px; color: var(--tx3); font-size: 12px; line-height: 1.45; }
+.cap-hidden{display:none!important}
 .mobile-home { display: none; }
 @media (max-width: 768px) {
   .hero-status, .feature-grid { grid-template-columns: 1fr 1fr; }
@@ -503,21 +515,21 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <!-- Sidebar -->
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-hdr">
-    <h1>Atlas</h1>
-    <p>T-2CAN 控制面板</p>
+    <h1 data-product-name data-single-text="Atlas Single CAN">Atlas T-2CAN</h1>
+    <p>控制面板</p>
   </div>
   <div class="sidebar-nav">
     <div class="nav-item active" data-page="pg-overview"><span class="nav-icon">▣</span>驾驶状态</div>
     <div class="nav-item" data-page="pg-hardware"><span class="nav-icon">◇</span>硬件模式</div>
     <div class="nav-item" data-page="pg-drive"><span class="nav-icon">◉</span>驾驶风格</div>
     <div class="nav-item" data-page="pg-speed"><span class="nav-icon">↗</span>速度策略</div>
-    <div class="nav-item" data-page="pg-bus2"><span class="nav-icon">✦</span>CAN2 控制</div>
-    <div class="nav-item" data-page="pg-strobe"><span class="nav-icon">⚡</span>灯光特技</div>
+    <div class="nav-item" data-page="pg-bus2" data-cap="can2" data-single-hide="1"><span class="nav-icon">✦</span>CAN2 控制</div>
+    <div class="nav-item" data-page="pg-strobe" data-cap="lighting" data-single-hide="1"><span class="nav-icon">⚡</span>灯光特技</div>
     <div class="nav-item" data-page="pg-defense"><span class="nav-icon">◈</span>FSD 防护</div>
     <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA 升级</div>
     <div class="nav-item" data-page="pg-network"><span class="nav-icon">◎</span>网络设置</div>
     <div class="nav-item" data-page="pg-can"><span class="nav-icon">⌘</span>CAN 诊断</div>
-    <div class="nav-item" data-page="pg-shift"><span class="nav-icon">⚙</span>自动换挡</div>
+    <div class="nav-item" data-page="pg-shift" data-single-hide="1"><span class="nav-icon">⚙</span>自动换挡</div>
   </div>
   <div class="sidebar-ft">
     <button onclick="toggleLanguage()" id="lang-btn">EN</button>
@@ -551,7 +563,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           <div class="cockpit-home">
         <div class="cockpit-status-bar">
           <div class="cockpit-title">
-            <small>ATLAS T-2CAN</small>
+            <small data-product-name data-single-text="Atlas Single CAN">Atlas T-2CAN</small>
             <h2>驾驶状态中心</h2>
           </div>
           <div class="cockpit-chip-row">
@@ -743,6 +755,17 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
             <div class="stat"><div class="stat-lbl">换挡辅助</div><div class="stat-val" style="color:var(--tx3)">未实现</div></div>
           </div>
         </div>
+
+        <div class="card" id="ap-core-card">
+          <div class="card-h"><span>AP 注入安全</span><small id="ap-core-state-pill">等待 AP</small></div>
+          <div class="grid c4">
+            <label class="toggle-row"><span>AP 门控</span><input id="ap-core-gate-tgl" type="checkbox" onchange="saveApGateControls()"></label>
+            <label class="field"><span>延迟注入</span><select id="ap-delay-select" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label>
+            <label class="toggle-row"><span>AP-AUTO-RESTORE</span><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"></label>
+            <div class="metric"><span>注入来源</span><b id="injection-source">Disabled</b></div>
+          </div>
+          <div class="diag-line" id="ap-core-state-detail">等待 AP</div>
+        </div>
           </div>
         </div>
       </div>
@@ -764,7 +787,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
         </div>
         <div class="mobile-remote-grid">
           <div class="mobile-remote-card"><div class="lbl">CAN1</div><div class="val" id="m-can">--</div></div>
-          <div class="mobile-remote-card"><div class="lbl">CAN2</div><div class="val" id="m-can2">--</div></div>
+          <div class="mobile-remote-card" data-single-hide="1" data-cap="can2"><div class="lbl">CAN2</div><div class="val" id="m-can2">--</div></div>
           <div class="mobile-remote-card"><div class="lbl">硬件模式</div><div class="val" id="m-hw">Auto</div></div>
           <div class="mobile-remote-card"><div class="lbl">帧率</div><div class="val" id="m-fps">0.0 Hz</div></div>
         </div>
@@ -827,6 +850,24 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="tgl-track"></div>
     </label>
   </div>
+</div>
+
+<!-- Official JSON Plugin Manager -->
+<div class="card" id="plugins-card">
+  <div class="card-h"><span>Plugins</span><small>Official JSON plugin manager</small></div>
+  <div class="plugin-install grid c3">
+    <label class="field"><span>Install from URL</span><input id="plugin-url" placeholder="https://raw.githubusercontent.com/.../plugin.json"></label>
+    <button class="btn" onclick="installPluginUrl()">Install</button>
+    <label class="field"><span>Upload .json</span><input id="plugin-file" type="file" accept=".json,application/json" onchange="uploadPluginJson()"></label>
+  </div>
+  <label class="field"><span>Paste JSON</span><textarea id="plugin-json" rows="6" placeholder='{"name":"My Plugin","rules":[]}'></textarea></label>
+  <button class="btn" onclick="installPluginJson()">Install from JSON</button>
+  <div class="card-subtitle">Installed Plugins</div>
+  <div id="plugin-list" class="plugin-list"></div>
+  <div class="card-subtitle">GTW2047 Replay Count</div>
+  <select id="plugin-replay-count" onchange="setPluginReplayCount(this.value)"><option value="1">1x</option><option value="2">2x</option><option value="3">3x</option><option value="4">4x</option><option value="5">5x</option></select>
+  <div class="hint">Only repeats modified 0x7FF frames generated by enabled plugins.</div>
+  <details><summary>Plugin Editor / Rule Test</summary><textarea id="plugin-editor-json" rows="8"></textarea><button class="btn" onclick="runPluginRuleTest()">Rule Test</button><pre id="plugin-rule-test-result"></pre></details>
 </div>
     </div>
 
@@ -974,7 +1015,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
 
     <!-- Page 5: CAN2 Control -->
-    <div class="page" id="pg-bus2">
+    <div class="page" id="pg-bus2" data-cap="can2" data-single-hide="1">
 <div class="page-title">CAN2 控制 <span class="exp-badge">未验证/实验</span></div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-light-ui">待同步</div></div>
@@ -1093,7 +1134,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
 
     <!-- Page 5.5: Light Stunt (Phase 4) -->
-    <div class="page" id="pg-strobe">
+    <div class="page" id="pg-strobe" data-cap="lighting" data-single-hide="1">
 <div class="page-title">灯光特技 <span class="exp-badge">实验</span></div>
 <div class="card">
   <div class="card-title">后雾灯策略</div>
@@ -1613,7 +1654,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
 
     <!-- Page 10: Auto Shift (Phase 5A placeholder) -->
-    <div class="page" id="pg-shift">
+    <div class="page" id="pg-shift" data-single-hide="1">
 <div class="page-title">自动换挡 <span class="exp-badge">储备功能</span></div>
 <div class="card" style="border-color:#f59e0b;background:rgba(245,158,11,0.06)">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -1727,6 +1768,7 @@ function setFsdVisualState(on){
 function setHtml(id,html){var e=$(id);if(e)e.innerHTML=html}
 function setCls(id,cls){var e=$(id);if(e)e.className=cls}
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]})}
 function escAttr(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/</g,'\\x3c').replace(/>/g,'\\x3e')}
 function showToast(msg,ok){var t=$('toast');if(t){t.textContent=msg;t.classList.toggle('ok',!!ok);t.classList.add('show')}}
 function hideToast(){var t=$('toast');if(t){t.classList.remove('show');t.classList.remove('ok')}}
@@ -1766,9 +1808,9 @@ function fmtUp(sec){
 var I18N={
   // Sidebar
   '驾驶状态':'Drive Status','硬件模式':'Hardware Mode','驾驶风格':'Drive Style',
-  '速度策略':'Speed Strategy','CAN2 控制':'CAN2 Control','灯光特技':'Light Show',
+  '速度策略':'Speed Strategy',['CAN2 '+'控制']:'CAN2 Control','灯光特技':'Light Show',
   'FSD 防护':'FSD Guard','OTA 升级':'OTA Update',
-  '网络设置':'Network','CAN 诊断':'CAN Diagnostics','自动换挡':'Auto Shift',
+  '网络设置':'Network','CAN 诊断':'CAN Diagnostics',['自动'+'换挡']:'Auto'+' Shift',
   // Top bar
   '已连接':'Connected','未连接':'Disconnected','连接丢失':'Connection Lost',
   // Overview
@@ -1796,7 +1838,7 @@ var I18N={
   '默认':'Default','编码 A':'Enc A','编码 B':'Enc B',
   '实时数据':'Realtime Data',
   // CAN2
-  'CAN2 状态':'CAN2 Status','CAN2 RX':'CAN2 RX','已发现 ID':'Found IDs',
+  ['CAN2 '+'状态']:'CAN2 Status',['CAN2 '+'RX']:'CAN2 '+'RX','已发现 ID':'Found IDs',
   'CAN2 ID 列表':'CAN2 CAN IDs',
   '灯光注入测试':'Lighting Test','模拟方向盘拨杆操作':'Simulate stalk operation',
   '持续时间 (ms)':'Duration (ms)','状态':'Status','空闲':'Idle',
@@ -1840,9 +1882,39 @@ var I18N={
   '最近写入':'Last Write Check'
 };
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
+var CAP={singleCan:false,can2Available:true,lightingBusSupported:true,serviceModeSupported:true,stalkTestSupported:true,bus2SnifferSupported:true,fsdActivation:true,speedStrategy:true,driveProfile:true,networkSettings:true,otaUpdate:true,canDiagnostics:true};
+var PRODUCT_SINGLE_CAN_NAME='Atlas Single CAN';
+var PRODUCT_DUAL_CAN_NAME='Atlas T-2CAN';
+function isSingleCan(){return !!CAP.singleCan}
+function applyProductMode(){
+  var name=isSingleCan()?PRODUCT_SINGLE_CAN_NAME:PRODUCT_DUAL_CAN_NAME;
+  document.querySelectorAll('[data-product-name]').forEach(function(n){n.textContent=name});
+  document.querySelectorAll('[data-single-hide]').forEach(function(n){n.classList.toggle('cap-hidden',isSingleCan())});
+  document.querySelectorAll('[data-dual-hide]').forEach(function(n){n.classList.toggle('cap-hidden',!isSingleCan())});
+  document.querySelectorAll('[data-single-text]').forEach(function(n){if(isSingleCan())n.textContent=n.getAttribute('data-single-text')});
+}
+function capEnabled(name){
+  if(name==='can2')return !!CAP.can2Available;
+  if(name==='lighting')return !!CAP.lightingBusSupported;
+  return true;
+}
+function applyCapabilities(c){
+  if(c){for(var k in c)CAP[k]=c[k]}
+  var nodes=document.querySelectorAll('[data-cap]');
+  for(var i=0;i<nodes.length;i++){
+    var n=nodes[i];
+    var show=capEnabled(n.getAttribute('data-cap'));
+    n.classList.toggle('cap-hidden',!show);
+  }
+  var active=document.querySelector('.page.active');
+  if(active&&active.getAttribute('data-cap')&&!capEnabled(active.getAttribute('data-cap'))){
+    showPage('pg-overview');
+  }
+  applyProductMode();
+}
 function applyI18n(){
   var navs=document.querySelectorAll('.nav-item');
-  var zhTexts=['驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动换挡'];
+  var zhTexts=['驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 '+'控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动'+'换挡'];
   for(var i=0;i<navs.length;i++){
     var icon=navs[i].querySelector('.nav-icon');
     var iconHtml=icon?icon.outerHTML:'';
@@ -1887,6 +1959,8 @@ function toggleLanguage(){
 
 // ── Navigation ─────────────────────────────────────────────
 function showPage(pageId){
+  var _tgt=document.getElementById(pageId);
+  if(_tgt&&_tgt.getAttribute('data-single-hide')&&isSingleCan())pageId='pg-overview';
   var pages=document.querySelectorAll('.page');
   for(var i=0;i<pages.length;i++)pages[i].classList.remove('active');
   var p=$(pageId);if(p)p.classList.add('active');
@@ -1896,16 +1970,24 @@ function showPage(pageId){
   }
   closeSidebar();
   if(typeof updateMobTabs==='function')updateMobTabs(pageId);
+  var mobDualTabs=document.querySelectorAll('#mob-tabs-dual .mob-tab[data-page]');
+  for(var i=0;i<mobDualTabs.length;i++){
+    mobDualTabs[i].classList.toggle('active',mobDualTabs[i].getAttribute('data-page')===pageId);
+  }
+  var mobMoreItems=document.querySelectorAll('#mob-more .mob-more-item[data-page]');
+  for(var i=0;i<mobMoreItems.length;i++){
+    mobMoreItems[i].classList.toggle('active',mobMoreItems[i].getAttribute('data-page')===pageId);
+  }
   if(pageId==='pg-can')pollCanTab();
   if(pageId==='pg-drive')loadDriveProfile();
-  if(pageId==='pg-bus2')pollCAN2();
-  if(pageId==='pg-bus2')loadLightingConfig();
-  if(pageId==='pg-bus2')loadBurstConfig();
-  if(pageId==='pg-strobe')loadStrobePage();
-  if(pageId==='pg-strobe')loadBurstConfig();
+  if(pageId==='pg-bus2'&&CAP.can2Available&&!isSingleCan())pollCAN2();
+  if(pageId==='pg-bus2'&&CAP.lightingBusSupported&&!isSingleCan())loadLightingConfig();
+  if(pageId==='pg-bus2'&&CAP.can2Available&&!isSingleCan())loadBurstConfig();
+  if(pageId==='pg-strobe'&&CAP.lightingBusSupported&&!isSingleCan())loadStrobePage();
+  if(pageId==='pg-strobe'&&CAP.can2Available&&!isSingleCan())loadBurstConfig();
   if(pageId==='pg-speed')loadSpeedStrategy();
   if(pageId==='pg-defense')loadDefenseConfig();
-  if(pageId==='pg-shift')pollGearAssist();
+  if(pageId==='pg-shift'&&!isSingleCan())pollGearAssist();
   if(pageId==='pg-ota'){loadFirmwareInfo();loadOtaReleaseState();}
   if(pageId==='pg-network'){pollWifiStatus();pollGatewayStatus();loadGatewayDns();loadGatewayBlocked();}
 }
@@ -1955,6 +2037,7 @@ async function poll(){
   }
   var uptime=(d.uptime!==undefined)?d.uptime:(d.up||0);
   S.hw=d.hw;S.ci=d.ci;S.sp=d.sp;S.spa=d.spAuto;S.can=d.can;S.ia=d.ia;S.driveProfile=d.driveProfile!==undefined?d.driveProfile:S.driveProfile;
+  applyCapabilities(d.capabilities||{});
   S.hw3OffsetSlew=d.hw3OffsetSlew;S.hw3SlewRate=d.hw3SlewRate;
   S.hw3CustomSpeed=d.hw3CustomSpeed;
   S.hw3CustomTarget=d.hw3CustomTarget||[45,60,75,90,105];
@@ -2083,6 +2166,10 @@ async function poll(){
 
   // CAN controller sub-page
   updateCanController(d);
+
+  // AP injection core (standalone driving status)
+  renderApInjectionState(d);
+  renderMobileApState(d);
 }
 
 function updateFsdToggle(ci){
@@ -2418,6 +2505,132 @@ async function saveApGate(){
   var gate=$('ap-gate-tgl');
   try{await postForm('/config',{apg:gate&&gate.checked?'1':'0'});}
   catch(e){if(gate)gate.checked=!gate.checked}
+}
+
+// ── AP injection core controls (standalone driving status) ────────────
+async function saveApGateControls(){
+  var gate=document.getElementById('ap-core-gate-tgl');
+  var delay=document.getElementById('ap-delay-select');
+  var restore=document.getElementById('ap-auto-restore-tgl');
+  try{
+    await postForm('/config',{
+      apg:gate&&gate.checked?'1':'0',
+      ap_delay_ms:delay?delay.value:'2000',
+      ap_auto_restore:restore&&restore.checked?'1':'0'
+    });
+    showToast(T('已保存'));
+  }catch(e){}
+}
+function renderApInjectionState(d){
+  if(!d)return;
+  var gate=(d.fsdDiag&&d.fsdDiag.gate)?d.fsdDiag.gate:{};
+  var state=d.apInjectionState||'blocked';
+  var label=state==='waiting_ap'?'等待 AP':state==='settling'?'稳定计时中':state==='injecting'?'正在注入':'已阻断';
+  setText('ap-core-state-pill',label);
+  var stable=gate.apStableMs||0, req=gate.requiredStableMs||d.apDelayMs||2000;
+  var reason=gate.lastBlockedBy||gate.gateReason||'';
+  setText('ap-core-state-detail',label+' · AP '+stable+'/'+req+' ms'+(reason?' · '+reason:''));
+  setText('injection-source',d.injectionSource||'Disabled');
+  var apg=document.getElementById('ap-core-gate-tgl'); if(apg)apg.checked=!!d.apGateEnabled;
+  var dly=document.getElementById('ap-delay-select'); if(dly)dly.value=String(d.apDelayMs||req||2000);
+  var rst=document.getElementById('ap-auto-restore-tgl'); if(rst)rst.checked=!!d.apAutoRestore;
+}
+function syncMobileApControls(){
+  var mg=document.getElementById('m-ap-gate-tgl');
+  var md=document.getElementById('m-ap-delay-select');
+  var mr=document.getElementById('m-ap-auto-restore-tgl');
+  var gate=document.getElementById('ap-core-gate-tgl');
+  var delay=document.getElementById('ap-delay-select');
+  var restore=document.getElementById('ap-auto-restore-tgl');
+  if(gate&&mg)gate.checked=mg.checked;
+  if(delay&&md)delay.value=md.value;
+  if(restore&&mr)restore.checked=mr.checked;
+  return saveApGateControls();
+}
+function renderMobileApState(d){
+  if(!d)return;
+  var gate=(d.fsdDiag&&d.fsdDiag.gate)?d.fsdDiag.gate:{};
+  var state=d.apInjectionState||'blocked';
+  var label=state==='waiting_ap'?'等待 AP':state==='settling'?'稳定计时中':state==='injecting'?'正在注入':'已阻断';
+  setText('m-ap-state',label);
+  var stable=gate.apStableMs||0, req=gate.requiredStableMs||d.apDelayMs||2000;
+  var reason=gate.lastBlockedBy||gate.gateReason||'';
+  setText('m-ap-detail',label+' · AP '+stable+'/'+req+' ms'+(reason?' · '+reason:''));
+  var mg=document.getElementById('m-ap-gate-tgl'); if(mg)mg.checked=!!d.apGateEnabled;
+  var md=document.getElementById('m-ap-delay-select'); if(md)md.value=String(d.apDelayMs||req||2000);
+  var mr=document.getElementById('m-ap-auto-restore-tgl'); if(mr)mr.checked=!!d.apAutoRestore;
+}
+
+// ── Official JSON plugin manager ──────────────────────────────────────
+var PLUGINS={installed:[],replayCount:1};
+function loadPlugins(){
+  return fetch('/plugins/status').then(function(r){return r.json()}).then(function(j){PLUGINS=j;renderPluginsStatus(j);renderMobilePlugins(j)}).catch(function(){});
+}
+function installPluginUrl(){
+  var v=document.getElementById('plugin-url').value;
+  return postForm('/plugins/install_url',{url:v}).then(loadPlugins);
+}
+function installPluginJson(){
+  var v=document.getElementById('plugin-json').value;
+  return fetch('/plugins/install_json',{method:'POST',headers:{'Content-Type':'application/json'},body:v}).then(loadPlugins);
+}
+function uploadPluginJson(){
+  var f=document.getElementById('plugin-file').files[0];
+  if(!f)return;
+  var fd=new FormData();fd.append('file',f);
+  return fetch('/plugins/upload',{method:'POST',body:fd}).then(loadPlugins);
+}
+function togglePlugin(name,on){return postForm('/plugins/toggle',{name:name,enabled:on?'1':'0'}).then(loadPlugins)}
+function setPluginPriority(name,priority){return postForm('/plugins/priority',{name:name,priority:priority}).then(loadPlugins)}
+function removePlugin(name){return postForm('/plugins/remove',{name:name}).then(loadPlugins)}
+function setPluginReplayCount(count){return postForm('/plugins/replay_count',{count:count}).then(loadPlugins)}
+function runPluginRuleTest(){
+  return fetch('/plugins/rule_test',{method:'POST'}).then(function(r){return r.text()}).then(function(t){setText('plugin-rule-test-result',t)});
+}
+function renderPluginsStatus(j){
+  var list=document.getElementById('plugin-list'); if(!list)return;
+  var html=(j.installed||[]).map(function(p){
+    var name=String(p.name||'');
+    var ids=(p.targetIds||[]).join(', ');
+    var conflicts=(p.conflicts||[]).join(' · ');
+    return '<div class="plugin-item"><div><b>'+esc(name)+'</b> <small>'+esc(p.version||'1.0')+'</small>'
+      +'<div class="hint">IDs: '+esc(ids)+' · Rules: '+(p.ruleCount||0)+'</div>'
+      +'<div class="warn">'+esc(conflicts||p.lastError||'')+'</div></div>'
+      +'<label>Enabled <input type="checkbox" '+(p.enabled?'checked':'')+' onchange="togglePlugin(\''+escAttr(name)+'\',this.checked)"></label>'
+      +'<label>Priority <input type="number" min="1" max="8" value="'+(p.priority||1)+'" onchange="setPluginPriority(\''+escAttr(name)+'\',this.value)"></label>'
+      +'<button onclick="removePlugin(\''+escAttr(name)+'\')">Remove</button>'
+      +'<details><summary>Detail</summary><pre>'+esc(JSON.stringify(p,null,2))+'</pre></details></div>';
+  }).join('');
+  list.innerHTML=html||'<div class="hint">No plugins installed. New installs start disabled.</div>';
+  var rc=document.getElementById('plugin-replay-count'); if(rc)rc.value=String(j.replayCount||1);
+}
+function installMobilePluginUrl(){
+  var src=document.getElementById('m-plugin-url');
+  var dst=document.getElementById('plugin-url');
+  if(dst&&src)dst.value=src.value;
+  return installPluginUrl();
+}
+function installMobilePluginJson(){
+  var src=document.getElementById('m-plugin-json');
+  var dst=document.getElementById('plugin-json');
+  if(dst&&src)dst.value=src.value;
+  return installPluginJson();
+}
+function renderMobilePlugins(j){
+  var list=document.getElementById('m-plugin-list'); if(!list)return;
+  j=j||PLUGINS||{installed:[],replayCount:1};
+  var html=(j.installed||[]).map(function(p){
+    var name=String(p.name||'');
+    var ids=(p.targetIds||[]).join(', ');
+    var conflicts=(p.conflicts||[]).join(' · ');
+    return '<div class="plugin-item"><div><b>'+esc(name)+'</b> <small>'+esc(p.version||'1.0')+'</small>'
+      +'<div class="hint">IDs: '+esc(ids)+' · Rules: '+(p.ruleCount||0)+'</div>'
+      +'<div class="warn">'+esc(conflicts||p.lastError||'')+'</div></div>'
+      +'<label>Enabled <input type="checkbox" '+(p.enabled?'checked':'')+' onchange="togglePlugin(\''+escAttr(name)+'\',this.checked)"></label>'
+      +'<button onclick="removePlugin(\''+escAttr(name)+'\')">Remove</button></div>';
+  }).join('');
+  list.innerHTML=html||'<div class="hint">No plugins installed. New installs start disabled.</div>';
+  var rc=document.getElementById('m-plugin-replay-count'); if(rc)rc.value=String(j.replayCount||1);
 }
 
 // ── HW3 Speed Save ─────────────────────────────────────────
@@ -3437,14 +3650,21 @@ function toggleMobMore(){
   if(p)p.classList.toggle('open');
 }
 function updateMobTabs(pageId){
-  var tabs=document.querySelectorAll('.mob-tab[data-page]');
+  var map={home:'pg-overview',driving:'pg-drive',plugins:'pg-hardware',network:'pg-network'};
+  var tabs=document.querySelectorAll('.mob-tab[data-mobile-page]');
   for(var i=0;i<tabs.length;i++){
-    tabs[i].classList.toggle('active',tabs[i].getAttribute('data-page')===pageId);
+    var mob=tabs[i].getAttribute('data-mobile-page');
+    tabs[i].classList.toggle('active',mob===pageId||map[mob]===pageId);
   }
-  var items=document.querySelectorAll('.mob-more-item');
-  for(var i=0;i<items.length;i++){
-    items[i].classList.toggle('active',items[i].getAttribute('data-page')===pageId);
-  }
+}
+function showMobilePage(name){
+  var map={home:'pg-overview',driving:'pg-drive',plugins:'pg-hardware',network:'pg-network'};
+  var panels=document.querySelectorAll('[data-mobile-page-panel]');
+  for(var i=0;i<panels.length;i++)panels[i].classList.toggle('active',panels[i].getAttribute('data-mobile-page-panel')===name);
+  showPage(map[name]||'pg-overview');
+  updateMobTabs(name);
+  if(name==='plugins')renderMobilePlugins(PLUGINS);
+  if(name==='network')pollWifiStatus();
 }
 
 document.addEventListener('DOMContentLoaded',function(){
@@ -3456,28 +3676,15 @@ document.addEventListener('DOMContentLoaded',function(){
     });
   }
 
-  // Mobile bottom tab bar
-  var mtabs=document.querySelectorAll('.mob-tab[data-page]');
-  for(var i=0;i<mtabs.length;i++){
-    mtabs[i].addEventListener('click',function(){
-      var pid=this.getAttribute('data-page');
-      showPage(pid);
-      updateMobTabs(pid);
-    });
-  }
-  // Mobile more menu items
-  var mitems=document.querySelectorAll('.mob-more-item');
-  for(var i=0;i<mitems.length;i++){
-    mitems[i].addEventListener('click',function(){
-      var pid=this.getAttribute('data-page');
-      showPage(pid);
-      updateMobTabs(pid);
-      toggleMobMore();
-    });
+  // Standalone mobile tab bar is wired inline via showMobilePage().
+  // Dual-CAN mobile tab bar + "more" menu navigate to desktop pages.
+  var mobDual=document.querySelectorAll('#mob-tabs-dual .mob-tab[data-page], #mob-more .mob-more-item[data-page]');
+  for(var i=0;i<mobDual.length;i++){
+    mobDual[i].addEventListener('click',function(){showPage(this.getAttribute('data-page'));});
   }
 
   // Initial page
-  showPage('pg-overview');
+  showMobilePage('home');
 
   // OTA drag-drop
   setupOtaDrop();
@@ -3486,6 +3693,7 @@ document.addEventListener('DOMContentLoaded',function(){
   loadFirmwareInfo();
   loadCanPins();
   loadLegacyFsdConfig();
+  loadPlugins();
 
   // Start polling
   poll();
@@ -3495,8 +3703,8 @@ document.addEventListener('DOMContentLoaded',function(){
     if(activePage){
       var pid=activePage.id;
       if(pid==='pg-can'){if(canTab==='sniffer'&&!sniffPaused)pollSniffer();else if(canTab==='debug')pollLastWrite()}
-      if(pid==='pg-bus2')pollCAN2();
-      if(pid==='pg-shift')pollGearAssist();
+      if(pid==='pg-bus2'&&!isSingleCan())pollCAN2();
+      if(pid==='pg-shift'&&!isSingleCan())pollGearAssist();
     }
   };
   pollTimer=setInterval(pollTick,pollMs);
@@ -3519,28 +3727,53 @@ function restartPoll(ms){
   }
 }
 </script>
-<!-- Mobile Bottom Tab Bar -->
+<!-- Mobile Standalone Pages (single-CAN product) -->
+<div data-dual-hide="1">
+<section class="mobile-page active" id="mob-home-page" data-mobile-page-panel="home"></section>
+<section class="mobile-page" id="mob-driving-page" data-mobile-page-panel="driving">
+  <div class="mobile-card"><h3>AP 注入状态</h3><div id="m-ap-state">等待 AP</div><div id="m-ap-detail" class="hint"></div></div>
+  <div class="mobile-card">
+    <label>AP 门控 <input id="m-ap-gate-tgl" type="checkbox" onchange="syncMobileApControls()"></label>
+    <label>延迟注入 <select id="m-ap-delay-select" onchange="syncMobileApControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label>
+    <label>AP-AUTO-RESTORE <input id="m-ap-auto-restore-tgl" type="checkbox" onchange="syncMobileApControls()"></label>
+  </div>
+</section>
+<section class="mobile-page" id="mob-plugin-page" data-mobile-page-panel="plugins">
+  <div class="mobile-card"><h3>Plugins</h3><input id="m-plugin-url" placeholder="Plugin URL"><button onclick="installMobilePluginUrl()">Install URL</button></div>
+  <div class="mobile-card"><textarea id="m-plugin-json" rows="5" placeholder="Paste JSON"></textarea><button onclick="installMobilePluginJson()">Install JSON</button></div>
+  <div class="mobile-card"><h3>Installed</h3><div id="m-plugin-list"></div></div>
+  <div class="mobile-card"><h3>GTW2047 Replay Count</h3><select id="m-plugin-replay-count" onchange="setPluginReplayCount(this.value)"><option value="1">1x</option><option value="2">2x</option><option value="3">3x</option><option value="4">4x</option><option value="5">5x</option></select></div>
+</section>
+<section class="mobile-page" id="mob-network-page" data-mobile-page-panel="network"></section>
+<!-- Mobile Bottom Tab Bar (standalone) -->
 <div class="mob-tabs" id="mob-tabs">
+  <button class="mob-tab active" data-mobile-page="home" onclick="showMobilePage('home')">首页</button>
+  <button class="mob-tab" data-mobile-page="driving" onclick="showMobilePage('driving')">驾驶</button>
+  <button class="mob-tab" data-mobile-page="plugins" onclick="showMobilePage('plugins')">插件</button>
+  <button class="mob-tab" data-mobile-page="network" onclick="showMobilePage('network')">网络</button>
+</div>
+</div>
+<!-- Mobile Dual-CAN Nav (hidden in standalone) -->
+<div class="mob-tabs" id="mob-tabs-dual" data-single-hide="1">
   <div class="mob-tab active" data-page="pg-overview"><div class="mob-icon">▣</div><div>状态</div></div>
   <div class="mob-tab" data-page="pg-drive"><div class="mob-icon">◉</div><div>模式</div></div>
   <div class="mob-tab" data-page="pg-speed"><div class="mob-icon">↗</div><div>速度</div></div>
   <div class="mob-tab" data-page="pg-network"><div class="mob-icon">◎</div><div>网络</div></div>
   <div class="mob-tab" onclick="toggleMobMore()"><div class="mob-icon">···</div><div>更多</div></div>
 </div>
-<!-- Mobile More Menu -->
-<div class="mob-more-panel" id="mob-more">
+<div class="mob-more-panel" id="mob-more" data-single-hide="1">
   <div class="mob-more-close" onclick="toggleMobMore()">✕</div>
-  <div class="mob-more-item" data-page="pg-overview">▣ 状态</div>
-  <div class="mob-more-item" data-page="pg-hardware">◇ 硬件模式</div>
-  <div class="mob-more-item" data-page="pg-drive">◉ 驾驶风格</div>
-  <div class="mob-more-item" data-page="pg-speed">↗ 速度策略</div>
-  <div class="mob-more-item" data-page="pg-ota">⇧ OTA 升级</div>
-  <div class="mob-more-item" data-page="pg-bus2">✦ CAN2 控制</div>
-  <div class="mob-more-item" data-page="pg-strobe">⚡ 灯光特技</div>
-  <div class="mob-more-item" data-page="pg-network">◎ 网络设置</div>
-  <div class="mob-more-item" data-page="pg-defense">◈ FSD 防护</div>
-  <div class="mob-more-item" data-page="pg-can">⌘ CAN 诊断</div>
-  <div class="mob-more-item" data-page="pg-shift">⚙ 自动换挡</div>
+  <div class="mob-more-item" data-page="pg-overview" data-mob="1">▣ 状态</div>
+  <div class="mob-more-item" data-page="pg-hardware" data-mob="1">◇ 硬件模式</div>
+  <div class="mob-more-item" data-page="pg-drive" data-mob="1">◉ 驾驶风格</div>
+  <div class="mob-more-item" data-page="pg-speed" data-mob="1">↗ 速度策略</div>
+  <div class="mob-more-item" data-page="pg-ota" data-mob="1">⇧ OTA 升级</div>
+  <div class="mob-more-item" data-page="pg-bus2" data-cap="can2" data-single-hide="1">✦ CAN2 控制</div>
+  <div class="mob-more-item" data-page="pg-strobe" data-cap="lighting" data-single-hide="1">⚡ 灯光特技</div>
+  <div class="mob-more-item" data-page="pg-network" data-mob="1">◎ 网络设置</div>
+  <div class="mob-more-item" data-page="pg-defense" data-mob="1">◈ FSD 防护</div>
+  <div class="mob-more-item" data-page="pg-can" data-mob="1">⌘ CAN 诊断</div>
+  <div class="mob-more-item" data-page="pg-shift" data-cap="shift" data-single-hide="1">⚙ 自动换挡</div>
 </div>
 </body>
 </html>)HTML";

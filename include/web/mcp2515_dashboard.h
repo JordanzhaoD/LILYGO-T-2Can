@@ -49,6 +49,9 @@
 #include "dash_tx_evidence.h"
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
+#if defined(DASH_PLUGIN_ENGINE)
+#include "dash_plugin_engine.h"
+#endif
 #if defined(ESP_PLATFORM) && defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
 #include "drivers/twai_driver.h"
 #endif
@@ -134,10 +137,17 @@ static uint8_t mcpEflg = 0;
 static const uint8_t mcpEflg = 0;
 #endif
 
-static uint8_t hwMode = DASH_DEFAULT_HW;
+#ifndef DASH_INITIAL_HW_MODE
+#define DASH_INITIAL_HW_MODE DASH_DEFAULT_HW
+#endif
+static uint8_t hwMode = DASH_INITIAL_HW_MODE;
 static bool canActive = kDashInjectionDefaultEnabled;
 static bool forceActivate = false;
 static bool bootCanActive = kDashInjectionDefaultEnabled;
+#if defined(DASH_PLUGIN_ENGINE)
+static DashPluginEngine dashPluginEngine;
+static String dashPluginUploadBuffer;
+#endif
 #ifndef DASH_AP_GATE_DEFAULT
 #if defined(INJECTION_AFTER_AP) || defined(DASH_INJECTION_AFTER_AP)
 #define DASH_AP_GATE_DEFAULT true
@@ -154,6 +164,18 @@ static bool apAutoRestore = false;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
 static volatile uint32_t lastInjectMs = 0;
+// Legacy FSD (0x3EE mux0) AP-settle activation gate — upstream beta3 parity.
+// Legacy injection must wait ~2 s after APActive first rises (and CAN must be
+// active, OTA not blocking, apInjectionGate open) before mux0 bit46 fires.
+// AP settle delay is configurable (0-3000 ms, default 2000) so the standalone
+// single-CAN build can expose it through /config and persist across reboots.
+static constexpr uint32_t kLegacyFsdActivationSettleDefaultMs = 2000;
+static constexpr uint32_t kLegacyFsdActivationSettleMinMs = 0;
+static constexpr uint32_t kLegacyFsdActivationSettleMaxMs = 3000;
+static uint32_t legacyFsdApActiveSinceMs = 0;
+static uint32_t legacyFsdRequiredStableMs = kLegacyFsdActivationSettleDefaultMs;
+static uint32_t legacyFsdLastBlockedMs = 0;
+static bool legacyFsdLastAllowed = false;
 static bool dashSpeedProfileAuto = true;
 static uint8_t dashManualSpeedProfile = 1;
 static uint8_t dashDriveProfile = 0;      // 0=Auto, 1=Sloth, 2=Chill, 3=Normal, 4=Hurry, 5=MAX
@@ -201,6 +223,54 @@ static constexpr uint8_t kDashLedBrightnessDefault = RGB_BRIGHTNESS;
 static constexpr uint8_t kDashLedBrightnessDefault = 32;
 #endif
 static constexpr uint8_t dashLedBrightness = kDashLedBrightnessDefault;
+
+#if defined(DASH_SINGLE_CAN_STANDALONE)
+static constexpr bool kDashSingleCanStandalone = true;
+#else
+static constexpr bool kDashSingleCanStandalone = false;
+#endif
+
+#if defined(DRIVER_T2CAN_DUAL) && !defined(DASH_SINGLE_CAN_STANDALONE)
+static constexpr bool kDashCan2Available = true;
+#else
+static constexpr bool kDashCan2Available = false;
+#endif
+
+static constexpr bool kDashLightingBusSupported = kDashCan2Available;
+static constexpr bool kDashServiceModeSupported = kDashCan2Available;
+static constexpr bool kDashStalkTestSupported = kDashCan2Available;
+static constexpr bool kDashBus2SnifferSupported = kDashCan2Available;
+
+static String dashCapabilitiesJson()
+{
+    String j = "{";
+    j += "\""; j += "singleCan"; j += "\":";           // "singleCan":
+    j += kDashSingleCanStandalone ? "true" : "false";
+    j += ",\""; j += "can2Available"; j += "\":";   // "can2Available":
+    j += kDashCan2Available ? "true" : "false";
+    j += ",\""; j += "lightingBusSupported"; j += "\":"; // "lightingBusSupported":
+    j += kDashLightingBusSupported ? "true" : "false";
+    j += ",\""; j += "serviceModeSupported"; j += "\":"; // "serviceModeSupported":
+    j += kDashServiceModeSupported ? "true" : "false";
+    j += ",\""; j += "stalkTestSupported"; j += "\":";   // "stalkTestSupported":
+    j += kDashStalkTestSupported ? "true" : "false";
+    j += ",\""; j += "bus2SnifferSupported"; j += "\":"; // "bus2SnifferSupported":
+    j += kDashBus2SnifferSupported ? "true" : "false";
+    j += ",\""; j += "fsdActivation"; j += "\":true";    // "fsdActivation":true
+    j += ",\""; j += "speedStrategy"; j += "\":true";    // "speedStrategy":true
+    j += ",\""; j += "driveProfile"; j += "\":true";     // "driveProfile":true
+    j += ",\""; j += "networkSettings"; j += "\":true";  // "networkSettings":true
+    j += ",\""; j += "otaUpdate"; j += "\":true";        // "otaUpdate":true
+    j += ",\""; j += "canDiagnostics"; j += "\":true";   // "canDiagnostics":true
+    j += ",\""; j += "pluginEngine"; j += "\":";
+#if defined(DASH_PLUGIN_ENGINE)
+    j += "true";
+#else
+    j += "false";
+#endif
+    j += "}";                                              // close capabilities object
+    return j;
+}
 
 // WiFi AP (hotspot) — overridable at runtime
 static char apSSID[33] = "";
@@ -819,6 +889,52 @@ static bool dashApInjectionAllowed()
     return !apInjectionGate || (dashHandler && dashHandler->injectionGateOpen());
 }
 
+// Legacy FSD (0x3EE mux0) activation gate with a ~2 s AP-settle hold-off.
+// Mirrors upstream ev-open-can-tools v3.0.2-beta.3 safety parity: once AP
+// becomes active (and CAN/OTA/gate all allow), hold off legacy mux0 bit46
+// injection until APActive has been continuously asserted for
+// legacyFsdRequiredStableMs. Any loss of CAN / OTA / gate / APActive
+// resets the settle timer. nowMs is the same monotonically-increasing
+// millisecond counter the handler path uses (millis() in firmware,
+// dashDiagNowMs() in native tests) so the hold-off interval is consistent.
+static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
+{
+    if (!canActive)
+    {
+        legacyFsdApActiveSinceMs = 0;
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+    if (!dashOtaGuardAllowInjection())
+    {
+        legacyFsdApActiveSinceMs = 0;
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+    if (!apInjectionGate)
+    {
+        legacyFsdLastAllowed = true;
+        return true;
+    }
+    bool apActive = dashHandler && (bool)dashHandler->APActive;
+    if (!apActive)
+    {
+        legacyFsdApActiveSinceMs = 0;
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+    if (legacyFsdApActiveSinceMs == 0)
+        legacyFsdApActiveSinceMs = nowMs;
+    bool stable = (nowMs - legacyFsdApActiveSinceMs) >= legacyFsdRequiredStableMs;
+    legacyFsdLastAllowed = stable;
+    if (!stable)
+        legacyFsdLastBlockedMs = nowMs;
+    return stable;
+}
+
 static FsdGateBlockReason dashCurrentGateBlockReason()
 {
     if (!canActive)
@@ -838,6 +954,45 @@ static bool dashInjectionActive()
     if (!dashOtaGuardAllowInjection()) return false;
     return canActive && dashApInjectionAllowed();
 }
+
+#if defined(DASH_PLUGIN_ENGINE)
+// Builds the runtime context handed to DashPluginEngine.applyToFrame() /
+// tickPeriodic(). Mirrors the dashboard injection gates (CAN active + OTA guard
+// + AP gate + legacy FSD settle) so plugins only act when injection is allowed.
+//
+// IMPORTANT: this is called every CAN frame in appLoop, so it must be free of
+// side effects. We do NOT call dashLegacyFsdActivationAllowed() here (it resets
+// the settle timer / writes legacyFsdLastAllowed) — instead we read
+// legacyFsdLastAllowed, the latched result of the last handler-path gate check.
+// dashLegacyFsdActivationAllowed() is still invoked by the real handler gate
+// path (via legacyFsdActivationAllowed callback) and updates the latch.
+static DashPluginContext dashPluginContext()
+{
+    DashPluginContext ctx{};
+    ctx.canActive = canActive;
+    ctx.otaAllowed = dashOtaGuardAllowInjection();
+    ctx.apGateAllowed = dashApInjectionAllowed() && legacyFsdLastAllowed;
+    ctx.fsdMasterEnabled = canActive;
+    ctx.defaultBus = CAN_BUS_DEFAULT;
+    return ctx;
+}
+
+// Returns true when any enabled+compatible plugin declares a rule for an FSD
+// activation frame id (1006 / 1021 / 2047). Used to suppress the built-in FSD
+// injection so the plugin owns those frames. Guarded-out builds always return
+// false, so the built-in path stays active (no behavior change).
+static bool dashPluginOwnsFsdActivation()
+{
+    return dashPluginEngine.hasEnabledRuleFor(1006) ||
+           dashPluginEngine.hasEnabledRuleFor(1021) ||
+           dashPluginEngine.hasEnabledRuleFor(2047);
+}
+#else
+static bool dashPluginOwnsFsdActivation()
+{
+    return false;
+}
+#endif
 
 static bool dashApRestoreBraking()
 {
@@ -928,6 +1083,18 @@ static uint8_t dashClampSpeedProfileForHw(uint8_t hw, int profile)
 static bool dashArgTruthy(const String &v)
 {
     return v == "1" || v == "true" || v == "on" || v == "yes";
+}
+
+// Clamp an AP settle delay (ms) parsed from /config into the valid range so a
+// bad or out-of-range request can never disable the legacy FSD activation gate
+// accidentally. Mirrors dashClampSpeedProfileForHw / dashClampHw3SlewRate style.
+static uint32_t dashClampApDelayMs(int value)
+{
+    if (value < static_cast<int>(kLegacyFsdActivationSettleMinMs))
+        return kLegacyFsdActivationSettleMinMs;
+    if (value > static_cast<int>(kLegacyFsdActivationSettleMaxMs))
+        return kLegacyFsdActivationSettleMaxMs;
+    return static_cast<uint32_t>(value);
 }
 
 static uint8_t dashClampSpeedCustomPct(int v)
@@ -1117,6 +1284,8 @@ static void dashApplyRuntimeState()
     {
         dashHandler->checkAD = dashCheckADEnabled;
         dashHandler->gateBlockReason = dashCurrentGateBlockReason;
+        dashHandler->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
+        dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
@@ -1156,6 +1325,7 @@ static void dashSavePrefs()
     prefs.putBool("boot_can", bootCanActive);
     prefs.putBool("ap_gate", apInjectionGate);
     prefs.putBool("ap_rst", apAutoRestore);
+    prefs.putUInt("ap_dly", legacyFsdRequiredStableMs);
     prefs.putBool("sp_auto", dashSpeedProfileAuto);
     prefs.putUChar("sp_sel", dashManualSpeedProfile);
     prefs.putUChar("drv_prof", dashDriveProfile);
@@ -1343,6 +1513,7 @@ static void dashLoadPrefs()
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
     apInjectionGate = prefs.getBool("ap_gate", DASH_AP_GATE_DEFAULT);
     apAutoRestore = prefs.getBool("ap_rst", false);
+    legacyFsdRequiredStableMs = dashClampApDelayMs(static_cast<int>(prefs.getUInt("ap_dly", kLegacyFsdActivationSettleDefaultMs)));
     dashSpeedProfileAuto = prefs.getBool("sp_auto", true);
     dashManualSpeedProfile = dashClampSpeedProfileForHw(hwMode, prefs.getUChar("sp_sel", 1));
     dashDriveProfile = prefs.getUChar("drv_prof", dashSpeedProfileAuto ? 0 : 3);
@@ -1902,6 +2073,24 @@ static void appendFsdMuxDiagJson(String &j, const char *name, const FsdMuxDiag &
     j += "}";
 }
 
+// Human-readable summary of the legacy FSD injection state machine for /status.
+// Mirrors the gate order in dashLegacyFsdActivationAllowed() so the dashboard UI
+// can render the same 等待 AP / 稳定计时中 / 正在注入 / 已阻断 bucket the firmware uses.
+static const char *dashApInjectionStateName()
+{
+    if (!canActive)
+        return "blocked";
+    if (!dashOtaGuardAllowInjection())
+        return "blocked";
+    if (apInjectionGate && !(dashHandler && (bool)dashHandler->APActive))
+        return "waiting_ap";
+    if (apInjectionGate && !legacyFsdLastAllowed)
+        return "settling";
+    if (legacyFsdLastAllowed || (lastInjectMs && millis() - lastInjectMs < 1000))
+        return "injecting";
+    return "blocked";
+}
+
 static void appendFsdDiagJson(String &j, unsigned long now)
 {
     LegacyFsdDiag diag{};
@@ -1950,6 +2139,13 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     j += parked ? "true" : "false";
     j += ",\"apActive\":";
     j += apActive ? "true" : "false";
+    j += ",\"apStableMs\":";
+    j += (apActive && legacyFsdApActiveSinceMs > 0) ? String(now - legacyFsdApActiveSinceMs) : String(0);
+    j += ",\"requiredStableMs\":";
+    j += legacyFsdRequiredStableMs;
+    j += ",\"legacyFsdAllowed\":";
+    j += legacyFsdLastAllowed ? "true" : "false";
+    j += ",\"blockedFrame\":\"0x3EE mux0\"";
     j += ",\"summoning\":";
     j += summoning ? "true" : "false";
     j += R"JSON(,"finalAllowed":)JSON";
@@ -2006,6 +2202,9 @@ static void handleStatus()
     j += ",\"buildEnv\":\"" DASH_BUILD_ENV "\"";
     j += ",\"uiBuildId\":\"" DASH_UI_BUILD_ID "\"";
     j += ",\"uiBuildUtc\":\"" DASH_UI_BUILD_UTC "\"";
+    j += ",\"";
+    j += "capabilities"; j += "\":";        // "capabilities":
+    j += dashCapabilitiesJson();
     j += ",\"sp\":";
     j += sp;
     j += ",\"spAuto\":";
@@ -2037,6 +2236,18 @@ static void handleStatus()
     j += apInjectionGate ? "true" : "false";
     j += ",\"apAutoRestore\":";
     j += apAutoRestore ? "true" : "false";
+    j += ",\"apDelayMs\":";
+    j += legacyFsdRequiredStableMs;
+    j += ",\"apInjectionState\":\"";
+    j += dashApInjectionStateName();
+    j += "\"";
+    j += ",\"injectionSource\":\"";
+#if defined(DASH_PLUGIN_ENGINE)
+    j += dashPluginOwnsFsdActivation() ? "Plugin" : (canActive ? "Built-in" : "Disabled");
+#else
+    j += canActive ? "Built-in" : "Disabled";
+#endif
+    j += "\"";
     j += ",\"ia\":";
     j += dashInjectionActive() ? "true" : "false";
     j += ",\"lastInjectMs\":";
@@ -2338,6 +2549,20 @@ static void handleConfig()
             dashLog("[CFG] AP injection gate " + String(v ? "ON" : "OFF"));
         }
     }
+    if (server.hasArg("ap_delay_ms"))
+    {
+        uint32_t v = dashClampApDelayMs(server.arg("ap_delay_ms").toInt());
+        if (v != legacyFsdRequiredStableMs)
+        {
+            legacyFsdRequiredStableMs = v;
+            dashLog("[CFG] AP settle delay " + String(v) + " ms");
+        }
+    }
+    if (server.hasArg("ap_auto_restore"))
+        apAutoRestore = dashArgTruthy(server.arg("ap_auto_restore"));
+    // ap_rst kept as a stable alias for older clients / backup-restore payloads.
+    if (server.hasArg("ap_rst"))
+        apAutoRestore = dashArgTruthy(server.arg("ap_rst"));
     if (server.hasArg("hw3OffsetSlew"))
     {
         bool v = server.arg("hw3OffsetSlew") == "1";
@@ -3533,6 +3758,152 @@ static void handleOtaUpload()
         Update.abort();
     }
 }
+
+#if defined(DASH_PLUGIN_ENGINE)
+// --- Plugin manager persistence helpers -------------------------------------
+// Plugin state is persisted as the engine's exportConfigJson() document
+// (replayCount + per-plugin name/enabled/priority/source) so the full
+// installed-plugin set survives reboots. save() writes it to SPIFFS after
+// every state mutation; load() restores it once during dashboard setup. The
+// file path is fixed so firmware and tooling agree on the location.
+static constexpr const char *kDashPluginStatePath = "/plugins_state.json";
+
+static void dashSavePluginState()
+{
+    if (!SPIFFS.begin(true))
+        return;
+    File f = SPIFFS.open(kDashPluginStatePath, "w");
+    if (!f)
+        return;
+    std::string json = dashPluginEngine.exportConfigJson();
+    f.print(json.c_str());
+}
+
+static void dashLoadPluginState()
+{
+    if (!SPIFFS.begin(true))
+        return;
+    if (!SPIFFS.exists(kDashPluginStatePath))
+        return;
+    File f = SPIFFS.open(kDashPluginStatePath, "r");
+    if (!f)
+        return;
+    String body = f.readString();
+    dashPluginEngine.importConfigJson(body.c_str());
+}
+
+// --- Plugin manager HTTP handlers -------------------------------------------
+static void handlePluginsStatus()
+{
+    server.send(200, "application/json", String(dashPluginEngine.statusJson().c_str()));
+}
+
+static void handlePluginsInstallJson()
+{
+    if (!server.hasArg("plain") && !server.hasArg("json"))
+    {
+        server.send(400, "application/json", "{\"error\":\"json body required\"}");
+        return;
+    }
+    String body = server.hasArg("plain") ? server.arg("plain") : server.arg("json");
+    DashPluginResult r = dashPluginEngine.installJson(body.c_str(), false);
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 400, "application/json",
+               String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
+}
+
+static void handlePluginsInstallUrl()
+{
+    if (!server.hasArg("url"))
+    {
+        server.send(400, "application/json", "{\"error\":\"url required\"}");
+        return;
+    }
+    String url = server.arg("url");
+    if (!url.startsWith("http://") && !url.startsWith("https://"))
+    {
+        server.send(400, "application/json", "{\"error\":\"http or https url required\"}");
+        return;
+    }
+    HTTPClient http;
+    WiFiClientSecure client;
+    client.setInsecure();
+    http.begin(client, url);
+    int code = http.GET();
+    if (code != HTTP_CODE_OK)
+    {
+        http.end();
+        server.send(502, "application/json", "{\"error\":\"plugin fetch failed\"}");
+        return;
+    }
+    String body = http.getString();
+    http.end();
+    DashPluginResult r = dashPluginEngine.installJson(body.c_str(), false);
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 400, "application/json",
+               String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
+}
+
+// Upload chunk callback: only buffers the incoming bytes; the final response
+// is sent by handlePluginsUpload() once the body is fully received (avoids a
+// double-send across the WebServer fn + uploadFn callbacks).
+static void handlePluginsUploadChunks()
+{
+    HTTPUpload &upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START)
+        dashPluginUploadBuffer = "";
+    else if (upload.status == UPLOAD_FILE_WRITE)
+        dashPluginUploadBuffer += String(reinterpret_cast<const char *>(upload.buf)).substring(0, upload.currentSize);
+    else if (upload.status == UPLOAD_FILE_ABORTED)
+        dashPluginUploadBuffer = "";
+}
+
+// Final response handler for the multipart upload route. WebServer invokes
+// the upload callback per chunk and this handler exactly once after the body
+// arrives, so install + persist + respond happen here.
+static void handlePluginsUpload()
+{
+    DashPluginResult r = dashPluginEngine.installJson(dashPluginUploadBuffer.c_str(), false);
+    dashSavePluginState();
+    dashPluginUploadBuffer = "";
+    server.send(r.ok ? 200 : 400, "application/json",
+               String("{\"ok\":") + (r.ok ? "true" : "false") + ",\"message\":\"" + r.message.c_str() + "\"}");
+}
+
+static void handlePluginsToggle()
+{
+    DashPluginResult r = dashPluginEngine.setEnabled(server.arg("name").c_str(), dashArgTruthy(server.arg("enabled")));
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 404, "application/json", String("{\"ok\":") + (r.ok ? "true" : "false") + "}");
+}
+
+static void handlePluginsPriority()
+{
+    DashPluginResult r = dashPluginEngine.setPriority(server.arg("name").c_str(),
+                                                      static_cast<uint8_t>(server.arg("priority").toInt()));
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 404, "application/json", String("{\"ok\":") + (r.ok ? "true" : "false") + "}");
+}
+
+static void handlePluginsRemove()
+{
+    DashPluginResult r = dashPluginEngine.remove(server.arg("name").c_str());
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 404, "application/json", String("{\"ok\":") + (r.ok ? "true" : "false") + "}");
+}
+
+static void handlePluginsReplayCount()
+{
+    DashPluginResult r = dashPluginEngine.setReplayCount(server.arg("count").toInt());
+    dashSavePluginState();
+    server.send(r.ok ? 200 : 400, "application/json", String("{\"ok\":") + (r.ok ? "true" : "false") + "}");
+}
+
+static void handlePluginsRuleTest()
+{
+    server.send(200, "application/json", "{\"ok\":true,\"mode\":\"manual_preview_reserved\"}");
+}
+#endif
 
 // CAN RUNTIME MANAGEMENT
 
@@ -6159,6 +6530,8 @@ static void dashInitHandlers()
     {
         handlerPool[i]->onFrame = mcpDashOnFrame;
         handlerPool[i]->gateBlockReason = dashCurrentGateBlockReason;
+        handlerPool[i]->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
+        handlerPool[i]->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
     }
 }
 
@@ -6237,6 +6610,11 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 
     dashLoadPrefs();
     dashGatewayLoad();
+#if defined(DASH_PLUGIN_ENGINE)
+    // Restore installed plugins + replay count from SPIFFS before handlers
+    // register so the first /plugins status reflects persisted state.
+    dashLoadPluginState();
+#endif
     // Always boot in AP+STA mode so the STA interface is ready immediately.
     // This prevents connection failures to saved networks caused by late mode switching.
     dashStartAccessPoint(true);
@@ -6278,8 +6656,10 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/speed_strategy", HTTP_POST, handleSpeedStrategy);
     server.on("/speed_custom", HTTP_GET, handleSpeedCustomGet);
     server.on("/speed_custom", HTTP_POST, handleSpeedCustom);
+#if !defined(DASH_SINGLE_CAN_STANDALONE)
     server.on("/lighting_config", HTTP_GET, handleLightingConfig);
     server.on("/lighting_config", HTTP_POST, handleLightingConfig);
+#endif
     server.on("/defense_config", HTTP_GET, handleDefenseConfig);
     server.on("/defense_config", HTTP_POST, handleDefenseConfig);
     server.on("/legacy_fsd_config", HTTP_GET, handleLegacyFsdConfig);
@@ -6289,9 +6669,11 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/power_mgmt",       HTTP_GET,  handlePowerMgmt);
     server.on("/power_mgmt",       HTTP_POST, handlePowerMgmt);
     server.on("/vehicle_ota_status", HTTP_GET, handleVehicleOtaStatus);
+#if !defined(DASH_SINGLE_CAN_STANDALONE)
     server.on("/fog_light",        HTTP_GET,  handleFogLight);
     server.on("/fog_light",        HTTP_POST, handleFogLight);
     server.on("/strobe_cont",      HTTP_POST, handleStrobeCont);
+#endif
     server.on("/hotspot_config", HTTP_GET, handleHotspotConfig);
     server.on("/hotspot_config", HTTP_POST, handleHotspotConfig);
     server.on("/relay_wifi_test", HTTP_POST, handleRelayWifiTest);
@@ -6305,7 +6687,7 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/rec_start", HTTP_POST, handleRecStart);
     server.on("/rec_stop", HTTP_POST, handleRecStop);
     server.on("/rec_status", HTTP_GET, handleRecStatus);
-#ifdef DRIVER_T2CAN_DUAL
+#if defined(DRIVER_T2CAN_DUAL) && !defined(DASH_SINGLE_CAN_STANDALONE)
     server.on("/service_mode", HTTP_GET, handleServiceMode);
     server.on("/service_mode", HTTP_POST, handleServiceMode);
     server.on("/stalk_test", HTTP_GET, handleStalkTest);
@@ -6348,6 +6730,17 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/gateway_whitelist_add", HTTP_POST, handleGatewayWhitelistAdd);
     server.on("/gateway_blocked", HTTP_GET, handleGatewayBlocked);
     server.on("/gateway_blocked_clear", HTTP_POST, handleGatewayBlockedClear);
+#endif
+#if defined(DASH_PLUGIN_ENGINE)
+    server.on("/plugins/status", HTTP_GET, handlePluginsStatus);
+    server.on("/plugins/install_url", HTTP_POST, handlePluginsInstallUrl);
+    server.on("/plugins/upload", HTTP_POST, handlePluginsUpload, handlePluginsUploadChunks);
+    server.on("/plugins/install_json", HTTP_POST, handlePluginsInstallJson);
+    server.on("/plugins/toggle", HTTP_POST, handlePluginsToggle);
+    server.on("/plugins/priority", HTTP_POST, handlePluginsPriority);
+    server.on("/plugins/remove", HTTP_POST, handlePluginsRemove);
+    server.on("/plugins/replay_count", HTTP_POST, handlePluginsReplayCount);
+    server.on("/plugins/rule_test", HTTP_POST, handlePluginsRuleTest);
 #endif
 
     server.begin();

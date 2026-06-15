@@ -91,12 +91,12 @@ inline uint8_t readDIGear(const CanFrame &frame)
 
 inline bool isVehicleParked(uint8_t gear)
 {
-    // Treat true Park (1) as parked. Also treat INVALID (0) and SNA (7) as
-    // parked: when the DI is asleep (e.g. car locked with Sentry on) it
-    // reports SNA, and we want the AP Injection Gate to open so summon-
-    // unlock injection runs on cold approach. Driving states (R=2, N=3,
-    // D=4) and unknown mid-range values are not parked.
-    return gear == 0 || gear == 1 || gear == 7;
+    // Live gear must fail closed for INVALID (0), SNA (7), and reserved values.
+    // Only true Park (1) opens the parked branch of AP Injection Gate.
+    // Previous behavior treated 0/7 as parked (for DI-asleep/Sentry cold
+    // approach); upstream beta3 safety parity requires fail-closed: a missing
+    // or SNA gear reading must NOT open the injection gate.
+    return gear == 1;
 }
 
 inline const char *describeGTWAutopilot(uint8_t value)

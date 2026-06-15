@@ -46,6 +46,7 @@ enum class FsdGateBlockReason : uint8_t
     Ota = 3,
     ApGate = 4,
     CompileGate = 5,
+    LegacyFsdSettle = 6,
 };
 
 enum class FsdHealthState : uint8_t
@@ -137,6 +138,7 @@ static inline const char *fsdGateBlockReasonName(FsdGateBlockReason reason)
     case FsdGateBlockReason::Ota: return "ota";
     case FsdGateBlockReason::ApGate: return "ap_gate";
     case FsdGateBlockReason::CompileGate: return "compile_gate";
+    case FsdGateBlockReason::LegacyFsdSettle: return "legacy_fsd_settle";
     }
     return "none";
 }

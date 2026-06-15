@@ -152,6 +152,13 @@ class WifiSettingsRegressionTests(unittest.TestCase):
             '\\"apGate\\"',
             '\\"ia\\"',
             'dashInjectionActive()',
+            # Task 5: configurable AP settle delay (0-3000 ms) + auto-restore alias.
+            # Regression guard so the prefs key and /config param stay wired even
+            # if a later refactor touches the legacy FSD activation gate.
+            '"ap_dly"',
+            'server.hasArg("ap_delay_ms")',
+            'server.hasArg("ap_auto_restore")',
+            'dashClampApDelayMs',
         ]
 
         for field in expected_ui_fields:
