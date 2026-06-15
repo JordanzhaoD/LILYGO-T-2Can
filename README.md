@@ -47,6 +47,8 @@
 
 微雪 ESP32-S3-RS485-CAN 请使用 `waveshare_single_can_standalone` 环境。该版本只使用单路 TWAI CAN（GPIO15 TX / GPIO16 RX），保留 FSD 激活、速度策略、驾驶风格、网络设置、OTA 升级和单 CAN 诊断；CAN2、MCP2515、Bus2、Service Mode、Stalk/highbeam、灯光特技入口会按 capabilities 隐藏或不注册。
 
+Dashboard 同时暴露 AP Gate、延迟注入、AP 注入状态、官方 JSON 插件管理（URL 安装 / `.json` 上传 / 离线粘贴、默认关闭、优先级、移除、详情）以及 GTW2047 重放倍率；插件状态持久化到 SPIFFS，重启后自动恢复。
+
 ```bash
 pio run -e waveshare_single_can_standalone
 ```

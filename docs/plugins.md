@@ -215,6 +215,18 @@ This rule listens for CAN ID `0x370` (`880`) and only matches frames where byte 
 }
 ```
 
+## Waveshare single-CAN standalone
+
+The `waveshare_single_can_standalone` build exposes the same official JSON plugin workflow as dual-CAN dashboards: install from URL, upload a `.json` file, or paste JSON offline. New installs always start **disabled**; enable each plugin individually, adjust priority (higher priority wins overlapping bit writes), and inspect a plugin's detail before enabling.
+
+Single-CAN boards have one physical CAN bus:
+
+- Plugins with **no `bus` field** are accepted.
+- Plugins pinned to the board's default bus are accepted.
+- Plugins targeting a bus that does not exist on the standalone board are rejected or shown as incompatible.
+
+Installed plugins, their enabled flags, priority, and the GTW2047 replay count are persisted to SPIFFS (`/plugins_state.json`) and restored on reboot. GTW2047 replay count only repeats modified `0x7FF` frames produced by enabled plugin rules — non-2047 frames are never repeated by this setting. `gtw_silent: true` requires a build with `PLUGIN_GTW_UDS_CUSTOM_KEY` and a custom `pluginGtwUdsComputeKey` implementation; without it, periodic emit still works but GTW UDS silencing is unavailable.
+
 ## Installing plugins
 
 ### Via URL (requires WiFi internet)

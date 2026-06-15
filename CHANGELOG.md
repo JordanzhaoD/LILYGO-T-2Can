@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added `waveshare_single_can_standalone` profile for Waveshare ESP32-S3-RS485-CAN single-CAN deployments.
 - Added Dashboard capabilities for single-CAN UI/API pruning: CAN2, Bus2, Service Mode, Stalk/highbeam, and lighting-stunt surfaces are hidden or unregistered in standalone builds (controlled via the `DASH_SINGLE_CAN_STANDALONE` build flag).
 - Added AP Injection Gate safety parity with upstream `ev-open-can-tools v3.0.2-beta.3`: Legacy `0x3EE mux0` requires AP active for 2 seconds when the gate is enabled, and live unknown gear fails closed.
+- Added official JSON plugin manager for Waveshare Single CAN standalone: URL install, `.json` upload, paste JSON, disabled-by-default installs, per-plugin enable/priority/remove/detail, GTW2047 replay count, and SPIFFS persistence (`/plugins_state.json`) restored on boot.
+- Added AP Gate delayed-injection controls and AP injection state to the standalone driving status UI (desktop + mobile).
+- Cleaned standalone desktop and mobile UI to remove CAN2/T-2CAN/Auto Shift product surfaces while preserving dual-CAN builds.
 
 ## [4.0.2] - 2026-05-31
 

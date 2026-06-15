@@ -34,7 +34,14 @@ Upload:
 pio run -e waveshare_single_can_standalone -t upload --upload-port /dev/cu.usbmodem21101
 ```
 
-首次接车前先连接 Dashboard，确认 `/status.capabilities.singleCan=true`、`/status.capabilities.can2Available=false`，并确认 FSD 注入处于关闭状态。
+刷新后、首次接车前，先在 Dashboard 完成以下确认：
+
+1. 产品名称显示为 `Atlas Single CAN`。
+2. `/status.capabilities.singleCan=true`。
+3. `/status.capabilities.can2Available=false`。
+4. AP Gate 已开启，延迟注入默认 `2000 ms`，并确认 FSD 注入处于关闭状态。
+5. 已安装插件默认全部关闭，需手动逐个启用（状态持久化到 SPIFFS，重启后恢复）。
+6. GTW2047 重放倍率默认 `1x`，除非你主动调整。
 
 ## Hardware Notes
 
