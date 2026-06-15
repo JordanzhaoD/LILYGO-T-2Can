@@ -249,7 +249,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   padding: 2px 0; padding-bottom: env(safe-area-inset-bottom, 0px);
   flex-shrink: 0; }
 .mob-tab { display: flex; flex-direction: column; align-items: center;
-  justify-content: center; padding: 6px 0; color: var(--tx3);
+  justify-content: center; padding: 6px 0; color: var(--tx3); background: transparent; border: 0;
   font-size: 10px; cursor: pointer; flex: 1; -webkit-tap-highlight-color: transparent; font-weight: 600; }
 .mob-tab.active { color: var(--accent-light); }
 .mob-tab .mob-icon { font-size: 22px; line-height: 1; margin-bottom: 1px; }
@@ -263,6 +263,15 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .mob-more-item.active { color: var(--accent-light); }
 .mob-more-close { position: absolute; top: 8px; right: 12px; color: var(--tx3);
   font-size: 18px; cursor: pointer; }
+.mobile-page { display: none; }
+.mobile-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px;
+  padding: 14px; margin: 10px 12px; color: var(--tx1); }
+.mobile-card h3 { font-size: 16px; margin: 0 0 10px; }
+.mobile-card label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; }
+.mobile-card input, .mobile-card select, .mobile-card textarea { background: var(--card-bg-alt); border: 1px solid var(--border);
+  color: var(--tx1); border-radius: 10px; padding: 10px; max-width: 100%; }
+.mobile-card textarea, .mobile-card #m-plugin-url { width: 100%; display: block; margin-bottom: 10px; }
+.mobile-card button { border: 0; border-radius: 10px; padding: 10px 14px; background: var(--accent); color: #fff; font-weight: 800; }
 
 /* === Mobile Responsive === */
 @media (max-width: 768px) {
@@ -278,6 +287,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   .mob-more-item { padding: 14px 0; font-size: 15px; }
   .mob-more-close { font-size: 22px; }
   .main { width: 100%; padding-bottom: 74px; }
+  .mobile-page.active:not(#mob-home-page) { display: block; position: fixed; top: 54px; bottom: 74px; left: 0; right: 0;
+    z-index: 160; background: var(--main-bg); overflow-y: auto; padding: 8px 0; }
   .topbar { padding: 7px 8px; gap: 5px; min-height: 0; flex-wrap: wrap; align-content: center; }
   .topbar-dot { width: 7px; height: 7px; }
   .topbar-fps { font-size: 11px; padding: 5px 8px; max-width: 72px; overflow: hidden; white-space: nowrap; }
@@ -518,7 +529,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA 升级</div>
     <div class="nav-item" data-page="pg-network"><span class="nav-icon">◎</span>网络设置</div>
     <div class="nav-item" data-page="pg-can"><span class="nav-icon">⌘</span>CAN 诊断</div>
-    <div class="nav-item" data-page="pg-shift"><span class="nav-icon">⚙</span>自动换挡</div>
+    <div class="nav-item" data-page="pg-shift" data-single-hide="1"><span class="nav-icon">⚙</span>自动换挡</div>
   </div>
   <div class="sidebar-ft">
     <button onclick="toggleLanguage()" id="lang-btn">EN</button>
@@ -2514,8 +2525,31 @@ function renderApInjectionState(d){
   var dly=document.getElementById('ap-delay-select'); if(dly)dly.value=String(d.apDelayMs||req||2000);
   var rst=document.getElementById('ap-auto-restore-tgl'); if(rst)rst.checked=!!d.apAutoRestore;
 }
-// Mobile AP state render is owned by Task 9; no-op stub keeps poll() safe.
-function renderMobileApState(d){}
+function syncMobileApControls(){
+  var mg=document.getElementById('m-ap-gate-tgl');
+  var md=document.getElementById('m-ap-delay-select');
+  var mr=document.getElementById('m-ap-auto-restore-tgl');
+  var gate=document.getElementById('ap-core-gate-tgl');
+  var delay=document.getElementById('ap-delay-select');
+  var restore=document.getElementById('ap-auto-restore-tgl');
+  if(gate&&mg)gate.checked=mg.checked;
+  if(delay&&md)delay.value=md.value;
+  if(restore&&mr)restore.checked=mr.checked;
+  return saveApGateControls();
+}
+function renderMobileApState(d){
+  if(!d)return;
+  var gate=(d.fsdDiag&&d.fsdDiag.gate)?d.fsdDiag.gate:{};
+  var state=d.apInjectionState||'blocked';
+  var label=state==='waiting_ap'?'等待 AP':state==='settling'?'稳定计时中':state==='injecting'?'正在注入':'已阻断';
+  setText('m-ap-state',label);
+  var stable=gate.apStableMs||0, req=gate.requiredStableMs||d.apDelayMs||2000;
+  var reason=gate.lastBlockedBy||gate.gateReason||'';
+  setText('m-ap-detail',label+' · AP '+stable+'/'+req+' ms'+(reason?' · '+reason:''));
+  var mg=document.getElementById('m-ap-gate-tgl'); if(mg)mg.checked=!!d.apGateEnabled;
+  var md=document.getElementById('m-ap-delay-select'); if(md)md.value=String(d.apDelayMs||req||2000);
+  var mr=document.getElementById('m-ap-auto-restore-tgl'); if(mr)mr.checked=!!d.apAutoRestore;
+}
 
 // ── Official JSON plugin manager ──────────────────────────────────────
 var PLUGINS={installed:[],replayCount:1};
@@ -2560,8 +2594,34 @@ function renderPluginsStatus(j){
   list.innerHTML=html||'<div class="hint">No plugins installed. New installs start disabled.</div>';
   var rc=document.getElementById('plugin-replay-count'); if(rc)rc.value=String(j.replayCount||1);
 }
-// Mobile plugin render is owned by Task 9; no-op stub keeps loadPlugins() safe.
-function renderMobilePlugins(j){}
+function installMobilePluginUrl(){
+  var src=document.getElementById('m-plugin-url');
+  var dst=document.getElementById('plugin-url');
+  if(dst&&src)dst.value=src.value;
+  return installPluginUrl();
+}
+function installMobilePluginJson(){
+  var src=document.getElementById('m-plugin-json');
+  var dst=document.getElementById('plugin-json');
+  if(dst&&src)dst.value=src.value;
+  return installPluginJson();
+}
+function renderMobilePlugins(j){
+  var list=document.getElementById('m-plugin-list'); if(!list)return;
+  j=j||PLUGINS||{installed:[],replayCount:1};
+  var html=(j.installed||[]).map(function(p){
+    var name=String(p.name||'');
+    var ids=(p.targetIds||[]).join(', ');
+    var conflicts=(p.conflicts||[]).join(' · ');
+    return '<div class="plugin-item"><div><b>'+esc(name)+'</b> <small>'+esc(p.version||'1.0')+'</small>'
+      +'<div class="hint">IDs: '+esc(ids)+' · Rules: '+(p.ruleCount||0)+'</div>'
+      +'<div class="warn">'+esc(conflicts||p.lastError||'')+'</div></div>'
+      +'<label>Enabled <input type="checkbox" '+(p.enabled?'checked':'')+' onchange="togglePlugin(\''+escAttr(name)+'\',this.checked)"></label>'
+      +'<button onclick="removePlugin(\''+escAttr(name)+'\')">Remove</button></div>';
+  }).join('');
+  list.innerHTML=html||'<div class="hint">No plugins installed. New installs start disabled.</div>';
+  var rc=document.getElementById('m-plugin-replay-count'); if(rc)rc.value=String(j.replayCount||1);
+}
 
 // ── HW3 Speed Save ─────────────────────────────────────────
 async function saveHw3Speed(){
@@ -3580,14 +3640,21 @@ function toggleMobMore(){
   if(p)p.classList.toggle('open');
 }
 function updateMobTabs(pageId){
-  var tabs=document.querySelectorAll('.mob-tab[data-page]');
+  var map={home:'pg-overview',driving:'pg-drive',plugins:'pg-hardware',network:'pg-network'};
+  var tabs=document.querySelectorAll('.mob-tab[data-mobile-page]');
   for(var i=0;i<tabs.length;i++){
-    tabs[i].classList.toggle('active',tabs[i].getAttribute('data-page')===pageId);
+    var mob=tabs[i].getAttribute('data-mobile-page');
+    tabs[i].classList.toggle('active',mob===pageId||map[mob]===pageId);
   }
-  var items=document.querySelectorAll('.mob-more-item');
-  for(var i=0;i<items.length;i++){
-    items[i].classList.toggle('active',items[i].getAttribute('data-page')===pageId);
-  }
+}
+function showMobilePage(name){
+  var map={home:'pg-overview',driving:'pg-drive',plugins:'pg-hardware',network:'pg-network'};
+  var panels=document.querySelectorAll('[data-mobile-page-panel]');
+  for(var i=0;i<panels.length;i++)panels[i].classList.toggle('active',panels[i].getAttribute('data-mobile-page-panel')===name);
+  showPage(map[name]||'pg-overview');
+  updateMobTabs(name);
+  if(name==='plugins')renderMobilePlugins(PLUGINS);
+  if(name==='network')pollWifiStatus();
 }
 
 document.addEventListener('DOMContentLoaded',function(){
@@ -3599,28 +3666,10 @@ document.addEventListener('DOMContentLoaded',function(){
     });
   }
 
-  // Mobile bottom tab bar
-  var mtabs=document.querySelectorAll('.mob-tab[data-page]');
-  for(var i=0;i<mtabs.length;i++){
-    mtabs[i].addEventListener('click',function(){
-      var pid=this.getAttribute('data-page');
-      showPage(pid);
-      updateMobTabs(pid);
-    });
-  }
-  // Mobile more menu items
-  var mitems=document.querySelectorAll('.mob-more-item');
-  for(var i=0;i<mitems.length;i++){
-    mitems[i].addEventListener('click',function(){
-      var pid=this.getAttribute('data-page');
-      showPage(pid);
-      updateMobTabs(pid);
-      toggleMobMore();
-    });
-  }
+  // Mobile bottom tab bar is wired inline via showMobilePage().
 
   // Initial page
-  showPage('pg-overview');
+  showMobilePage('home');
 
   // OTA drag-drop
   setupOtaDrop();
@@ -3663,28 +3712,53 @@ function restartPoll(ms){
   }
 }
 </script>
-<!-- Mobile Bottom Tab Bar -->
+<!-- Mobile Standalone Pages (single-CAN product) -->
+<div data-dual-hide="1">
+<section class="mobile-page active" id="mob-home-page" data-mobile-page-panel="home"></section>
+<section class="mobile-page" id="mob-driving-page" data-mobile-page-panel="driving">
+  <div class="mobile-card"><h3>AP 注入状态</h3><div id="m-ap-state">等待 AP</div><div id="m-ap-detail" class="hint"></div></div>
+  <div class="mobile-card">
+    <label>AP 门控 <input id="m-ap-gate-tgl" type="checkbox" onchange="syncMobileApControls()"></label>
+    <label>延迟注入 <select id="m-ap-delay-select" onchange="syncMobileApControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label>
+    <label>AP-AUTO-RESTORE <input id="m-ap-auto-restore-tgl" type="checkbox" onchange="syncMobileApControls()"></label>
+  </div>
+</section>
+<section class="mobile-page" id="mob-plugin-page" data-mobile-page-panel="plugins">
+  <div class="mobile-card"><h3>Plugins</h3><input id="m-plugin-url" placeholder="Plugin URL"><button onclick="installMobilePluginUrl()">Install URL</button></div>
+  <div class="mobile-card"><textarea id="m-plugin-json" rows="5" placeholder="Paste JSON"></textarea><button onclick="installMobilePluginJson()">Install JSON</button></div>
+  <div class="mobile-card"><h3>Installed</h3><div id="m-plugin-list"></div></div>
+  <div class="mobile-card"><h3>GTW2047 Replay Count</h3><select id="m-plugin-replay-count" onchange="setPluginReplayCount(this.value)"><option value="1">1x</option><option value="2">2x</option><option value="3">3x</option><option value="4">4x</option><option value="5">5x</option></select></div>
+</section>
+<section class="mobile-page" id="mob-network-page" data-mobile-page-panel="network"></section>
+<!-- Mobile Bottom Tab Bar (standalone) -->
 <div class="mob-tabs" id="mob-tabs">
+  <button class="mob-tab active" data-mobile-page="home" onclick="showMobilePage('home')">首页</button>
+  <button class="mob-tab" data-mobile-page="driving" onclick="showMobilePage('driving')">驾驶</button>
+  <button class="mob-tab" data-mobile-page="plugins" onclick="showMobilePage('plugins')">插件</button>
+  <button class="mob-tab" data-mobile-page="network" onclick="showMobilePage('network')">网络</button>
+</div>
+</div>
+<!-- Mobile Dual-CAN Nav (hidden in standalone) -->
+<div class="mob-tabs" id="mob-tabs-dual" data-single-hide="1">
   <div class="mob-tab active" data-page="pg-overview"><div class="mob-icon">▣</div><div>状态</div></div>
   <div class="mob-tab" data-page="pg-drive"><div class="mob-icon">◉</div><div>模式</div></div>
   <div class="mob-tab" data-page="pg-speed"><div class="mob-icon">↗</div><div>速度</div></div>
   <div class="mob-tab" data-page="pg-network"><div class="mob-icon">◎</div><div>网络</div></div>
   <div class="mob-tab" onclick="toggleMobMore()"><div class="mob-icon">···</div><div>更多</div></div>
 </div>
-<!-- Mobile More Menu -->
-<div class="mob-more-panel" id="mob-more">
+<div class="mob-more-panel" id="mob-more" data-single-hide="1">
   <div class="mob-more-close" onclick="toggleMobMore()">✕</div>
-  <div class="mob-more-item" data-page="pg-overview">▣ 状态</div>
-  <div class="mob-more-item" data-page="pg-hardware">◇ 硬件模式</div>
-  <div class="mob-more-item" data-page="pg-drive">◉ 驾驶风格</div>
-  <div class="mob-more-item" data-page="pg-speed">↗ 速度策略</div>
-  <div class="mob-more-item" data-page="pg-ota">⇧ OTA 升级</div>
-  <div class="mob-more-item" data-page="pg-bus2">✦ CAN2 控制</div>
-  <div class="mob-more-item" data-page="pg-strobe">⚡ 灯光特技</div>
-  <div class="mob-more-item" data-page="pg-network">◎ 网络设置</div>
-  <div class="mob-more-item" data-page="pg-defense">◈ FSD 防护</div>
-  <div class="mob-more-item" data-page="pg-can">⌘ CAN 诊断</div>
-  <div class="mob-more-item" data-page="pg-shift">⚙ 自动换挡</div>
+  <div class="mob-more-item" data-page="pg-overview" data-mob="1">▣ 状态</div>
+  <div class="mob-more-item" data-page="pg-hardware" data-mob="1">◇ 硬件模式</div>
+  <div class="mob-more-item" data-page="pg-drive" data-mob="1">◉ 驾驶风格</div>
+  <div class="mob-more-item" data-page="pg-speed" data-mob="1">↗ 速度策略</div>
+  <div class="mob-more-item" data-page="pg-ota" data-mob="1">⇧ OTA 升级</div>
+  <div class="mob-more-item" data-page="pg-bus2" data-cap="can2">✦ CAN2 控制</div>
+  <div class="mob-more-item" data-page="pg-strobe" data-cap="lighting">⚡ 灯光特技</div>
+  <div class="mob-more-item" data-page="pg-network" data-mob="1">◎ 网络设置</div>
+  <div class="mob-more-item" data-page="pg-defense" data-mob="1">◈ FSD 防护</div>
+  <div class="mob-more-item" data-page="pg-can" data-mob="1">⌘ CAN 诊断</div>
+  <div class="mob-more-item" data-page="pg-shift" data-cap="shift">⚙ 自动换挡</div>
 </div>
 </body>
 </html>)HTML";
