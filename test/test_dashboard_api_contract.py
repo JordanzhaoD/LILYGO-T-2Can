@@ -1,5 +1,6 @@
 import unittest
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 
@@ -34,6 +35,77 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         cls.simulator = SIMULATOR.read_text(encoding="utf-8")
 
+    def _standalone_visible_source(self) -> str:
+        """Return the source UI surface visible after standalone product gating.
+
+        The shared source UI is allowed to keep dual-CAN copy inside elements
+        hidden by standalone mode. This helper approximates the standalone DOM by
+        removing elements marked data-single-hide and replacing data-single-text
+        elements with their standalone text before visible-copy assertions run.
+        """
+
+        class StandaloneVisibleParser(HTMLParser):
+            VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+            def __init__(self) -> None:
+                super().__init__(convert_charrefs=True)
+                self.parts: list[str] = []
+                self.hidden_depth = 0
+                self.replaced_depth = 0
+
+            def _is_void(self, tag: str) -> bool:
+                return tag.lower() in self.VOID_TAGS
+
+            def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+                attr_map = {name: value for name, value in attrs}
+                if self.hidden_depth:
+                    if not self._is_void(tag):
+                        self.hidden_depth += 1
+                    return
+                if "data-single-hide" in attr_map:
+                    if not self._is_void(tag):
+                        self.hidden_depth = 1
+                    return
+                if self.replaced_depth:
+                    if not self._is_void(tag):
+                        self.replaced_depth += 1
+                    return
+                if "data-single-text" in attr_map:
+                    self.parts.append(attr_map.get("data-single-text") or "")
+                    if not self._is_void(tag):
+                        self.replaced_depth = 1
+                    return
+
+                attr_text = " ".join(
+                    name if value is None else f'{name}="{value}"'
+                    for name, value in attrs
+                )
+                self.parts.append(f"<{tag}{(' ' + attr_text) if attr_text else ''}>")
+
+            def handle_endtag(self, tag: str) -> None:
+                if self.hidden_depth:
+                    self.hidden_depth -= 1
+                    return
+                if self.replaced_depth:
+                    self.replaced_depth -= 1
+                    return
+                self.parts.append(f"</{tag}>")
+
+            def handle_data(self, data: str) -> None:
+                if not self.hidden_depth and not self.replaced_depth:
+                    self.parts.append(data)
+
+        parser = StandaloneVisibleParser()
+        parser.feed(self.ui)
+        return "".join(parser.parts)
+
+    def _route_block(self, route: str) -> str:
+        idx = self.dash.find(route)
+        self.assertNotEqual(idx, -1, f"{route} not found in dashboard source")
+        start = max(0, idx - 250)
+        end = min(len(self.dash), idx + 250)
+        return self.dash[start:end]
+
     def test_dashboard_ui_generation_is_dependency_aware(self) -> None:
         """PlatformIO must rebuild firmware when the generated dashboard header changes."""
         build_script = (ROOT / "scripts" / "update_ota_build_timestamp.py").read_text(encoding="utf-8")
@@ -56,6 +128,18 @@ class DashboardApiContractTests(unittest.TestCase):
             "/defense_config",
             "/fog_light",
             "/burst",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui_gen)
+
+    def test_generated_dashboard_header_contains_task1_ui_contract_tokens(self) -> None:
+        """Generated dashboard header must stay synchronized with Task 1 source UI contracts."""
+        for token in [
+            "ap-gate-tgl",
+            "ap-delay-select",
+            "mob-plugin-page",
+            "renderPluginsStatus",
+            "/plugins/status",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui_gen)
@@ -160,6 +244,154 @@ class DashboardApiContractTests(unittest.TestCase):
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
+
+    def test_single_can_driving_status_exposes_ap_gate_delay_and_restore(self) -> None:
+        for token in [
+            'id="ap-gate-tgl"',
+            'id="ap-delay-select"',
+            'id="ap-auto-restore-tgl"',
+            'saveApGateControls()',
+            'renderApInjectionState',
+            '等待 AP',
+            '稳定计时中',
+            '正在注入',
+            '已阻断',
+            'AP-AUTO-RESTORE',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+        for token in [
+            '"apDelayMs"',
+            '"apInjectionState"',
+            '"apAutoRestore"',
+            'server.hasArg("ap_delay_ms")',
+            'server.hasArg("ap_auto_restore")',
+            'prefs.putUInt("ap_dly"',
+            'prefs.getUInt("ap_dly"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+    def test_official_plugin_manager_contract_is_present(self) -> None:
+        for token in [
+            '#include "dash_plugin_engine.h"',
+            'DashPluginEngine',
+            'dashPluginEngine',
+            'server.on("/plugins/status", HTTP_GET, handlePluginsStatus);',
+            'server.on("/plugins/install_url", HTTP_POST, handlePluginsInstallUrl);',
+            'server.on("/plugins/upload", HTTP_POST, handlePluginsUpload',
+            'server.on("/plugins/install_json", HTTP_POST, handlePluginsInstallJson);',
+            'server.on("/plugins/toggle", HTTP_POST, handlePluginsToggle);',
+            'server.on("/plugins/priority", HTTP_POST, handlePluginsPriority);',
+            'server.on("/plugins/remove", HTTP_POST, handlePluginsRemove);',
+            'server.on("/plugins/replay_count", HTTP_POST, handlePluginsReplayCount);',
+            'server.on("/plugins/rule_test", HTTP_POST, handlePluginsRuleTest);',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+        for token in [
+            'Plugins',
+            'Install from URL',
+            'Upload .json',
+            'Paste JSON',
+            'Installed Plugins',
+            'Plugin Editor',
+            'Rule Test',
+            'GTW2047 Replay Count',
+            'renderPluginsStatus',
+            'installPluginUrl',
+            'installPluginJson',
+            'uploadPluginJson',
+            'togglePlugin',
+            'setPluginPriority',
+            'removePlugin',
+            'setPluginReplayCount',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_single_can_product_ui_hides_dual_can_surfaces(self) -> None:
+        for token in [
+            'PRODUCT_SINGLE_CAN_NAME',
+            'Atlas Single CAN',
+            'function applyProductMode',
+            'data-single-hide',
+            'data-single-text',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+        forbidden_visible_tokens = [
+            'CAN2 控制',
+            'CAN2 状态',
+            'CAN2 RX',
+            'CAN2 TX',
+            '自动换挡',
+            'Auto Shift',
+            'T-2CAN 控制面板',
+            'ATLAS T-2CAN',
+        ]
+        source = self._standalone_visible_source()
+        for token in forbidden_visible_tokens:
+            with self.subTest(token=token):
+                self.assertNotIn(token, source)
+
+        for token in [
+            'data-page="pg-bus2" data-cap="can2" data-single-hide="1"',
+            'data-page="pg-strobe" data-cap="lighting" data-single-hide="1"',
+            'data-page="pg-shift" data-single-hide="1"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_mobile_single_can_ui_matches_ap_and_plugin_capabilities(self) -> None:
+        for token in [
+            'id="mob-plugin-page"',
+            'data-mobile-page="plugins"',
+            'm-ap-state',
+            'm-ap-gate-tgl',
+            'm-ap-delay-select',
+            'm-ap-auto-restore-tgl',
+            'm-plugin-list',
+            'm-plugin-json',
+            'm-plugin-replay-count',
+            'renderMobilePlugins',
+            'renderMobileApState',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+        for token in [
+            'data-page="pg-bus2">',
+            'data-page="pg-strobe">',
+            'data-page="pg-shift">',
+        ]:
+            with self.subTest(token=token):
+                self.assertNotIn(token, self.ui)
+
+    def test_plugin_engine_header_exposes_upstream_official_contract(self) -> None:
+        plugin = (ROOT / "include" / "dash_plugin_engine.h").read_text(encoding="utf-8")
+        for token in [
+            'kDashPluginMaxPlugins = 8',
+            'kDashPluginMaxRules = 16',
+            'kDashPluginMaxOps = 16',
+            'kDashPluginMaxFilterIds = 32',
+            'DashPluginEngine',
+            'installJson',
+            'setEnabled',
+            'setPriority',
+            'setReplayCount',
+            'applyToFrame',
+            'tickPeriodic',
+            'emit_periodic',
+            'gtw_silent',
+            'PLUGIN_GTW_UDS_CUSTOM_KEY',
+            '2047',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, plugin)
 
     def test_single_can_docs_are_present(self) -> None:
         building = (ROOT / "docs" / "building.md").read_text(encoding="utf-8")
