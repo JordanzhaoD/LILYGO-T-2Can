@@ -413,6 +413,27 @@ void test_gtw2047_no_checksum_op_preserves_byte7_on_first_and_replay_sends()
     TEST_ASSERT_EQUAL_HEX8(0xA5, driver.sent[2].data[7]);
 }
 
+void test_export_import_preserves_enabled_priority_and_replay_count()
+{
+    DashPluginEngine engine;
+    TEST_ASSERT_TRUE(engine.installJson(R"json({"name":"Persisted","rules":[{"id":921,"ops":[{"type":"set_bit","bit":13}]}]})json", false).ok);
+    TEST_ASSERT_TRUE(engine.setEnabled("Persisted", true).ok);
+    TEST_ASSERT_TRUE(engine.setReplayCount(4).ok);
+    std::string saved = engine.exportConfigJson();
+
+    DashPluginEngine restored;
+    TEST_ASSERT_TRUE(restored.importConfigJson(saved.c_str()).ok);
+
+    TEST_ASSERT_EQUAL(1, restored.pluginCount());
+    TEST_ASSERT_TRUE(restored.pluginAt(0).enabled);
+    TEST_ASSERT_EQUAL(4, restored.replayCount());
+    // sourceJson round-trip fidelity: re-exporting the restored engine must
+    // reproduce the same persisted document, proving the verbatim install
+    // source survives export -> import -> export byte-for-byte (this is the
+    // whole point of capturing sourceJson, so assert it directly).
+    TEST_ASSERT_EQUAL_STRING(saved.c_str(), restored.exportConfigJson().c_str());
+}
+
 int main(int, char **)
 {
     UNITY_BEGIN();
@@ -439,5 +460,6 @@ int main(int, char **)
     RUN_TEST(test_gtw2047_replay_advances_counter_and_checksum_per_copy);
     RUN_TEST(test_periodic_send_advances_counter_and_checksum_each_tick);
     RUN_TEST(test_gtw2047_no_checksum_op_preserves_byte7_on_first_and_replay_sends);
+    RUN_TEST(test_export_import_preserves_enabled_priority_and_replay_count);
     return UNITY_END();
 }

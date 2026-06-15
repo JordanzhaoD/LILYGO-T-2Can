@@ -100,6 +100,9 @@ struct DashPlugin
     std::vector<DashPluginRule> rules;
     std::vector<std::string> conflicts;
     std::vector<std::string> warnings;
+    // Original install source so the plugin can be re-installed verbatim from
+    // the persisted config file. Captured in installJson().
+    std::string sourceJson;
 };
 
 class DashPluginStatusString : public std::string
@@ -272,6 +275,8 @@ public:
             return parsed;
         plugin.enabled = enabledAfterInstall;
         finalizeGtwSilentAvailability(plugin);
+        // Capture the verbatim install source so export/import can re-install it.
+        plugin.sourceJson = json;
 
         const auto existing = std::find_if(plugins_.begin(), plugins_.end(), [&](const DashPlugin &p) {
             return p.name == plugin.name;
@@ -296,6 +301,57 @@ public:
     }
 
     size_t pluginCount() const { return plugins_.size(); }
+
+    // Persist the engine configuration to a compact JSON document containing
+    // replayCount and the verbatim install source of every plugin (plus its
+    // enabled flag and priority). The output is meant to be written to SPIFFS
+    // and round-tripped back through importConfigJson().
+    std::string exportConfigJson() const
+    {
+        JsonDocument doc;
+        doc["replayCount"] = replayCount_;
+        JsonArray plugins = doc["plugins"].to<JsonArray>();
+        for (const DashPlugin &p : plugins_)
+        {
+            JsonObject item = plugins.add<JsonObject>();
+            item["name"] = p.name;
+            item["enabled"] = p.enabled;
+            item["priority"] = p.priority;
+            item["source"] = p.sourceJson;
+        }
+        std::string out;
+        serializeJson(doc, out);
+        return out;
+    }
+
+    // Rebuild the engine from a document produced by exportConfigJson(). An
+    // empty/null payload is treated as a successful no-op ("empty") so a
+    // missing or empty state file does not block boot. replayCount is clamped
+    // to the legal 1..5 range; each plugin is reinstalled from its captured
+    // source and its priority restored. Invalid plugin sources are skipped.
+    DashPluginResult importConfigJson(const char *json)
+    {
+        if (!json || !*json)
+            return DashPluginResult::success("empty");
+        JsonDocument doc;
+        if (deserializeJson(doc, json))
+            return DashPluginResult::fail("invalid plugin config");
+        plugins_.clear();
+        replayCount_ = doc["replayCount"] | 1;
+        if (replayCount_ < 1)
+            replayCount_ = 1;
+        if (replayCount_ > 5)
+            replayCount_ = 5;
+        for (JsonObjectConst item : doc["plugins"].as<JsonArrayConst>())
+        {
+            std::string source = dashPluginString(item["source"]);
+            DashPluginResult r = installJson(source.c_str(), item["enabled"] | false);
+            if (!r.ok)
+                continue;
+            setPriority(dashPluginString(item["name"]).c_str(), item["priority"] | 1);
+        }
+        return DashPluginResult::success("imported");
+    }
 
     // Returns true if any enabled+compatible plugin has a rule matching canId.
     // Used to detect when a plugin owns a frame (e.g. FSD activation 1006/1021

@@ -3761,24 +3761,35 @@ static void handleOtaUpload()
 
 #if defined(DASH_PLUGIN_ENGINE)
 // --- Plugin manager persistence helpers -------------------------------------
-// First pass: save() persists the engine status JSON to SPIFFS so the UI can
-// recover the last known state across reboots. load() is intentionally a
-// no-op stub here because status JSON is not an install source; actual
-// installed-plugin file loading lands in the storage hardening task. Replay
-// count remains persisted by NVS if/when added.
+// Plugin state is persisted as the engine's exportConfigJson() document
+// (replayCount + per-plugin name/enabled/priority/source) so the full
+// installed-plugin set survives reboots. save() writes it to SPIFFS after
+// every state mutation; load() restores it once during dashboard setup. The
+// file path is fixed so firmware and tooling agree on the location.
+static constexpr const char *kDashPluginStatePath = "/plugins_state.json";
+
 static void dashSavePluginState()
 {
-    SPIFFS.begin(true);
-    File f = SPIFFS.open("/plugins_state.json", "w");
+    if (!SPIFFS.begin(true))
+        return;
+    File f = SPIFFS.open(kDashPluginStatePath, "w");
     if (!f)
         return;
-    std::string json = dashPluginEngine.statusJson();
+    std::string json = dashPluginEngine.exportConfigJson();
     f.print(json.c_str());
 }
 
 static void dashLoadPluginState()
 {
-    SPIFFS.begin(true);
+    if (!SPIFFS.begin(true))
+        return;
+    if (!SPIFFS.exists(kDashPluginStatePath))
+        return;
+    File f = SPIFFS.open(kDashPluginStatePath, "r");
+    if (!f)
+        return;
+    String body = f.readString();
+    dashPluginEngine.importConfigJson(body.c_str());
 }
 
 // --- Plugin manager HTTP handlers -------------------------------------------
@@ -6599,6 +6610,11 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 
     dashLoadPrefs();
     dashGatewayLoad();
+#if defined(DASH_PLUGIN_ENGINE)
+    // Restore installed plugins + replay count from SPIFFS before handlers
+    // register so the first /plugins status reflects persisted state.
+    dashLoadPluginState();
+#endif
     // Always boot in AP+STA mode so the STA interface is ready immediately.
     // This prevents connection failures to saved networks caused by late mode switching.
     dashStartAccessPoint(true);
