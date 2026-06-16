@@ -3853,7 +3853,7 @@ static void handlePluginsUploadChunks()
     if (upload.status == UPLOAD_FILE_START)
         dashPluginUploadBuffer = "";
     else if (upload.status == UPLOAD_FILE_WRITE)
-        dashPluginUploadBuffer += String(reinterpret_cast<const char *>(upload.buf)).substring(0, upload.currentSize);
+        dashPluginUploadBuffer.write(upload.buf, upload.currentSize);
     else if (upload.status == UPLOAD_FILE_ABORTED)
         dashPluginUploadBuffer = "";
 }

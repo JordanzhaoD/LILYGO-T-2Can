@@ -2613,10 +2613,13 @@ function uploadPluginJson(){
   if(!f){if(st)st.textContent='请先选择 .json 文件';return;}
   if(st)st.textContent='上传中...';
   var fd=new FormData();fd.append('file',f);
-  return fetch('/plugins/upload',{method:'POST',body:fd}).then(function(r){
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    if(st)st.textContent='安装成功';
-    return loadPlugins();
+  fetch('/plugins/upload',{method:'POST',body:fd}).then(function(r){
+    return r.text().then(function(t){
+      var msg='HTTP '+r.status;
+      try{var j=JSON.parse(t);if(j&&j.message)msg=j.message;}catch(e){}
+      if(r.ok){if(st)st.textContent='安装成功';return loadPlugins();}
+      if(st)st.textContent='安装失败：'+(f&&f.name?f.name+' ':'')+msg;
+    });
   }).catch(function(e){
     if(st)st.textContent='安装失败：'+(f&&f.name?f.name+' ':'')+(e&&e.message?e.message:e);
   });

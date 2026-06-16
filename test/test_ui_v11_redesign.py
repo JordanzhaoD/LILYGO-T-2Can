@@ -106,6 +106,9 @@ class PluginRedesignTests(UiV11RedesignTests):
         self.assert_id_present("plugin-upload-status")
         self.assert_present("上传中")
         self.assert_present("安装失败")
+        # 必须解析并显示后端 {ok,message} 的真实原因，不能只显示 HTTP 状态码
+        self.assert_present("j.message")
+        self.assert_present("JSON.parse")
 
 
 class MobileNavTests(UiV11RedesignTests):
