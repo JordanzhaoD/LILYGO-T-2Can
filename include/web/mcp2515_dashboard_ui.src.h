@@ -47,6 +47,16 @@ static const char DASH_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   --cockpit-glow-danger: 0 0 34px rgba(248,113,113,0.22);
   --cockpit-glow-ok: 0 0 34px rgba(74,222,128,0.20);
   --cockpit-card-blur: blur(22px) saturate(1.16);
+  /* === 设计系统基底（V1.1，全板块统一） === */
+  --ds-cyan: #0ea5e9;
+  --ds-indigo: #6366f1;
+  --ds-accent-grad: linear-gradient(135deg, #0ea5e9, #6366f1);
+  --ds-ok: #34d399;
+  --ds-warn: #f59e0b;
+  --ds-err: #f87171;
+  --ds-card-bg: rgba(15,23,42,.58);
+  --ds-card-stroke: rgba(148,163,184,.20);
+  --ds-radius: 18px;
 }
 /* === Reset & Base === */
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -105,8 +115,7 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .page.active { display: block; }
 
 /* === Cards === */
-.card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 22px;
-  margin-bottom: 20px; }
+.card { background: var(--ds-card-bg); border: 1px solid var(--ds-card-stroke); border-radius: var(--ds-radius); padding: 20px; backdrop-filter: var(--cockpit-card-blur); box-shadow: 0 8px 28px rgba(0,0,0,.22); margin-bottom: 14px; }
 .page-title { font-size: 26px; font-weight: 800; margin: 4px 0 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); color: var(--tx1); }
 .card-title { font-size: 18px; font-weight: 800; color: var(--tx1);
   margin-bottom: 10px; }
