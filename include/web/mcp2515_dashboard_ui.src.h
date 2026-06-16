@@ -279,7 +279,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .mobile-card label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; }
 .mobile-card input, .mobile-card select, .mobile-card textarea { background: var(--card-bg-alt); border: 1px solid var(--border);
   color: var(--tx1); border-radius: 10px; padding: 10px; max-width: 100%; }
-.mobile-card textarea, .mobile-card #m-plugin-url { width: 100%; display: block; margin-bottom: 10px; }
+.mobile-card textarea { width: 100%; display: block; margin-bottom: 10px; }
 .mobile-card button { border: 0; border-radius: 10px; padding: 10px 14px; background: var(--accent); color: #fff; font-weight: 800; }
 
 /* === Mobile Responsive === */
@@ -2218,7 +2218,6 @@ async function poll(){
 
   // AP injection core (standalone driving status)
   renderApInjectionState(d);
-  renderMobileApState(d);
 }
 
 function updateFsdToggle(ci){
@@ -2592,36 +2591,10 @@ function renderApInjectionState(d){
   var dly=document.getElementById('ap-delay-select'); if(dly)dly.value=String(d.apDelayMs||req||2000);
   var rst=document.getElementById('ap-auto-restore-tgl'); if(rst)rst.checked=!!d.apAutoRestore;
 }
-function syncMobileApControls(){
-  var mg=document.getElementById('m-ap-gate-tgl');
-  var md=document.getElementById('m-ap-delay-select');
-  var mr=document.getElementById('m-ap-auto-restore-tgl');
-  var gate=document.getElementById('ap-core-gate-tgl');
-  var delay=document.getElementById('ap-delay-select');
-  var restore=document.getElementById('ap-auto-restore-tgl');
-  if(gate&&mg)gate.checked=mg.checked;
-  if(delay&&md)delay.value=md.value;
-  if(restore&&mr)restore.checked=mr.checked;
-  return saveApGateControls();
-}
-function renderMobileApState(d){
-  if(!d)return;
-  var gate=(d.fsdDiag&&d.fsdDiag.gate)?d.fsdDiag.gate:{};
-  var state=d.apInjectionState||'blocked';
-  var label=state==='waiting_ap'?'等待 AP':state==='settling'?'稳定计时中':state==='injecting'?'正在注入':'已阻断';
-  setText('m-ap-state',label);
-  var stable=gate.apStableMs||0, req=gate.requiredStableMs||d.apDelayMs||2000;
-  var reason=gate.lastBlockedBy||gate.gateReason||'';
-  setText('m-ap-detail',label+' · AP '+stable+'/'+req+' ms'+(reason?' · '+reason:''));
-  var mg=document.getElementById('m-ap-gate-tgl'); if(mg)mg.checked=!!d.apGateEnabled;
-  var md=document.getElementById('m-ap-delay-select'); if(md)md.value=String(d.apDelayMs||req||2000);
-  var mr=document.getElementById('m-ap-auto-restore-tgl'); if(mr)mr.checked=!!d.apAutoRestore;
-}
-
 // ── 插件管理（JSON 插件） ──────────────────────────────────────
 var PLUGINS={installed:[],replayCount:1};
 function loadPlugins(){
-  return fetch('/plugins/status').then(function(r){return r.json()}).then(function(j){PLUGINS=j;renderPluginsStatus(j);renderMobilePlugins(j)}).catch(function(){});
+  return fetch('/plugins/status').then(function(r){return r.json()}).then(function(j){PLUGINS=j;renderPluginsStatus(j)}).catch(function(){});
 }
 function installPluginUrl(){
   var v=document.getElementById('plugin-url').value;
@@ -2662,35 +2635,6 @@ function renderPluginsStatus(j){
   var rc=document.getElementById('plugin-replay-count'); if(rc)rc.value=String(j.replayCount||1);
   var pill=document.getElementById('plugins-count-pill'); if(pill)pill.textContent='已装 '+((j.installed||[]).length)+' 个';
 }
-function installMobilePluginUrl(){
-  var src=document.getElementById('m-plugin-url');
-  var dst=document.getElementById('plugin-url');
-  if(dst&&src)dst.value=src.value;
-  return installPluginUrl();
-}
-function installMobilePluginJson(){
-  var src=document.getElementById('m-plugin-json');
-  var dst=document.getElementById('plugin-json');
-  if(dst&&src)dst.value=src.value;
-  return installPluginJson();
-}
-function renderMobilePlugins(j){
-  var list=document.getElementById('m-plugin-list'); if(!list)return;
-  j=j||PLUGINS||{installed:[],replayCount:1};
-  var html=(j.installed||[]).map(function(p){
-    var name=String(p.name||'');
-    var ids=(p.targetIds||[]).join(', ');
-    var conflicts=(p.conflicts||[]).join(' · ');
-    return '<div class="plugin-item"><div><b>'+esc(name)+'</b> <small>'+esc(p.version||'1.0')+'</small>'
-      +'<div class="hint">目标ID: '+esc(ids)+' · 规则: '+(p.ruleCount||0)+'</div>'
-      +'<div class="warn">'+esc(conflicts||p.lastError||'')+'</div></div>'
-      +'<label>启用 <input type="checkbox" '+(p.enabled?'checked':'')+' onchange="togglePlugin(\''+escAttr(name)+'\',this.checked)"></label>'
-      +'<button onclick="removePlugin(\''+escAttr(name)+'\')">删除</button></div>';
-  }).join('');
-  list.innerHTML=html||'<div class="hint">暂无插件。新安装默认禁用。</div>';
-  var rc=document.getElementById('m-plugin-replay-count'); if(rc)rc.value=String(j.replayCount||1);
-}
-
 // ── HW3 Speed Save ─────────────────────────────────────────
 async function saveHw3Speed(){
   var data={};
@@ -3722,7 +3666,6 @@ function showMobilePage(name){
   closeStandaloneMobMore();
   showPage(map[name]||'pg-overview');
   updateMobTabs(name);
-  if(name==='hardware')renderMobilePlugins(PLUGINS);
   if(name==='speed')loadSpeedStrategy();
   if(name==='network')pollWifiStatus();
 }

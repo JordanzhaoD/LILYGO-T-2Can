@@ -137,7 +137,7 @@ class DashboardApiContractTests(unittest.TestCase):
         for token in [
             "ap-gate-tgl",
             "ap-delay-select",
-            "mob-plugin-page",
+            "mob-more-single",
             "renderPluginsStatus",
             "/plugins/status",
         ]:
@@ -348,8 +348,27 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_mobile_single_can_ui_matches_ap_and_plugin_capabilities(self) -> None:
         for token in [
+            'id="mob-tabs"',
+            'data-mobile-page="driving"',
+            'data-mobile-page="hardware"',
+            'data-mobile-page="speed"',
+            'data-mobile-page="network"',
+            'id="mob-more-single"',
+            "driving:'pg-overview'",
+            "hardware:'pg-hardware'",
+            "speed:'pg-speed'",
+            "network:'pg-network'",
+            'id="plugins-card"',
+            'id="ap-core-card"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+        for token in [
             'id="mob-plugin-page"',
             'data-mobile-page="plugins"',
+            'data-mobile-page-panel="driving"',
+            'data-mobile-page-panel="network"',
             'm-ap-state',
             'm-ap-gate-tgl',
             'm-ap-delay-select',
@@ -361,15 +380,16 @@ class DashboardApiContractTests(unittest.TestCase):
             'renderMobileApState',
         ]:
             with self.subTest(token=token):
-                self.assertIn(token, self.ui)
+                self.assertNotIn(token, self.ui)
 
+        source = self._standalone_visible_source()
         for token in [
             'data-page="pg-bus2">',
             'data-page="pg-strobe">',
             'data-page="pg-shift">',
         ]:
             with self.subTest(token=token):
-                self.assertNotIn(token, self.ui)
+                self.assertNotIn(token, source)
 
     def test_plugin_engine_header_exposes_upstream_official_contract(self) -> None:
         plugin = (ROOT / "include" / "dash_plugin_engine.h").read_text(encoding="utf-8")
