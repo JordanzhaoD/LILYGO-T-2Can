@@ -1253,14 +1253,14 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 6: FSD Defense -->
     <div class="page" id="pg-defense">
-<div class="page-title">FSD 防护 <span class="exp-badge">部分实验</span></div>
+<div class="ck-head"><h3><span>◉</span>FSD 防护</h3><span class="ck-chip" id="st-defense-pill">部分实验</span></div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-defense-ui">待同步</div></div>
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-defense-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-defense-run">待检测</div></div>
 </div>
 <!-- Master switch + 5 defense toggles -->
-<div class="card">
+<div class="card cockpit-card">
   <div class="card-title">FSD 防护状态</div>
   <div class="card-subtitle">仿生扭矩替代固定echo，轮DND消除提示音</div>
   <div class="setting-row">

@@ -271,5 +271,39 @@ class SpeedPageCockpitTests(UiV11RedesignTests):
             self.assert_id_present(i)
 
 
+class DefensePageCockpitTests(UiV11RedesignTests):
+    """Task 9：FSD 防护页套驾驶舱基底（功能零增减，只换皮）。"""
+
+    def _defense_page(self) -> str:
+        m = re.search(r'<div class="page" id="pg-defense">([\s\S]*?)<div class="page" id="pg-', SRC)
+        self.assertIsNotNone(m, "缺少 pg-defense 页")
+        return m.group(1)
+
+    def test_defense_page_keeps_core_label_and_caveat(self):
+        self.assert_present("FSD 防护")
+        self.assert_present("部分实验")  # 实验性警示保留
+
+    def test_defense_card_uses_cockpit_baseline(self):
+        page = self._defense_page()
+        self.assertIn("ck-head", page, "FSD 防护页缺少 ck-head")
+        self.assertIn("cockpit-card", page, "FSD 防护页缺少 cockpit-card")
+        self.assertIn("◉", page, "FSD 防护页 ck-head 缺少 ◉ 图标")
+
+    def test_defense_page_drops_legacy_page_title(self):
+        page = self._defense_page()
+        self.assertNotIn('<div class="page-title">FSD 防护', page,
+                         "page-title 应已换皮为 ck-head")
+
+    def test_defense_toggles_and_ids_preserved(self):
+        # 功能零增减：7 开关 + 保护参数 + 状态点 + 三态全保留
+        for i in ["hw3-slew-tgl", "def-bionic-tgl", "def-sound-tgl",
+                  "def-dnd-vol-tgl", "def-speed-nd-tgl", "def-dnd-spd-tgl",
+                  "def-apeap-tgl", "def-bionic-warn",
+                  "def-rate", "def-min", "def-cnt", "def-cur",
+                  "def-dot", "def-status",
+                  "st-defense-ui", "st-defense-nvs", "st-defense-run"]:
+            self.assert_id_present(i)
+
+
 if __name__ == "__main__":
     unittest.main()
