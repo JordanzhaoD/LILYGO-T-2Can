@@ -3701,12 +3701,16 @@ async function saveApConfig(){
 
 // ── Init ───────────────────────────────────────────────────
 // ── Mobile Tab Bar ──────────────────────────────────────────
-function toggleMobMore(){
-  var p=$('mob-more');
+function toggleMobMore(id){
+  var p=$(id||'mob-more');
   if(p)p.classList.toggle('open');
 }
+function closeStandaloneMobMore(){
+  var p=$('mob-more-single');
+  if(p)p.classList.remove('open');
+}
 function updateMobTabs(pageId){
-  var map={home:'pg-overview',driving:'pg-drive',plugins:'pg-hardware',network:'pg-network'};
+  var map={driving:'pg-overview',hardware:'pg-hardware',speed:'pg-speed',network:'pg-network',drivingstyle:'pg-drive',defense:'pg-defense',ota:'pg-ota',can:'pg-can',more:'pg-overview'};
   var tabs=document.querySelectorAll('.mob-tab[data-mobile-page]');
   for(var i=0;i<tabs.length;i++){
     var mob=tabs[i].getAttribute('data-mobile-page');
@@ -3714,13 +3718,19 @@ function updateMobTabs(pageId){
   }
 }
 function showMobilePage(name){
-  var map={home:'pg-overview',driving:'pg-drive',plugins:'pg-hardware',network:'pg-network'};
+  var map={driving:'pg-overview',hardware:'pg-hardware',speed:'pg-speed',network:'pg-network',drivingstyle:'pg-drive',defense:'pg-defense',ota:'pg-ota',can:'pg-can'};
+  closeStandaloneMobMore();
   var panels=document.querySelectorAll('[data-mobile-page-panel]');
   for(var i=0;i<panels.length;i++)panels[i].classList.toggle('active',panels[i].getAttribute('data-mobile-page-panel')===name);
   showPage(map[name]||'pg-overview');
   updateMobTabs(name);
-  if(name==='plugins')renderMobilePlugins(PLUGINS);
+  if(name==='hardware')renderMobilePlugins(PLUGINS);
+  if(name==='speed')loadSpeedStrategy();
   if(name==='network')pollWifiStatus();
+}
+function showStandaloneMorePage(name){
+  closeStandaloneMobMore();
+  showMobilePage(name);
 }
 
 document.addEventListener('DOMContentLoaded',function(){
@@ -3740,7 +3750,7 @@ document.addEventListener('DOMContentLoaded',function(){
   }
 
   // Initial page
-  showMobilePage('home');
+  showMobilePage('driving');
 
   // OTA drag-drop
   setupOtaDrop();
@@ -3785,8 +3795,7 @@ function restartPoll(ms){
 </script>
 <!-- Mobile Standalone Pages (single-CAN product) -->
 <div data-dual-hide="1">
-<section class="mobile-page active" id="mob-home-page" data-mobile-page-panel="home"></section>
-<section class="mobile-page" id="mob-driving-page" data-mobile-page-panel="driving">
+<section class="mobile-page active" id="mob-driving-page" data-mobile-page-panel="driving">
   <div class="mobile-card"><h3>AP 注入状态</h3><div id="m-ap-state">等待 AP</div><div id="m-ap-detail" class="hint"></div></div>
   <div class="mobile-card">
     <label>AP 门控 <input id="m-ap-gate-tgl" type="checkbox" onchange="syncMobileApControls()"></label>
@@ -3794,24 +3803,21 @@ function restartPoll(ms){
     <label>AP-AUTO-RESTORE <input id="m-ap-auto-restore-tgl" type="checkbox" onchange="syncMobileApControls()"></label>
   </div>
 </section>
-<section class="mobile-page" id="mob-plugin-page" data-mobile-page-panel="plugins">
-  <div class="mobile-card"><h3>🧩 插件管理</h3></div>
-  <div class="install-cell"><div class="ii">🔗</div><div class="it">URL 安装</div>
-    <input id="m-plugin-url" class="mock-input" placeholder="https://.../plugin.json">
-    <button class="ds-btn" onclick="installMobilePluginUrl()">安装</button></div>
-  <div class="install-cell"><div class="ii">📋</div><div class="it">粘贴 JSON</div>
-    <textarea id="m-plugin-json" rows="4" class="mock-input" placeholder='{"name":"...","rules":[]}'></textarea>
-    <button class="ds-btn" onclick="installMobilePluginJson()">解析安装</button></div>
-  <div class="mobile-card"><h3>已安装插件</h3><div id="m-plugin-list" class="plugin-list"></div></div>
-  <div class="mobile-card"><h3>GTW2047 重放倍率</h3><select id="m-plugin-replay-count" onchange="setPluginReplayCount(this.value)" class="ds-select"><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option><option value="5">5×</option></select></div>
-</section>
 <section class="mobile-page" id="mob-network-page" data-mobile-page-panel="network"></section>
 <!-- Mobile Bottom Tab Bar (standalone) -->
 <div class="mob-tabs" id="mob-tabs">
-  <button class="mob-tab active" data-mobile-page="home" onclick="showMobilePage('home')">首页</button>
-  <button class="mob-tab" data-mobile-page="driving" onclick="showMobilePage('driving')">驾驶</button>
-  <button class="mob-tab" data-mobile-page="plugins" onclick="showMobilePage('plugins')">插件</button>
-  <button class="mob-tab" data-mobile-page="network" onclick="showMobilePage('network')">网络</button>
+  <button class="mob-tab active" data-mobile-page="driving" onclick="showMobilePage('driving')"><div class="mob-icon">▣</div><div>驾驶</div></button>
+  <button class="mob-tab" data-mobile-page="hardware" onclick="showMobilePage('hardware')"><div class="mob-icon">◇</div><div>硬件</div></button>
+  <button class="mob-tab" data-mobile-page="speed" onclick="showMobilePage('speed')"><div class="mob-icon">↗</div><div>速度</div></button>
+  <button class="mob-tab" data-mobile-page="network" onclick="showMobilePage('network')"><div class="mob-icon">◎</div><div>网络</div></button>
+  <button class="mob-tab" data-mobile-page="more" onclick="toggleMobMore('mob-more-single')"><div class="mob-icon">···</div><div>更多</div></button>
+</div>
+<div class="mob-more-panel" id="mob-more-single" data-dual-hide="1">
+  <div class="mob-more-close" onclick="toggleMobMore('mob-more-single')">✕</div>
+  <div class="mob-more-item" onclick="showStandaloneMorePage('drivingstyle')">◉ 驾驶风格</div>
+  <div class="mob-more-item" onclick="showStandaloneMorePage('defense')">◈ FSD 防护</div>
+  <div class="mob-more-item" onclick="showStandaloneMorePage('ota')">⇧ OTA 升级</div>
+  <div class="mob-more-item" onclick="showStandaloneMorePage('can')">⌘ CAN 诊断</div>
 </div>
 </div>
 <!-- Mobile Dual-CAN Nav (hidden in standalone) -->

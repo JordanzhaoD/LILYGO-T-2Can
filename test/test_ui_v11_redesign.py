@@ -94,5 +94,46 @@ class PluginRedesignTests(UiV11RedesignTests):
             self.assert_id_present(i)
 
 
+class MobileNavTests(UiV11RedesignTests):
+    def test_single_can_mobile_nav_has_five_task6_tabs(self):
+        for page in ["driving", "hardware", "speed", "network", "more"]:
+            self.assert_present(f'data-mobile-page="{page}"')
+        self.assert_absent('data-mobile-page="home"')
+        self.assert_absent('data-mobile-page="plugins"')
+
+    def test_single_can_more_panel_contains_only_task6_entries(self):
+        self.assert_present('id="mob-more-single"')
+        match = re.search(r'<div class="mob-more-panel" id="mob-more-single"[\s\S]*?<!-- Mobile Dual-CAN Nav', SRC)
+        self.assertIsNotNone(match, "缺少单 CAN 更多面板")
+        panel = match.group(0) if match else ""
+        for label in ["驾驶风格", "FSD 防护", "OTA 升级", "CAN 诊断"]:
+            self.assertIn(label, panel)
+        for label in ["CAN2 控制", "灯光特技", "自动换挡"]:
+            self.assertNotIn(label, panel, f"单 CAN 更多面板不应包含 {label}")
+
+    def test_mobile_page_map_targets_hardware_and_speed(self):
+        self.assertRegex(SRC, r"hardware\s*:\s*'pg-hardware'")
+        self.assertRegex(SRC, r"speed\s*:\s*'pg-speed'")
+
+    def test_single_can_more_entries_route_to_expected_pages(self):
+        show_mobile = re.search(r"function showMobilePage\(name\)\{[\s\S]*?var map=\{([^}]*)\}", SRC)
+        self.assertIsNotNone(show_mobile, "缺少 showMobilePage map")
+        show_mobile_map = show_mobile.group(1) if show_mobile else ""
+        for mobile_name, page_id in [
+            ("drivingstyle", "pg-drive"),
+            ("defense", "pg-defense"),
+            ("ota", "pg-ota"),
+            ("can", "pg-can"),
+        ]:
+            self.assert_present(f"showStandaloneMorePage('{mobile_name}')")
+            self.assertRegex(show_mobile_map, rf"{mobile_name}\s*:\s*'{page_id}'")
+
+    def test_dual_can_mobile_nav_is_preserved(self):
+        self.assert_present('id="mob-tabs-dual"')
+        self.assert_present('id="mob-more" data-single-hide="1"')
+        for page in ["pg-bus2", "pg-strobe", "pg-shift"]:
+            self.assertRegex(SRC, rf'id="mob-more"[\s\S]*data-page="{page}"')
+
+
 if __name__ == "__main__":
     unittest.main()
