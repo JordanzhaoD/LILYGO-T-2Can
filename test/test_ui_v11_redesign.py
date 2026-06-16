@@ -236,5 +236,40 @@ class DrivePageCockpitTests(UiV11RedesignTests):
             self.assert_id_present(i)
 
 
+class SpeedPageCockpitTests(UiV11RedesignTests):
+    """Task 8：速度策略页套驾驶舱基底（功能零增减，只换皮）。"""
+
+    def _speed_page(self) -> str:
+        m = re.search(r'<div class="page" id="pg-speed">([\s\S]*?)<div class="page" id="pg-', SRC)
+        self.assertIsNotNone(m, "缺少 pg-speed 页")
+        return m.group(1)
+
+    def test_speed_page_keeps_core_label(self):
+        self.assert_present("速度策略")
+
+    def test_speed_card_uses_cockpit_baseline(self):
+        page = self._speed_page()
+        self.assertIn("ck-head", page, "速度策略页缺少 ck-head")
+        self.assertIn("cockpit-card", page, "速度策略页缺少 cockpit-card")
+        self.assertIn("◉", page, "速度策略页 ck-head 缺少 ◉ 图标")
+
+    def test_speed_head_has_live_status_chip(self):
+        self.assert_id_present("st-speed-pill")
+        self.assert_present("setText('st-speed-pill'")
+
+    def test_speed_page_drops_legacy_page_title(self):
+        page = self._speed_page()
+        self.assertNotIn('<div class="page-title">速度策略</div>', page,
+                         "page-title 应已换皮为 ck-head")
+
+    def test_speed_ids_and_panels_preserved(self):
+        # 功能零增减：模式 tabs、三面板、4 区间输入、编码、三态全保留
+        for i in ["speed-mode-tabs", "speed-current",
+                  "speed-panel-fixed", "speed-panel-auto", "speed-panel-custom",
+                  "speed-cp1", "speed-cp2", "speed-cp3", "speed-cp4",
+                  "hw3-enc", "st-speed-ui", "st-speed-nvs", "st-speed-run"]:
+            self.assert_id_present(i)
+
+
 if __name__ == "__main__":
     unittest.main()

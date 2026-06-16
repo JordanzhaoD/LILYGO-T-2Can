@@ -967,13 +967,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 4: Speed Offset -->
     <div class="page" id="pg-speed">
-<div class="page-title">速度策略</div>
+<div class="ck-head"><h3><span>◉</span>速度策略</h3><span class="ck-chip" id="st-speed-pill">auto</span></div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-speed-ui">待同步</div></div>
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-speed-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-speed-run">待检测</div></div>
 </div>
-<div class="card">
+<div class="card cockpit-card">
   <div class="card-title">速度策略模式</div>
   <div class="card-subtitle">选择固定百分比 / 自动偏移 / 自定义偏移，配置会同步到 /speed_strategy 与 /speed_custom</div>
   <div class="sel-cards c3" id="speed-mode-tabs" style="margin-bottom:12px">
@@ -2330,6 +2330,7 @@ function showSpeedMode(strategy){
   if(auto)auto.style.display=speedStrategyState==='auto'?'block':'none';
   if(custom)custom.style.display=speedStrategyState==='custom'?'block':'none';
   setText('speed-current',speedStrategyState);
+  setText('st-speed-pill',speedStrategyState);
 }
 
 function updateSpeedPage(d){
