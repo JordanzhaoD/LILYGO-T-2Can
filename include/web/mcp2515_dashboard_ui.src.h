@@ -200,7 +200,7 @@ body { font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 .drive-card { background: var(--card-bg-alt); border: 2px solid var(--border); border-radius: 12px;
   padding: 16px 10px; text-align: center; cursor: pointer; transition: all 0.2s; }
 .drive-card:hover { border-color: var(--tx3); transform: translateY(-2px); }
-.drive-card.active { border-color: var(--accent-light); background: rgba(124,58,237,0.18); }
+.drive-card.active { border-color:#38bdf8; background:linear-gradient(160deg, rgba(14,165,233,.20), rgba(99,102,241,.16)); box-shadow:0 6px 16px rgba(14,165,233,.18); }
 .drive-card .drive-icon { font-size: 28px; margin-bottom: 6px; }
 .drive-card .drive-name { font-size: 16px; font-weight: 700; color: var(--tx1); }
 .drive-card .drive-desc { font-size: 11px; color: var(--tx3); margin-top: 4px; line-height: 1.3; }
@@ -914,14 +914,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 3: Drive Mode -->
     <div class="page" id="pg-drive">
-<div class="page-title">驾驶风格</div>
+<div class="ck-head"><h3><span>◉</span>驾驶风格</h3><span class="ck-chip" id="st-drive-pill">Normal</span></div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-drive-ui">Normal</div></div>
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-drive-nvs">--</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN 运行状态</div><div class="val" id="st-drive-run">--</div></div>
 </div>
-<div class="card">
-  <div class="card-title">驾驶风格</div>
+<div class="card cockpit-card">
   <div class="card-subtitle">选择速度策略映射到 /drive_profile</div>
   <div class="drive-grid" id="drive-cards">
     <div class="drive-card" onclick="setDriveMode('auto')">
@@ -2270,6 +2269,7 @@ function updateDriveCards(sp,spa,profile,profileName){
 function updateDriveSurfaces(mode, statusText){
   var label=driveModeLabel(mode);
   setText('drive-current',label);
+  setText('st-drive-pill',label);
   setText('ov-drive-current',label);
   setText('m-drive',label);
   setStatusTriplet('drive',label,label,statusText||(mode==='max'?'MAX/V14 需实车验证':'配置已同步'),mode==='max'?'warn':'ok');

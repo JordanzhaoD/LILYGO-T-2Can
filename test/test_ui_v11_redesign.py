@@ -190,5 +190,51 @@ class MobileNavTests(UiV11RedesignTests):
         for page in ["pg-bus2", "pg-strobe", "pg-shift"]:
             self.assertRegex(SRC, rf'id="mob-more"[\s\S]*data-page="{page}"')
 
+
+class DrivePageCockpitTests(UiV11RedesignTests):
+    """Task 7：驾驶风格页套驾驶舱基底（功能零增减，只换皮）。"""
+
+    def _drive_page(self) -> str:
+        m = re.search(r'<div class="page" id="pg-drive">([\s\S]*?)<div class="page" id="pg-', SRC)
+        self.assertIsNotNone(m, "缺少 pg-drive 页")
+        return m.group(1)
+
+    def test_drive_page_keeps_core_labels_and_grid(self):
+        self.assert_present("驾驶风格")
+        self.assert_present('class="drive-grid"')
+
+    def test_drive_card_uses_cockpit_baseline(self):
+        page = self._drive_page()
+        self.assertIn("ck-head", page, "驾驶风格页缺少 ck-head")
+        self.assertIn("cockpit-card", page, "驾驶风格页缺少 cockpit-card")
+        self.assertIn("◉", page, "驾驶风格页 ck-head 缺少 ◉ 图标")
+
+    def test_drive_head_has_live_status_chip(self):
+        self.assert_id_present("st-drive-pill")
+        self.assert_present("setText('st-drive-pill'")
+
+    def test_drive_page_drops_legacy_page_title(self):
+        page = self._drive_page()
+        self.assertNotIn('<div class="page-title">驾驶风格</div>', page,
+                         "page-title 应已换皮为 ck-head")
+
+    def test_drive_card_active_uses_accent_palette(self):
+        # 旧紫色 active 规则退役，改用驾驶舱 cyan/indigo 色系（--ds-accent-grad 两端）
+        m = re.search(r"\.drive-card\.active\s*\{([^}]*)\}", SRC)
+        self.assertIsNotNone(m, "缺少 .drive-card.active 规则")
+        body = m.group(1)
+        self.assertNotIn("124,58,237", body, "drive-card active 仍用旧紫色")
+        self.assertIn("14,165,233", body, "drive-card active 未用 cyan 端配色")
+
+    def test_drive_modes_and_ids_preserved(self):
+        # 功能零增减：6 档 onclick + 关键 id 全保留
+        for mode in ["setDriveMode('auto')", "setDriveMode('sloth')", "setDriveMode('chill')",
+                     "setDriveMode('normal')", "setDriveMode('hurry')", "setDriveMode('max')"]:
+            self.assert_present(mode)
+        for i in ["drive-cards", "drive-current",
+                  "st-drive-ui", "st-drive-nvs", "st-drive-run"]:
+            self.assert_id_present(i)
+
+
 if __name__ == "__main__":
     unittest.main()
