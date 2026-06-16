@@ -2612,8 +2612,7 @@ function uploadPluginJson(){
   var st=document.getElementById('plugin-upload-status');
   if(!f){if(st)st.textContent='请先选择 .json 文件';return;}
   if(st)st.textContent='上传中...';
-  var fd=new FormData();fd.append('file',f);
-  fetch('/plugins/upload',{method:'POST',body:fd}).then(function(r){
+  fetch('/plugins/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f}).then(function(r){
     return r.text().then(function(t){
       var msg='HTTP '+r.status;
       try{var j=JSON.parse(t);if(j&&j.message)msg=j.message;}catch(e){}
