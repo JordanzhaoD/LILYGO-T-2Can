@@ -93,6 +93,20 @@ class PluginRedesignTests(UiV11RedesignTests):
         for i in ["plugins-card","plugin-editor-json","plugin-rule-test-result"]:
             self.assert_id_present(i)
 
+    def test_plugin_upload_has_explicit_button_and_feedback(self):
+        # 修复：.json 上传必须有显式按钮（与 URL/JSON 行一致），不能仅靠 onchange 静默自动上传
+        # 死装饰 span（看着像按钮但无 onclick）必须移除
+        self.assert_absent('ds-btn-muted">选择 .json')
+        self.assertRegex(
+            SRC,
+            r'<button[^>]*onclick="uploadPluginJson\(\)"[^>]*>[^<]*上传</button>',
+            "上传文件行缺少显式\"上传\"按钮",
+        )
+        # 上传状态反馈元素（请先选择/上传中/成功/失败）
+        self.assert_id_present("plugin-upload-status")
+        self.assert_present("上传中")
+        self.assert_present("安装失败")
+
 
 class MobileNavTests(UiV11RedesignTests):
     def _standalone_tabs_block(self) -> str:

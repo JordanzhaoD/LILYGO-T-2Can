@@ -897,8 +897,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <input id="plugin-url" class="mock-input" placeholder="https://.../plugin.json">
       <button class="ds-btn" onclick="installPluginUrl()">安装</button></div>
     <div class="install-cell"><div class="ii">📤</div><div class="it">上传文件</div>
-      <input id="plugin-file" type="file" accept=".json,application/json" onchange="uploadPluginJson()" class="mock-input">
-      <span class="ds-btn-muted">选择 .json</span></div>
+      <input id="plugin-file" type="file" accept=".json,application/json" class="mock-input">
+      <button class="ds-btn" onclick="uploadPluginJson()">上传</button>
+      <div id="plugin-upload-status" class="ds-btn-muted"></div></div>
     <div class="install-cell"><div class="ii">📋</div><div class="it">粘贴 JSON</div>
       <textarea id="plugin-json" rows="3" class="mock-input" placeholder='{"name":"...","rules":[]}'></textarea>
       <button class="ds-btn" onclick="installPluginJson()">解析安装</button></div>
@@ -2608,9 +2609,17 @@ function installPluginJson(){
 }
 function uploadPluginJson(){
   var f=document.getElementById('plugin-file').files[0];
-  if(!f)return;
+  var st=document.getElementById('plugin-upload-status');
+  if(!f){if(st)st.textContent='请先选择 .json 文件';return;}
+  if(st)st.textContent='上传中...';
   var fd=new FormData();fd.append('file',f);
-  return fetch('/plugins/upload',{method:'POST',body:fd}).then(loadPlugins);
+  return fetch('/plugins/upload',{method:'POST',body:fd}).then(function(r){
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    if(st)st.textContent='安装成功';
+    return loadPlugins();
+  }).catch(function(e){
+    if(st)st.textContent='安装失败：'+(f&&f.name?f.name+' ':'')+(e&&e.message?e.message:e);
+  });
 }
 function togglePlugin(name,on){return postForm('/plugins/toggle',{name:name,enabled:on?'1':'0'}).then(loadPlugins)}
 function setPluginPriority(name,priority){return postForm('/plugins/priority',{name:name,priority:priority}).then(loadPlugins)}
