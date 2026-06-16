@@ -1570,7 +1570,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 10: CAN Tools -->
     <div class="page" id="pg-can">
-<div class="page-title">CAN 诊断</div>
+<div class="ck-head"><h3><span>◉</span>CAN 诊断</h3><span class="ck-chip" id="st-can-pill">0 / 0</span></div>
 <!-- legacy contract marker: class="diag-shell" -->
 <div class="diag-shell diag-console">
   <aside class="diag-kpi-rail">
@@ -1602,7 +1602,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </aside>
 
   <section class="diag-main-panel">
-    <div class="card">
+    <div class="card cockpit-card">
       <div class="cockpit-status-bar">
         <div class="cockpit-title"><small>工程模式</small><h2>错误优先的实时帧</h2></div>
         <div class="cockpit-chip-row"><span class="cockpit-chip ok">实时</span><span class="cockpit-chip warn">错误优先</span><span class="cockpit-chip">DBC 可切换</span></div>
@@ -2170,6 +2170,7 @@ async function poll(){
   // Temp from /system_status is separate; use eflg field as proxy
   setText('s-txerr',d.txerr||0);
   setText('diag-rxtx',((d.rxCount||d.rx||0)+' / '+(d.txCount||d.tx||0)));
+  setText('st-can-pill',((d.rxCount||d.rx||0)+' / '+(d.txCount||d.tx||0)));
   setText('diag-txerr',(d.txErr||d.txerr||(d.can2&&d.can2.txerr)||d.can2TxErr||0));
   var diagEflg=(d.can2Eflg!==undefined)?d.can2Eflg:((d.can2&&d.can2.eflg!==undefined)?d.can2.eflg:undefined);
   var diagEflgNum=Number(diagEflg);

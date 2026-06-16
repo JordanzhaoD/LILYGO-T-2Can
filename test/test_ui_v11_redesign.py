@@ -378,5 +378,46 @@ class NetworkPageCockpitTests(UiV11RedesignTests):
             self.assert_id_present(i)
 
 
+class CanPageCockpitTests(UiV11RedesignTests):
+    """Task 12：CAN 诊断页套驾驶舱基底（功能零增减，只换皮；保留 diag-shell 工程结构）。"""
+
+    def _can_page(self) -> str:
+        m = re.search(r'<div class="page" id="pg-can">([\s\S]*?)<div class="page" id="pg-', SRC)
+        self.assertIsNotNone(m, "缺少 pg-can 页")
+        return m.group(1)
+
+    def test_can_page_keeps_core_label(self):
+        self.assert_present("CAN 诊断")
+
+    def test_can_card_uses_cockpit_baseline(self):
+        page = self._can_page()
+        self.assertIn("ck-head", page, "CAN 诊断页缺少 ck-head")
+        self.assertIn("cockpit-card", page, "CAN 诊断页缺少 cockpit-card")
+        self.assertIn("◉", page, "CAN 诊断页 ck-head 缺少 ◉ 图标")
+
+    def test_can_head_has_live_rxtx_chip(self):
+        self.assert_id_present("st-can-pill")
+        self.assert_present("setText('st-can-pill'")
+
+    def test_can_page_drops_legacy_page_title(self):
+        page = self._can_page()
+        self.assertNotIn('<div class="page-title">CAN 诊断</div>', page,
+                         "page-title 应已换皮为 ck-head")
+
+    def test_can_engineering_structure_preserved(self):
+        # 功能零增减：diag-shell 工程结构 + 所有诊断 id 全保留
+        page = self._can_page()
+        for token in ['class="diag-shell diag-console"', 'class="diag-kpi-rail"',
+                      'class="diag-table-shell"', '工程模式', '错误优先']:
+            self.assertIn(token, page)
+        for i in ["diag-rxtx", "diag-eflg", "diag-txerr", "diag-last-write", "diag-id-count",
+                  "sniff-filter", "sniff-pause", "sniff-rows", "sniff-count",
+                  "can-recorder", "can-controller", "can-debug",
+                  "ctrl-eflg", "ctrl-rxerr", "ctrl-txerr",
+                  "lw-injected", "lw-match", "debug-tgl",
+                  "can-cs", "can-sck", "can-miso", "can-mosi", "can-rst"]:
+            self.assert_id_present(i)
+
+
 if __name__ == "__main__":
     unittest.main()
