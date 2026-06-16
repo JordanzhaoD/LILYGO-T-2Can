@@ -2651,15 +2651,16 @@ function renderPluginsStatus(j){
     var ids=(p.targetIds||[]).join(', ');
     var conflicts=(p.conflicts||[]).join(' · ');
     return '<div class="plugin-item"><div><b>'+esc(name)+'</b> <small>'+esc(p.version||'1.0')+'</small>'
-      +'<div class="hint">IDs: '+esc(ids)+' · Rules: '+(p.ruleCount||0)+'</div>'
+      +'<div class="hint">目标ID: '+esc(ids)+' · 规则: '+(p.ruleCount||0)+'</div>'
       +'<div class="warn">'+esc(conflicts||p.lastError||'')+'</div></div>'
-      +'<label>Enabled <input type="checkbox" '+(p.enabled?'checked':'')+' onchange="togglePlugin(\''+escAttr(name)+'\',this.checked)"></label>'
-      +'<label>Priority <input type="number" min="1" max="8" value="'+(p.priority||1)+'" onchange="setPluginPriority(\''+escAttr(name)+'\',this.value)"></label>'
-      +'<button onclick="removePlugin(\''+escAttr(name)+'\')">Remove</button>'
-      +'<details><summary>Detail</summary><pre>'+esc(JSON.stringify(p,null,2))+'</pre></details></div>';
+      +'<label>启用 <input type="checkbox" '+(p.enabled?'checked':'')+' onchange="togglePlugin(\''+escAttr(name)+'\',this.checked)"></label>'
+      +'<label>优先级 <input type="number" min="1" max="8" value="'+(p.priority||1)+'" onchange="setPluginPriority(\''+escAttr(name)+'\',this.value)"></label>'
+      +'<button onclick="removePlugin(\''+escAttr(name)+'\')">删除</button>'
+      +'<details><summary>详情</summary><pre>'+esc(JSON.stringify(p,null,2))+'</pre></details></div>';
   }).join('');
-  list.innerHTML=html||'<div class="hint">No plugins installed. New installs start disabled.</div>';
+  list.innerHTML=html||'<div class="hint">暂无插件。新安装默认禁用。</div>';
   var rc=document.getElementById('plugin-replay-count'); if(rc)rc.value=String(j.replayCount||1);
+  var pill=document.getElementById('plugins-count-pill'); if(pill)pill.textContent='已装 '+((j.installed||[]).length)+' 个';
 }
 function installMobilePluginUrl(){
   var src=document.getElementById('m-plugin-url');
@@ -2681,12 +2682,12 @@ function renderMobilePlugins(j){
     var ids=(p.targetIds||[]).join(', ');
     var conflicts=(p.conflicts||[]).join(' · ');
     return '<div class="plugin-item"><div><b>'+esc(name)+'</b> <small>'+esc(p.version||'1.0')+'</small>'
-      +'<div class="hint">IDs: '+esc(ids)+' · Rules: '+(p.ruleCount||0)+'</div>'
+      +'<div class="hint">目标ID: '+esc(ids)+' · 规则: '+(p.ruleCount||0)+'</div>'
       +'<div class="warn">'+esc(conflicts||p.lastError||'')+'</div></div>'
-      +'<label>Enabled <input type="checkbox" '+(p.enabled?'checked':'')+' onchange="togglePlugin(\''+escAttr(name)+'\',this.checked)"></label>'
-      +'<button onclick="removePlugin(\''+escAttr(name)+'\')">Remove</button></div>';
+      +'<label>启用 <input type="checkbox" '+(p.enabled?'checked':'')+' onchange="togglePlugin(\''+escAttr(name)+'\',this.checked)"></label>'
+      +'<button onclick="removePlugin(\''+escAttr(name)+'\')">删除</button></div>';
   }).join('');
-  list.innerHTML=html||'<div class="hint">No plugins installed. New installs start disabled.</div>';
+  list.innerHTML=html||'<div class="hint">暂无插件。新安装默认禁用。</div>';
   var rc=document.getElementById('m-plugin-replay-count'); if(rc)rc.value=String(j.replayCount||1);
 }
 
