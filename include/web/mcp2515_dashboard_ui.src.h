@@ -3720,8 +3720,6 @@ function updateMobTabs(pageId){
 function showMobilePage(name){
   var map={driving:'pg-overview',hardware:'pg-hardware',speed:'pg-speed',network:'pg-network',drivingstyle:'pg-drive',defense:'pg-defense',ota:'pg-ota',can:'pg-can'};
   closeStandaloneMobMore();
-  var panels=document.querySelectorAll('[data-mobile-page-panel]');
-  for(var i=0;i<panels.length;i++)panels[i].classList.toggle('active',panels[i].getAttribute('data-mobile-page-panel')===name);
   showPage(map[name]||'pg-overview');
   updateMobTabs(name);
   if(name==='hardware')renderMobilePlugins(PLUGINS);
@@ -3795,15 +3793,6 @@ function restartPoll(ms){
 </script>
 <!-- Mobile Standalone Pages (single-CAN product) -->
 <div data-dual-hide="1">
-<section class="mobile-page active" id="mob-driving-page" data-mobile-page-panel="driving">
-  <div class="mobile-card"><h3>AP 注入状态</h3><div id="m-ap-state">等待 AP</div><div id="m-ap-detail" class="hint"></div></div>
-  <div class="mobile-card">
-    <label>AP 门控 <input id="m-ap-gate-tgl" type="checkbox" onchange="syncMobileApControls()"></label>
-    <label>延迟注入 <select id="m-ap-delay-select" onchange="syncMobileApControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label>
-    <label>AP-AUTO-RESTORE <input id="m-ap-auto-restore-tgl" type="checkbox" onchange="syncMobileApControls()"></label>
-  </div>
-</section>
-<section class="mobile-page" id="mob-network-page" data-mobile-page-panel="network"></section>
 <!-- Mobile Bottom Tab Bar (standalone) -->
 <div class="mob-tabs" id="mob-tabs">
   <button class="mob-tab active" data-mobile-page="driving" onclick="showMobilePage('driving')"><div class="mob-icon">▣</div><div>驾驶</div></button>
