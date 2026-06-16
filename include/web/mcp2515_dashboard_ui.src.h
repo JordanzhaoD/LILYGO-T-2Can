@@ -1409,7 +1409,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 8: Network Settings -->
     <div class="page" id="pg-network">
-<div class="page-title">网络设置</div>
+<div class="ck-head"><h3><span>◉</span>网络设置</h3><span class="ck-chip" id="st-net-pill">未配置</span></div>
 <div class="status-triplet">
   <div class="status-chip"><div class="lbl">UI 显示状态</div><div class="val" id="st-net-ui">待同步</div></div>
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-net-nvs">读取中</div></div>
@@ -1421,7 +1421,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="status-chip"><div class="lbl">DNS 实际运行状态</div><div class="val" id="st-dns-run">待检测</div></div>
 </div>
 <!-- WiFi Hotspot -->
-<div class="card">
+<div class="card cockpit-card">
   <div class="card-title">WiFi 热点</div>
   <div class="setting-row">
     <div class="setting-name">SSID</div>
@@ -3100,6 +3100,7 @@ async function pollWifiStatus(){
     else if(d.connecting){st.textContent=T('连接中...')||'Connecting...';st.className='v-warn'}
     else{st.textContent=T('未配置');st.className='v-warn'}
   }
+  setText('st-net-pill', d.connected ? (d.ssid||'--') : (d.connecting ? '连接中' : '未配置'));
   setStatusTriplet('net',
     d.connected?('STA '+d.ssid):(d.connecting?'STA 连接中':'STA 未配置'),
     '等待热点配置读取',

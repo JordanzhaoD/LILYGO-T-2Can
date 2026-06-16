@@ -341,5 +341,42 @@ class OtaPageCockpitTests(UiV11RedesignTests):
             self.assert_id_present(i)
 
 
+class NetworkPageCockpitTests(UiV11RedesignTests):
+    """Task 11：网络设置页套驾驶舱基底（功能零增减，只换皮；不破坏 wifi 回归）。"""
+
+    def _network_page(self) -> str:
+        m = re.search(r'<div class="page" id="pg-network">([\s\S]*?)<div class="page" id="pg-', SRC)
+        self.assertIsNotNone(m, "缺少 pg-network 页")
+        return m.group(1)
+
+    def test_network_page_keeps_core_label(self):
+        self.assert_present("网络设置")
+
+    def test_network_card_uses_cockpit_baseline(self):
+        page = self._network_page()
+        self.assertIn("ck-head", page, "网络设置页缺少 ck-head")
+        self.assertIn("cockpit-card", page, "网络设置页缺少 cockpit-card")
+        self.assertIn("◉", page, "网络设置页 ck-head 缺少 ◉ 图标")
+
+    def test_network_head_has_live_status_chip(self):
+        self.assert_id_present("st-net-pill")
+        self.assert_present("setText('st-net-pill'")
+
+    def test_network_page_drops_legacy_page_title(self):
+        page = self._network_page()
+        self.assertNotIn('<div class="page-title">网络设置</div>', page,
+                         "page-title 应已换皮为 ck-head")
+
+    def test_network_wifi_ids_preserved(self):
+        # 功能零增减 + wifi 回归保护：所有 wifi/ap/gw/dns id 全保留
+        for i in ["wifi-status", "wifi-slots", "wifi-form", "wf-ssid", "wf-pass",
+                  "ap-ssid-input", "ap-pass-input", "ap-hidden-tgl",
+                  "gw-nat-tgl", "gw-perf-tgl",
+                  "dns-blacklist", "dns-whitelist",
+                  "st-net-ui", "st-net-nvs", "st-net-run",
+                  "st-dns-ui", "st-dns-nvs", "st-dns-run"]:
+            self.assert_id_present(i)
+
+
 if __name__ == "__main__":
     unittest.main()
