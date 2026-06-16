@@ -256,7 +256,7 @@ class DashboardApiContractTests(unittest.TestCase):
             '稳定计时中',
             '正在注入',
             '已阻断',
-            'AP-AUTO-RESTORE',
+            'AP 自动恢复',
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
@@ -293,13 +293,6 @@ class DashboardApiContractTests(unittest.TestCase):
 
         for token in [
             'Plugins',
-            'Install from URL',
-            'Upload .json',
-            'Paste JSON',
-            'Installed Plugins',
-            'Plugin Editor',
-            'Rule Test',
-            'GTW2047 Replay Count',
             'renderPluginsStatus',
             'installPluginUrl',
             'installPluginJson',
@@ -311,6 +304,20 @@ class DashboardApiContractTests(unittest.TestCase):
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
+
+        # Task 5 (UI V1.1) replaced the English plugin UI labels with Chinese
+        # cockpit-style copy. The old English labels must not come back.
+        for token in [
+            'Install from URL',
+            'Upload .json',
+            'Paste JSON',
+            'Installed Plugins',
+            'Plugin Editor',
+            'Rule Test',
+            'GTW2047 Replay Count',
+        ]:
+            with self.subTest(token=token):
+                self.assertNotIn(token, self.ui)
 
     def test_single_can_product_ui_hides_dual_can_surfaces(self) -> None:
         for token in [
@@ -1707,18 +1714,12 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, bus2_body)
 
     def test_ui_explains_legacy_real_wiring_states(self) -> None:
+        # Runtime / backend-backed Legacy real-wiring copy stays in the UI.
         for token in [
             "Legacy 运行时状态",
             "FSD 注入策略",
             "稳定模式",
             "实验模式",
-            "维修模式 0x339",
-            "方向盘免打扰 0x3C2",
-            "Legacy 功能支持矩阵",
-            "仿生转向",
-            "不支持",
-            "未接线",
-            "未实现",
             "/legacy_fsd_config",
             "fsdDiag",
             "serviceDiag",
@@ -1726,6 +1727,22 @@ class DashboardApiContractTests(unittest.TestCase):
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
+
+        # Task 2 (UI V1.1) removed the three low-value static display cards
+        # from the overview bottom: 维修模式 0x339, 方向盘免打扰 0x3C2 and the
+        # Legacy 功能支持矩阵 (which held the 仿生转向/不支持/未接线/未实现 copy).
+        # These had no id/JS/backend wiring, so their absence is intentional.
+        for token in [
+            "维修模式 0x339",
+            "方向盘免打扰 0x3C2",
+            "Legacy 功能支持矩阵",
+            "仿生转向",
+            "不支持",
+            "未接线",
+            "未实现",
+        ]:
+            with self.subTest(token=token):
+                self.assertNotIn(token, self.ui)
 
     def test_atlas_redesign_refined_chinese_copy_is_stable(self) -> None:
         """Driving-first redesign should keep the refined Task 4 Chinese copy labels."""
@@ -1798,7 +1815,7 @@ class DashboardApiContractTests(unittest.TestCase):
             'id="ov-fsd-tgl"',
             'id="fsd-boot-tgl"',
             'id="s-can"',
-            'id="s-can2"',
+            'id="ov-ap"',
             'id="s-fps"',
             'id="s-temp"',
             'id="s-ver"',
