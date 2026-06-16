@@ -29,5 +29,16 @@ class DesignSystemTests(UiV11RedesignTests):
         self.assert_present("--ds-accent-grad")
 
 
+class RemoveBottomBlocksTests(UiV11RedesignTests):
+    def test_removed_titles_absent(self):
+        for t in ["维修模式 0x339", "方向盘免打扰 0x3C2", "Legacy 功能支持矩阵"]:
+            self.assert_absent(t)
+
+    def test_retained_neighbors_present(self):
+        # 相邻保留块
+        self.assert_present("Legacy CAN-A 诊断")
+        self.assert_present("AP 注入安全")
+
+
 if __name__ == "__main__":
     unittest.main()

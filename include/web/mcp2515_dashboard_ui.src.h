@@ -745,26 +745,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           </div>
         </div>
 
-        <div class="card">
-          <div class="card-title">维修模式 0x339</div>
-          <div class="setting-desc" style="margin-bottom:8px">突发发送仅证明模块 TX，车辆响应未知。</div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">方向盘免打扰 0x3C2</div>
-          <div class="setting-desc" style="margin-bottom:8px">等待原生 0x3C2 帧后再发送，避免盲发合成帧。</div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">Legacy 功能支持矩阵</div>
-          <div class="stats">
-            <div class="stat"><div class="stat-lbl">仿生转向</div><div class="stat-val" style="color:var(--tx3)">不支持</div></div>
-            <div class="stat"><div class="stat-lbl">Ban Shield</div><div class="stat-val" style="color:var(--tx3)">不支持</div></div>
-            <div class="stat"><div class="stat-lbl">MPP 自定义</div><div class="stat-val" style="color:var(--tx3)">未接线</div></div>
-            <div class="stat"><div class="stat-lbl">换挡辅助</div><div class="stat-val" style="color:var(--tx3)">未实现</div></div>
-          </div>
-        </div>
-
         <div class="card" id="ap-core-card">
           <div class="card-h"><span>AP 注入安全</span><small id="ap-core-state-pill">等待 AP</small></div>
           <div class="grid c4">
