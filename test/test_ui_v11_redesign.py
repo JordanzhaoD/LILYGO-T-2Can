@@ -40,5 +40,16 @@ class RemoveBottomBlocksTests(UiV11RedesignTests):
         self.assert_present("AP 注入安全")
 
 
+class Can2ToApTests(UiV11RedesignTests):
+    def test_ap_metric_replaces_can2(self):
+        self.assert_id_present("ov-ap")          # 新 AP 激活格
+        self.assert_present("AP 激活")
+        # 原 CAN2 metric 的 id 不应再作为 CAN2 指标出现
+        self.assert_absent('<div class="lbl">CAN2</div><div class="val" id="s-can2">')
+
+    def test_ap_update_js_present(self):
+        self.assert_present("setText('ov-ap'")
+
+
 if __name__ == "__main__":
     unittest.main()

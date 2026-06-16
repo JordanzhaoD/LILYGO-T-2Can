@@ -602,7 +602,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
             <div class="cockpit-metrics">
               <div class="cockpit-metric"><div class="lbl">CAN1</div><div class="val" id="s-can">Offline</div><div class="hint">--</div></div>
-              <div class="cockpit-metric"><div class="lbl">CAN2</div><div class="val" id="s-can2">Idle</div><div class="hint">--</div></div>
+              <div class="cockpit-metric" id="ov-ap-metric"><div class="lbl">AP 激活</div><div class="val" id="ov-ap">等待</div><div class="hint" id="ov-ap-hint">门控未触发</div></div>
               <div class="cockpit-metric"><div class="lbl">帧率</div><div class="val" id="s-fps">0.0 Hz</div><div class="hint">0.0 Hz</div></div>
               <div class="cockpit-metric"><div class="lbl">芯片温度</div><div class="val" id="s-temp">--</div><div class="hint">高于 60°C 标红</div></div>
             </div>
@@ -2068,7 +2068,15 @@ async function poll(){
   var hwText=d.hwName||hwLabel(d.hw);
   setText('ov-hw',hwText);
   setCls('ov-can','stat-val '+(d.can?'v-ok':'v-err'));
-  setText('ov-can',(d.can?'CAN1 Online':'CAN1 Offline')+' / '+($('s-can2')&&$('s-can2').textContent?$('s-can2').textContent:'CAN2 --'));
+  setText('ov-can', d.can ? 'CAN1 Online' : 'CAN1 Offline');
+  // AP 激活状态（问题2：替换 CAN2，与 ap-core-state-pill 同源字段 d.apInjectionState）
+  var apState = d.apInjectionState || 'blocked';
+  var apActive = (apState === 'injecting');
+  setText('ov-ap', apActive ? '激活' : '等待');
+  var apMetric = $('ov-ap-metric');
+  if (apMetric) apMetric.style.borderColor = apActive ? 'rgba(52,211,153,.45)' : '';
+  var apHint = $('ov-ap-hint');
+  if (apHint) apHint.textContent = apActive ? ('Gate ' + (d.apDelayMs || 2000) + 'ms · 已就绪') : '门控未触发';
   setText('ov-up',fmtUp(uptime));
   var mCan=$('m-can');
   if(mCan){mCan.className=(mCan.classList&&mCan.classList.contains('val')?'val ':'stat-val ')+(d.can?'v-ok':'v-err');mCan.textContent=d.can?'Online':'Offline';}
@@ -2694,8 +2702,6 @@ async function pollCAN2(){
   setCls('b2-eflg','stat-val '+((c2.eflg||0)>0?'v-err':'v-dim'));
   setText('b2-ids',d.count||0);
   setText('b2-count','('+d.count+')');
-  setCls('s-can2','stat-val '+(d.count>0?'v-ok':'v-dim'));
-  setText('s-can2',d.count>0?'Online':'Idle');
   setCls('m-can2','stat-val '+(d.count>0?'v-ok':'v-dim'));
   setText('m-can2',d.count>0?'Online':'Idle');
   var sCan=$('s-can');
