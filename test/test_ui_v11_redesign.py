@@ -74,5 +74,25 @@ class ApInjectionRedesignTests(UiV11RedesignTests):
             self.assert_id_present(i)
 
 
+class PluginRedesignTests(UiV11RedesignTests):
+    def test_plugin_card_cockpit(self):
+        self.assert_present("🧩")
+        self.assert_present("插件管理")
+        self.assert_id_present("plugin-url")
+        self.assert_id_present("plugin-file")
+        self.assert_id_present("plugin-json")
+        self.assert_id_present("plugin-list")
+        self.assert_id_present("plugin-replay-count")
+
+    def test_no_english_install_labels(self):
+        # 中文化：英文按钮文案应移除
+        self.assert_absent("Official JSON plugin manager")
+        self.assert_absent("Install from URL")
+
+    def test_original_ids_preserved(self):
+        for i in ["plugins-card","plugin-editor-json","plugin-rule-test-result"]:
+            self.assert_id_present(i)
+
+
 if __name__ == "__main__":
     unittest.main()
