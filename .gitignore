@@ -246,6 +246,7 @@ sdkconfig.*
 !sdkconfig.defaults
 .pi-lens
 .claude
+.superpowers/
 managed_components/
 dependencies.lock
 
