@@ -1342,9 +1342,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
     <!-- Page 7: OTA Update -->
     <div class="page" id="pg-ota">
-<div class="page-title">OTA 升级</div>
+<div class="ck-head"><h3><span>◉</span>OTA 升级</h3><span class="ck-chip" id="st-ota-pill">--</span></div>
 <!-- Version Info -->
-<div class="card">
+<div class="card cockpit-card">
   <div class="card-title">固件信息</div>
   <div class="diag-grid">
     <div class="diag-item"><span class="lbl">版本</span><span class="v-acc" id="ota-ver">--</span></div>
@@ -2987,6 +2987,7 @@ async function loadFirmwareInfo(){
   var d=await fetchJson('/system_status');
   if(!d)return;
   setText('ota-ver',d.firmware||'--');
+  setText('st-ota-pill',d.firmware||'--');
   setText('rel-current',d.firmware||'--');
   var buildLabel=d.uiBuildUtc||d.uiBuildId||d.buildEnv||'--';
   setText('ota-build',buildLabel);

@@ -305,5 +305,41 @@ class DefensePageCockpitTests(UiV11RedesignTests):
             self.assert_id_present(i)
 
 
+class OtaPageCockpitTests(UiV11RedesignTests):
+    """Task 10：OTA 升级页套驾驶舱基底（功能零增减，只换皮）。"""
+
+    def _ota_page(self) -> str:
+        m = re.search(r'<div class="page" id="pg-ota">([\s\S]*?)<div class="page" id="pg-', SRC)
+        self.assertIsNotNone(m, "缺少 pg-ota 页")
+        return m.group(1)
+
+    def test_ota_page_keeps_core_label(self):
+        self.assert_present("OTA 升级")
+
+    def test_ota_card_uses_cockpit_baseline(self):
+        page = self._ota_page()
+        self.assertIn("ck-head", page, "OTA 升级页缺少 ck-head")
+        self.assertIn("cockpit-card", page, "OTA 升级页缺少 cockpit-card")
+        self.assertIn("◉", page, "OTA 升级页 ck-head 缺少 ◉ 图标")
+
+    def test_ota_head_has_live_version_chip(self):
+        self.assert_id_present("st-ota-pill")
+        self.assert_present("setText('st-ota-pill'")
+
+    def test_ota_page_drops_legacy_page_title(self):
+        page = self._ota_page()
+        self.assertNotIn('<div class="page-title">OTA 升级</div>', page,
+                         "page-title 应已换皮为 ck-head")
+
+    def test_ota_ids_preserved(self):
+        # 功能零增减：固件信息 + Release 更新 + 上传全保留
+        for i in ["ota-ver", "ota-build", "ota-flash", "ota-sdk",
+                  "rel-current", "rel-latest", "rel-artifact", "rel-status",
+                  "rel-beta-tgl", "rel-auto-tgl", "rel-check-btn", "rel-install-btn", "rel-msg",
+                  "ota-drop", "ota-file", "ota-btn", "ota-reset-btn",
+                  "ota-progress", "ota-bar", "ota-pct"]:
+            self.assert_id_present(i)
+
+
 if __name__ == "__main__":
     unittest.main()
