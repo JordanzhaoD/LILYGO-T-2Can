@@ -2071,12 +2071,12 @@ async function poll(){
   setText('ov-can', d.can ? 'CAN1 Online' : 'CAN1 Offline');
   // AP 激活状态（问题2：替换 CAN2，与 ap-core-state-pill 同源字段 d.apInjectionState）
   var apState = d.apInjectionState || 'blocked';
-  var apActive = (apState === 'injecting');
+  var apActive = (apState === 'injecting' || apState === 'settling');
   setText('ov-ap', apActive ? '激活' : '等待');
   var apMetric = $('ov-ap-metric');
   if (apMetric) apMetric.style.borderColor = apActive ? 'rgba(52,211,153,.45)' : '';
   var apHint = $('ov-ap-hint');
-  if (apHint) apHint.textContent = apActive ? ('Gate ' + (d.apDelayMs || 2000) + 'ms · 已就绪') : '门控未触发';
+  if (apHint) apHint.textContent = (apState==='settling') ? ('Gate ' + (d.apDelayMs || 2000) + 'ms · 已就绪') : (apState==='injecting' ? '正在注入' : '门控未触发');
   setText('ov-up',fmtUp(uptime));
   var mCan=$('m-can');
   if(mCan){mCan.className=(mCan.classList&&mCan.classList.contains('val')?'val ':'stat-val ')+(d.can?'v-ok':'v-err');mCan.textContent=d.can?'Online':'Offline';}
