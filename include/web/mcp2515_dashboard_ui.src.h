@@ -406,6 +406,34 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .mobile-remote-card .lbl { color: #64748b; font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
 .mobile-remote-card .val { margin-top: 7px; color: #0f172a; font-size: 21px; font-weight: 900; overflow-wrap: anywhere; }
 .mobile-risk-note, .mobile-alert-card { margin-top: 12px; border-radius: 22px; padding: 14px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 13px; line-height: 1.45; }
+/* === AP 注入安全卡（驾驶舱风格，仅显示层，服务端强制不变） === */
+.cockpit-card { background: radial-gradient(120% 60% at 50% 0%, rgba(56,189,248,.08), transparent 60%), linear-gradient(160deg,#0f172a,#0b1220); border:1px solid var(--ds-card-stroke); }
+.ck-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+.ck-head h3 { margin:0; font-size:17px; color:var(--tx1); display:flex; align-items:center; gap:9px; }
+.ck-chip { font-size:10.5px; padding:4px 11px; border-radius:999px; background:rgba(148,163,184,.15); color:var(--tx2); border:1px solid var(--ds-card-stroke); }
+.ck-chip.ok { background:rgba(52,211,153,.14); color:#6ee7b7; border-color:rgba(52,211,153,.3); }
+.state-panel { background:rgba(255,255,255,.04); border:1px solid var(--ds-card-stroke); border-radius:13px; padding:15px; text-align:center; margin-bottom:14px; }
+.state-panel.active { border-color:rgba(52,211,153,.4); background:rgba(52,211,153,.06); }
+.sp-label { font-size:10px; color:var(--cockpit-muted); letter-spacing:.06em; }
+.sp-val { font-size:24px; font-weight:700; color:var(--tx3); margin:6px 0; }
+.state-panel.active .sp-val { color:#34d399; }
+.sp-desc { font-size:10.5px; color:var(--cockpit-dim); }
+.gate-bar { height:5px; background:rgba(52,211,153,.15); border-radius:999px; margin-top:9px; overflow:hidden; }
+.gate-bar i { display:block; height:100%; width:0; background:linear-gradient(90deg,#34d399,#10b981); border-radius:999px; transition:width .2s; }
+.src-row { display:flex; align-items:center; justify-content:space-between; background:rgba(0,0,0,.2); border:1px solid var(--ds-card-stroke); border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:12px; }
+.src-row b { color:var(--tx1); }
+.ctl-section { font-size:11px; color:var(--ds-cyan); letter-spacing:.06em; margin:6px 0 10px; }
+.ctl-row { display:flex; align-items:center; justify-content:space-between; background:rgba(255,255,255,.03); border:1px solid var(--ds-card-stroke); border-radius:11px; padding:11px 15px; margin-bottom:9px; }
+.ctl-row .cn { font-size:13px; color:var(--tx1); }
+.ctl-row .cd { font-size:10.5px; color:var(--cockpit-dim); margin-top:2px; }
+.safety-strip { margin-top:14px; background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.25); border-radius:10px; padding:11px 15px; font-size:11.5px; color:#fcd34d; line-height:1.6; }
+/* === .tgl 开关（AP 门控/自动恢复，仅显示皮，input id/checked 不变） === */
+.tgl { position:relative; display:inline-block; width:40px; height:22px; }
+.tgl input { opacity:0; width:100%; height:100%; position:absolute; margin:0; cursor:pointer; }
+.tgl-track { position:absolute; inset:0; background:rgba(148,163,184,.3); border-radius:999px; transition:.2s; }
+.tgl input:checked + .tgl-track { background:linear-gradient(90deg,#0ea5e9,#6366f1); }
+.tgl-track::after { content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#fff; transition:.2s; }
+.tgl input:checked + .tgl-track::after { transform:translateX(18px); }
 .diag-shell { display: grid; grid-template-columns: 260px minmax(0,1fr); gap: 14px; }
 .diag-console { align-items: start; }
 .diag-kpi-rail { display: grid; gap: 10px; }
@@ -745,15 +773,23 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           </div>
         </div>
 
-        <div class="card" id="ap-core-card">
-          <div class="card-h"><span>AP 注入安全</span><small id="ap-core-state-pill">等待 AP</small></div>
-          <div class="grid c4">
-            <label class="toggle-row"><span>AP 门控</span><input id="ap-core-gate-tgl" type="checkbox" onchange="saveApGateControls()"></label>
-            <label class="field"><span>延迟注入</span><select id="ap-delay-select" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label>
-            <label class="toggle-row"><span>AP-AUTO-RESTORE</span><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"></label>
-            <div class="metric"><span>注入来源</span><b id="injection-source">Disabled</b></div>
+        <div class="card cockpit-card" id="ap-core-card">
+          <div class="ck-head"><h3><span>🛡</span>AP 注入安全</h3><span class="ck-chip" id="ap-core-state-pill">等待 AP</span></div>
+          <div class="state-panel" id="ap-state-panel">
+            <div class="sp-label">AP 注入状态</div>
+            <div class="sp-val" id="ap-core-state-big">等待</div>
+            <div class="sp-desc" id="ap-core-state-detail">门控未触发</div>
+            <div class="gate-bar" id="ap-gate-bar"><i id="ap-gate-fill"></i></div>
           </div>
-          <div class="diag-line" id="ap-core-state-detail">等待 AP</div>
+          <div class="src-row"><span>注入来源</span><b id="injection-source">Disabled</b></div>
+          <div class="ctl-section">注入门控（服务端强制）</div>
+          <div class="ctl-row"><div><div class="cn">AP 门控</div><div class="cd">要求 Parked / AP / Summon 后才注入</div></div>
+            <label class="tgl"><input id="ap-core-gate-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
+          <div class="ctl-row"><div><div class="cn">延迟注入</div><div class="cd">AP 激活后等待再注入（推荐 2000ms）</div></div>
+            <label class="field"><select id="ap-delay-select" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label></div>
+          <div class="ctl-row"><div><div class="cn">AP 自动恢复</div><div class="cd">重启后恢复上次 AP 配置</div></div>
+            <label class="tgl"><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
+          <div class="safety-strip">⚠️ <b>Fail-closed（不变）：</b>未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。</div>
         </div>
           </div>
         </div>
@@ -2524,6 +2560,14 @@ function renderApInjectionState(d){
   var state=d.apInjectionState||'blocked';
   var label=state==='waiting_ap'?'等待 AP':state==='settling'?'稳定计时中':state==='injecting'?'正在注入':'已阻断';
   setText('ap-core-state-pill',label);
+  // 驾驶舱状态主区 + Gate 进度条（仅显示层，不读新后端字段）
+  var apActive = (state==='injecting'||state==='settling');
+  var apBig = document.getElementById('ap-core-state-big');
+  var apPanel = document.getElementById('ap-state-panel');
+  var apFill = document.getElementById('ap-gate-fill');
+  if (apBig) apBig.textContent = apActive ? '激活' : '等待';
+  if (apPanel) apPanel.classList.toggle('active', apActive);
+  if (apFill) apFill.style.width = (apActive ? '100%' : '0%');
   var stable=gate.apStableMs||0, req=gate.requiredStableMs||d.apDelayMs||2000;
   var reason=gate.lastBlockedBy||gate.gateReason||'';
   setText('ap-core-state-detail',label+' · AP '+stable+'/'+req+' ms'+(reason?' · '+reason:''));

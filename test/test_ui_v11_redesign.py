@@ -51,5 +51,28 @@ class Can2ToApTests(UiV11RedesignTests):
         self.assert_present("setText('ov-ap'")
 
 
+class ApInjectionRedesignTests(UiV11RedesignTests):
+    def test_ap_card_cockpit_structure(self):
+        self.assert_present("🛡")                    # 卡头图标
+        self.assert_present("AP 注入安全")
+        self.assert_id_present("ap-state-panel")     # 状态主区
+        self.assert_id_present("ap-gate-bar")        # Gate 进度条
+
+    def test_controls_chinese(self):
+        self.assert_present("AP 门控")
+        self.assert_present("延迟注入")
+        self.assert_present("AP 自动恢复")
+
+    def test_failclosed_note_present(self):
+        self.assert_present("Fail-closed")           # 安全条
+
+    def test_original_ids_preserved(self):
+        # 硬要求：原 id 全保留（review 会查）
+        for i in ["ap-core-card", "ap-core-state-pill", "ap-core-gate-tgl",
+                  "ap-delay-select", "ap-auto-restore-tgl", "injection-source",
+                  "ap-core-state-detail"]:
+            self.assert_id_present(i)
+
+
 if __name__ == "__main__":
     unittest.main()
