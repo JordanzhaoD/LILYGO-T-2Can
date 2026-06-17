@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+- Added EPAS-faithful unified steering nag suppression (experimental, **default OFF**). Echoes CAN 0x370 (EPAS3P_sysStatus, ~100 Hz) with counter+1 and a mean-reverting ~0 Nm torque so the car infers hands-on rather than reading a forced flag. One 0x370 path covers legacy/HW3/HW4; the per-generation DAS hands-on gate (0x399 legacy/HW3, 0x39B Highland/HW3/HW4) only decides WHEN to inject. Enable via `/defense_config?epas_nag=1`; state reflected at `/status.epasNag`; persisted to NVS key `def_epnag`. The default-on `bit19` nag baseline is preserved — this engine takes over only when `epasNag` is enabled (D7).
+  - ⚠️ **Head real-car validation item:** the counter+1 echo must outrun the genuine frame — on the bench first confirm the board can stably receive/transmit `0x370` and that the echo lands before the real frame.
+  - **First vehicle connection:** keep `epasNag` OFF; confirm `/status` is healthy and the board receives `0x370` before manually enabling the faithful path.
+  - Known limitation: HW4 Juniper (Bus6) is partially supported.
 - Added `waveshare_single_can_standalone` profile for Waveshare ESP32-S3-RS485-CAN single-CAN deployments.
 - Added Dashboard capabilities for single-CAN UI/API pruning: CAN2, Bus2, Service Mode, Stalk/highbeam, and lighting-stunt surfaces are hidden or unregistered in standalone builds (controlled via the `DASH_SINGLE_CAN_STANDALONE` build flag).
 - Added AP Injection Gate safety parity with upstream `ev-open-can-tools v3.0.2-beta.3`: Legacy `0x3EE mux0` requires AP active for 2 seconds when the gate is enabled, and live unknown gear fails closed.
