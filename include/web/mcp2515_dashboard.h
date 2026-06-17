@@ -1388,6 +1388,7 @@ static void dashSavePrefs()
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
     prefs.putBool("def_apeap", dashApEapCompatible);
+    prefs.putBool("def_epnag", dashEpasNagEnabled);
     prefs.putUChar("lfsd_pol", dashLegacyFsdPolicy == LegacyFsdPolicy::TeslaParity ? 2 : (dashLegacyFsdPolicy == LegacyFsdPolicy::Experimental ? 1 : 0));
     prefs.putBool("lfsd_m1", dashLegacyFsdMux1Enable);
     prefs.putBool("lfsd_prof", dashLegacyFsdProfileWriteEnable);
@@ -1590,6 +1591,7 @@ static void dashLoadPrefs()
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
     dashApEapCompatible = prefs.getBool("def_apeap", true);
+    dashEpasNagEnabled = prefs.getBool("def_epnag", false);
     {
         uint8_t lfsdPolicy = prefs.getUChar("lfsd_pol", 0);
         dashLegacyFsdPolicy = lfsdPolicy == 2 ? LegacyFsdPolicy::TeslaParity : (lfsdPolicy == 1 ? LegacyFsdPolicy::Experimental : LegacyFsdPolicy::Stable);
@@ -2503,6 +2505,8 @@ static void handleStatus()
     j += dashDndVolume ? "true" : "false";
     j += ",\"dndSpeed\":";
     j += dashDndSpeed ? "true" : "false";
+    j += ",\"epasNag\":";
+    j += dashEpasNagEnabled ? "true" : "false";
     appendCapabilitiesJson(j, hwMode, effectiveHw);
     j += "}";
     server.send(200, "application/json", j);
@@ -3044,6 +3048,8 @@ static String dashDefenseConfigJson()
     j += dashDndSpeed ? "true" : "false";
     j += ",\"ap_eap_compatible\":";
     j += dashApEapCompatible ? "true" : "false";
+    j += ",\"epas_nag\":";
+    j += dashEpasNagEnabled ? "true" : "false";
     j += ",\"slew_rate_enabled\":";
     j += hw3OffsetSlew ? "true" : "false";
     j += ",\"ban_shield\":";
@@ -3057,7 +3063,7 @@ static void handleDefenseConfig()
     if (server.hasArg("enabled") || server.hasArg("bionic_steering") ||
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
-        server.hasArg("dnd_speed"))
+        server.hasArg("dnd_speed") || server.hasArg("epas_nag"))
     {
         bool prevDefenseEnabled = dashDefenseEnabled;
         bool prevDndVolume = dashDndVolume;
@@ -3099,6 +3105,8 @@ static void handleDefenseConfig()
             dashWheelDndCtrl.startSpeed();
         if (server.hasArg("ap_eap_compatible"))
             dashApEapCompatible = dashArgTruthy(server.arg("ap_eap_compatible"));
+        if (server.hasArg("epas_nag"))
+            dashEpasNagEnabled = dashArgTruthy(server.arg("epas_nag"));
         hw3OffsetSlew = dashDefenseEnabled;
         nvsBanShieldEnable = dashDefenseEnabled;
         if (dashHandler)
