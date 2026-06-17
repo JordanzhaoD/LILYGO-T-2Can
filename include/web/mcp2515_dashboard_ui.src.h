@@ -1317,6 +1317,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <label class="tgl"><input type="checkbox" id="def-apeap-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">EPAS 方向盘 nag <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">回声 0x370 推断手在盘(替代强制位,默认关)</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-epnag-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
 </div>
 
 <!-- Slew Config -->
@@ -1836,6 +1843,8 @@ function experimentSummary(){
   if(light&&light.checked)flags.push('灯光爆闪');
   var apeap=$('def-apeap-tgl');
   if(apeap&&apeap.checked)flags.push('AP/EAP');
+  var epnag=$('def-epnag-tgl');
+  if(epnag&&epnag.checked)flags.push('EPAS nag');
   var bionic=$('def-bionic-tgl');
   if(bionic&&bionic.checked)flags.push('FSD增强');
   return flags.length?('实验: '+flags.join('/')):'实验项需实车验证';
@@ -2379,9 +2388,10 @@ async function loadDefenseConfig(){
   var nd=$('def-speed-nd-tgl');if(nd)nd.checked=!!d.speed_no_disturb;
   var dndSpd=$('def-dnd-spd-tgl');if(dndSpd)dndSpd.checked=!!d.dnd_speed;
   var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
+  var epnag=$('def-epnag-tgl');if(epnag)epnag.checked=!!d.epas_nag;
   setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
   var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
-  var exp=(d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
+  var exp=(d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed||d.epas_nag);
   setStatusTriplet('defense',d.enabled?'防御 ON':'防御 OFF',
     'NVS '+(d.enabled?'ON':'OFF')+(exp?' / 含实验项':''),
     exp?'实验项需实车验证':'等待 /status 运行确认',
@@ -2681,6 +2691,7 @@ async function saveDefenseConfig(){
   var nd=$('def-speed-nd-tgl');
   var dndSpd=$('def-dnd-spd-tgl');
   var apeap=$('def-apeap-tgl');
+  var epnag=$('def-epnag-tgl');
   var data={
     enabled:tgl&&tgl.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
@@ -2688,7 +2699,8 @@ async function saveDefenseConfig(){
     dnd_volume:dndVol&&dndVol.checked?'1':'0',
     speed_no_disturb:nd&&nd.checked?'1':'0',
     dnd_speed:dndSpd&&dndSpd.checked?'1':'0',
-    ap_eap_compatible:apeap&&apeap.checked?'1':'0'
+    ap_eap_compatible:apeap&&apeap.checked?'1':'0',
+    epas_nag:epnag&&epnag.checked?'1':'0'
   };
   try{await postForm('/defense_config',data);}
   catch(e){loadDefenseConfig()}

@@ -312,10 +312,10 @@ class DefensePageCockpitTests(UiV11RedesignTests):
                          "page-title 应已换皮为 ck-head")
 
     def test_defense_toggles_and_ids_preserved(self):
-        # 功能零增减：7 开关 + 保护参数 + 状态点 + 三态全保留
+        # 8 开关 + 保护参数 + 状态点 + 三态全保留
         for i in ["hw3-slew-tgl", "def-bionic-tgl", "def-sound-tgl",
                   "def-dnd-vol-tgl", "def-speed-nd-tgl", "def-dnd-spd-tgl",
-                  "def-apeap-tgl", "def-bionic-warn",
+                  "def-apeap-tgl", "def-epnag-tgl", "def-bionic-warn",
                   "def-rate", "def-min", "def-cnt", "def-cur",
                   "def-dot", "def-status",
                   "st-defense-ui", "st-defense-nvs", "st-defense-run"]:

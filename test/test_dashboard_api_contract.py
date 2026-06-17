@@ -1381,8 +1381,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("bionicDisabled()", body)
         self.assertIn("dashBionicDisabled", body)
 
-    def test_phase3_defense_ui_has_7_toggles(self) -> None:
-        """Defense page must have all 7 toggle switches in pg-defense section."""
+    def test_phase3_defense_ui_has_8_toggles(self) -> None:
+        """Defense page must have all 8 toggle switches in pg-defense section."""
         defense_page = re.search(r'id="pg-defense".*?id="pg-ota"', self.ui, re.S)
         self.assertIsNotNone(defense_page)
         body = defense_page.group(0)
@@ -1394,10 +1394,17 @@ class DashboardApiContractTests(unittest.TestCase):
             'id="def-speed-nd-tgl"',
             'id="def-dnd-spd-tgl"',
             'id="def-apeap-tgl"',
+            'id="def-epnag-tgl"',
         ]
         for tid in toggles:
             with self.subTest(toggle=tid):
                 self.assertIn(tid, body)
+
+    def test_epas_nag_defense_toggle_is_wired(self) -> None:
+        """EPAS nag toggle must load/save the epas_nag field, not just render."""
+        self.assertIn('id="def-epnag-tgl"', self.ui)
+        self.assertIn("epnag.checked=!!d.epas_nag", self.ui)              # loadDefenseConfig reads /defense_config.epas_nag
+        self.assertIn("epas_nag:epnag&&epnag.checked?'1':'0'", self.ui)   # saveDefenseConfig POSTs epas_nag
 
     def test_phase3_defense_ui_bionic_warning_element(self) -> None:
         """UI must have bionic-disabled warning element."""
