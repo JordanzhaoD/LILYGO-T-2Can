@@ -30,6 +30,12 @@ struct DashEpasNagDiag
     uint8_t lastHandsOn = 0;
     const char *lastGate = "idle";
     DashTxEvidence tx{};
+    // Read-only observability (never affects behaviour). Snapshot of the last
+    // real 0x370 frame seen and the torque our echo used — the side-by-side
+    // evidence for whether the echo can ever look like "hands on".
+    uint16_t lastRealTorque = 0; // 0x370 bytes[2:3] raw ((b2&0x0F)<<8 | b3)
+    uint8_t lastRealCnt = 0;     // 0x370 byte6 & 0x0F
+    uint16_t lastEchoTorque = 0; // torque the last successful echo used
 };
 
 struct DashEpasNagEngine
@@ -151,6 +157,10 @@ struct DashEpasNagEngine
             return false;
         }
 
+        // Snapshot the real 0x370 we just saw (observability only).
+        diag.lastRealTorque = static_cast<uint16_t>(((inData[2] & 0x0Fu) << 8) | inData[3]);
+        diag.lastRealCnt = static_cast<uint8_t>(inData[6] & 0x0Fu);
+
         const uint8_t handsOn = static_cast<uint8_t>((inData[4] >> 6) & 0x03u);
         diag.lastHandsOn = handsOn;
 
@@ -162,6 +172,7 @@ struct DashEpasNagEngine
         }
 
         const uint16_t torq = nextTorque();
+        diag.lastEchoTorque = torq;
         outData[0] = inData[0];
         outData[1] = inData[1];
         outData[2] = static_cast<uint8_t>((inData[2] & 0xF0u) | ((torq >> 8) & 0x0Fu));

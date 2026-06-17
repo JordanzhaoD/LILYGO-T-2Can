@@ -1,5 +1,6 @@
 #include <unity.h>
 #include "dash_epas_nag.h"
+#include "dash_epas_nag_trace.h"
 
 // Build a 0x370 EPAS frame (8 bytes). handsOnLevel -> data[4] bits[7:6]; counter -> data[6] low nibble.
 static void buildEpasFrame(uint8_t data[8], uint8_t handsOnLevel, uint8_t counter)
@@ -248,6 +249,86 @@ void test_reset_clears_state()
     TEST_ASSERT_EQUAL_UINT32(0, e.apDisengageMs);
 }
 
+// ── diag snapshots (observability) ───────────────────────────────────
+void test_diag_records_real_torque_and_counter()
+{
+    DashEpasNagEngine e = makeArmedEngine();
+    uint8_t in[8] = {0};
+    in[2] = 0x0A; // torque high nibble
+    in[3] = 0x34; // torque low byte -> raw 0xA34
+    in[4] = 0x00; // handsOnLevel 0
+    in[6] = 0x07; // counter 7
+    uint8_t out[8];
+    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
+    TEST_ASSERT_EQUAL_UINT16(0x0A34, e.diag.lastRealTorque);
+    TEST_ASSERT_EQUAL_UINT8(7, e.diag.lastRealCnt);
+}
+void test_diag_records_echo_torque()
+{
+    DashEpasNagEngine e = makeArmedEngine();
+    uint8_t in[8];
+    buildEpasFrame(in, 0, 1);
+    uint8_t out[8];
+    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
+    uint16_t used = e.diag.lastEchoTorque;
+    TEST_ASSERT_TRUE(used >= DashEpasNagEngine::kTorqueMin);
+    TEST_ASSERT_TRUE(used <= DashEpasNagEngine::kTorqueMax);
+}
+
+// ── trace ring ───────────────────────────────────────────────────────
+void test_trace_ring_push_and_read()
+{
+    EpasNagTraceRing r;
+    EpasNagTraceEntry e{};
+    e.ts_ms = 100;
+    e.decision = 1;
+    e.realTorque = 2050;
+    r.push(e);
+    e.ts_ms = 200;
+    e.realTorque = 2060;
+    r.push(e);
+    TEST_ASSERT_EQUAL_UINT32(2, r.currentHead());
+
+    EpasNagTraceEntry out[4] = {};
+    int n = r.readSince(0, out, 4);
+    TEST_ASSERT_EQUAL_INT(2, n);
+    TEST_ASSERT_EQUAL_UINT32(100, out[0].ts_ms);
+    TEST_ASSERT_EQUAL_UINT16(2050, out[0].realTorque);
+    TEST_ASSERT_EQUAL_UINT32(200, out[1].ts_ms);
+}
+void test_trace_ring_wrap_overwrites_oldest()
+{
+    EpasNagTraceRing r;
+    EpasNagTraceEntry e{};
+    for (uint32_t i = 0; i < EpasNagTraceRing::kCap + 5; i++)
+    {
+        e.ts_ms = i;
+        r.push(e);
+    }
+    // Head advanced past capacity; oldest retained == head - kCap.
+    uint32_t h = r.currentHead();
+    TEST_ASSERT_EQUAL_UINT32(EpasNagTraceRing::kCap + 5, h);
+    EpasNagTraceEntry out[2] = {};
+    int n = r.readSince(h - 2, out, 2);
+    TEST_ASSERT_EQUAL_INT(2, n);
+    TEST_ASSERT_EQUAL_UINT32(h - 2, out[0].ts_ms);
+    TEST_ASSERT_EQUAL_UINT32(h - 1, out[1].ts_ms);
+}
+void test_trace_ring_read_since_clamps_to_oldest()
+{
+    EpasNagTraceRing r;
+    EpasNagTraceEntry e{};
+    for (uint32_t i = 0; i < 10; i++)
+    {
+        e.ts_ms = i;
+        r.push(e);
+    }
+    // Request from a `since` older than what's still held -> clamped to oldest.
+    EpasNagTraceEntry out[16] = {};
+    int n = r.readSince(0, out, 16);
+    TEST_ASSERT_EQUAL_INT(10, n);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -275,5 +356,10 @@ int main()
     RUN_TEST(test_echo_torque_in_valid_range_data23);
     RUN_TEST(test_echo_count_increments);
     RUN_TEST(test_reset_clears_state);
+    RUN_TEST(test_diag_records_real_torque_and_counter);
+    RUN_TEST(test_diag_records_echo_torque);
+    RUN_TEST(test_trace_ring_push_and_read);
+    RUN_TEST(test_trace_ring_wrap_overwrites_oldest);
+    RUN_TEST(test_trace_ring_read_since_clamps_to_oldest);
     return UNITY_END();
 }

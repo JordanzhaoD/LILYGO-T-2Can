@@ -1260,6 +1260,11 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-defense-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-defense-run">待检测</div></div>
 </div>
+<div class="status-triplet" id="def-epas-nag-row" style="display:none">
+  <div class="status-chip"><div class="lbl">EPAS Nag 回声/抑制</div><div class="val" id="def-epas-echo">--</div></div>
+  <div class="status-chip"><div class="lbl">lastGate / TX ok</div><div class="val" id="def-epas-tx">--</div></div>
+  <div class="status-chip"><div class="lbl">真/回声 扭矩(raw)</div><div class="val" id="def-epas-tq">--</div></div>
+</div>
 <!-- Master switch + 5 defense toggles -->
 <div class="card cockpit-card">
   <div class="card-title">FSD 防护状态</div>
@@ -2191,6 +2196,16 @@ async function poll(){
   setStatusTriplet('hw',(d.hwName||hwLabel(d.hw)),'mode_hw: '+(d.hwName||hwLabel(d.hw)),(d.can?'CAN运行 / ':'CAN离线 / ')+(d.hwName||hwLabel(d.hw)),d.can?'ok':'warn');
   setStatusTriplet('speed','偏移 '+(d.soff!==undefined?d.soff:'--'),driveLabel(d.sp,d.spAuto),d.fusedSpeedLimitKph?('Fused '+d.fusedSpeedLimitKph+' kph'):'CAN未给出速度',d.can?'ok':'warn');
   setStatusTriplet('defense',d.hw3OffsetSlew?'防御 ON':'防御 OFF','slew '+(d.hw3OffsetSlew?'ON':'OFF'),'触发 '+(d.hw3SlewCount||0)+' / offset '+(d.hw3OffsetLast!==undefined?d.hw3OffsetLast:'--'),d.hw3OffsetSlew?'ok':'warn');
+  var ng=d.epasNagDiag;
+  var ngRow=$('def-epas-nag-row');
+  if(ngRow)ngRow.style.display=(ng&&ng.enabled)?'grid':'none';
+  if(ng&&ng.enabled){
+    setText('def-epas-echo',(ng.echo||0)+'/'+(ng.suppress||0));
+    setText('def-epas-tx',(ng.lastGate||'idle')+' / '+(ng.txOk||0));
+    var rq=ng.real370&&ng.real370.torque!==undefined?ng.real370.torque:'--';
+    var eq=ng.echo370&&ng.echo370.torque!==undefined?ng.echo370.torque:'--';
+    setText('def-epas-tq',rq+' / '+eq);
+  }
 
   // FSD page toggle
   updateFsdToggle(d.ci);
