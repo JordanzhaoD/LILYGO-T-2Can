@@ -284,10 +284,11 @@ struct LegacyHandler : public CarManagerBase
     {
         // 1080 added for UI_driverAssistAnonDebugParams visionSpeedSlider override.
         // 920 added for auto hardware detection (GTW_carConfig).
-        static constexpr uint32_t ids[] = {69, 280, 390, 760, 920, 921, 1006, 1080, CAN_ID_OTA_STATUS};
+        // 880 (0x370 EPAS3P_sysStatus) added for EPAS-faithful nag engine.
+        static constexpr uint32_t ids[] = {69, 280, 390, 760, 880, 920, 921, 1006, 1080, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 9; }
+    uint8_t filterIdCount() const override { return 10; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -495,10 +496,11 @@ struct HW3Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {280, 390, 920, 921, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
+        // 880 (0x370 EPAS3P_sysStatus) + 923 (0x39B DAS_status Highland/HW4) added for EPAS-faithful nag engine.
+        static constexpr uint32_t ids[] = {280, 390, 880, 920, 921, 923, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 8; }
+    uint8_t filterIdCount() const override { return 10; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -830,10 +832,11 @@ struct HW4Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {280, 390, 920, 921, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
+        // 880 (0x370 EPAS3P_sysStatus) + 923 (0x39B DAS_status Highland/HW4) added for EPAS-faithful nag engine.
+        static constexpr uint32_t ids[] = {280, 390, 880, 920, 921, 923, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 8; }
+    uint8_t filterIdCount() const override { return 10; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
