@@ -52,7 +52,8 @@ struct DashEpasNagEngine
     bool defenseEnabled{false}; // mirrors dashDefenseEnabled (G1)
     uint8_t dasHandsOnState{kDasUnseen};
     bool prevApActive{false};
-    uint32_t apDisengageMs{0};  // 0 = no recent disengage
+    bool apBlackoutActive{false};
+    uint32_t apDisengageMs{0};
     uint16_t torqueWalk{kTorqueCenter};
     uint32_t prng{0xDEADBEEFu};
     DashEpasNagDiag diag{};
@@ -117,7 +118,10 @@ struct DashEpasNagEngine
     void noteApState(bool active, uint32_t nowMs)
     {
         if (prevApActive && !active)
-            apDisengageMs = nowMs;   // disengage edge
+        {
+            apDisengageMs = nowMs;
+            apBlackoutActive = true;
+        }
         prevApActive = active;
     }
 
@@ -131,15 +135,22 @@ struct DashEpasNagEngine
         const uint8_t das = dasHandsOnState;
         if (das == 0 || das == 8)                                // G5: NOT_REQD / SUSPENDED
             return false;                                        //     (0xFF unseen -> passes -> D5 inject)
-        if (apDisengageMs != 0 && (nowMs - apDisengageMs) < kBlackoutMs) // G6
+        if (apBlackoutActive && (nowMs - apDisengageMs) < kBlackoutMs) // G6
             return false;
         return true;
     }
 
     // ── echo builder ─────────────────────────────────────────
-    // On a 0x370 frame: if gate open, write faithful echo to outData[8], return true.
-    bool tryBuildEcho(const uint8_t inData[8], uint32_t nowMs, uint8_t outData[8])
+    // On a valid 8-byte 0x370 frame: if gate open, write faithful echo to outData[8], return true.
+    bool tryBuildEcho(const uint8_t inData[8], uint8_t dlc, uint32_t nowMs, uint8_t outData[8])
     {
+        if (dlc != 8)
+        {
+            diag.suppressCount++;
+            diag.lastGate = "invalid_dlc";
+            return false;
+        }
+
         const uint8_t handsOn = static_cast<uint8_t>((inData[4] >> 6) & 0x03u);
         diag.lastHandsOn = handsOn;
 
@@ -174,6 +185,7 @@ struct DashEpasNagEngine
         dasHandsOnState = kDasUnseen;
         diag.dasHandsOnState = kDasUnseen;
         prevApActive = false;
+        apBlackoutActive = false;
         apDisengageMs = 0;
     }
 };

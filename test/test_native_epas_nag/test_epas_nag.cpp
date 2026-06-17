@@ -21,6 +21,8 @@ static DashEpasNagEngine makeArmedEngine()
 void test_nag_constants()
 {
     TEST_ASSERT_EQUAL_HEX32(880, DashEpasNagEngine::kCanId);
+    TEST_ASSERT_EQUAL_HEX32(921, DashEpasNagEngine::kDasIdLegacy);
+    TEST_ASSERT_EQUAL_HEX32(923, DashEpasNagEngine::kDasIdHighland);
     TEST_ASSERT_EQUAL_UINT16(2050, DashEpasNagEngine::kTorqueCenter);
     TEST_ASSERT_EQUAL_UINT16(1780, DashEpasNagEngine::kTorqueMin);
     TEST_ASSERT_EQUAL_UINT16(2500, DashEpasNagEngine::kTorqueMax);
@@ -73,6 +75,14 @@ void test_torque_reverts_toward_center()
         sum += e.nextTorque();
     uint32_t avg = sum / N;
     TEST_ASSERT_TRUE(avg >= 1950 && avg <= 2150);
+}
+
+void test_torque_sequence_is_deterministic()
+{
+    DashEpasNagEngine a;
+    DashEpasNagEngine b;
+    for (int n = 0; n < 64; n++)
+        TEST_ASSERT_EQUAL_UINT16(a.nextTorque(), b.nextTorque());
 }
 
 // ── gate G1-G6 truth table ───────────────────────────────────────────
@@ -137,7 +147,26 @@ void test_gate_blackout_blocks_then_clears()
     TEST_ASSERT_TRUE(e.shouldInject(0, 2000 + 1500 + 1));
 }
 
+void test_gate_blackout_handles_zero_timestamp_edge()
+{
+    DashEpasNagEngine e = makeArmedEngine();
+    e.noteApState(true, 0);
+    e.noteApState(false, 0);
+    TEST_ASSERT_FALSE(e.shouldInject(0, 100));
+    TEST_ASSERT_TRUE(e.shouldInject(0, DashEpasNagEngine::kBlackoutMs + 1));
+}
+
 // ── echo builder ─────────────────────────────────────────────────────
+void test_echo_rejects_invalid_dlc()
+{
+    DashEpasNagEngine e = makeArmedEngine();
+    uint8_t in[8];
+    buildEpasFrame(in, 0, 5);
+    uint8_t out[8] = {0};
+    TEST_ASSERT_FALSE(e.tryBuildEcho(in, 7, 1000, out));
+    TEST_ASSERT_EQUAL_UINT32(0, e.diag.echoCount);
+}
+
 void test_echo_gated_returns_false()
 {
     DashEpasNagEngine e;
@@ -145,16 +174,17 @@ void test_echo_gated_returns_false()
     uint8_t in[8];
     buildEpasFrame(in, 0, 5);
     uint8_t out[8] = {0};
-    TEST_ASSERT_FALSE(e.tryBuildEcho(in, 1000, out));
+    TEST_ASSERT_FALSE(e.tryBuildEcho(in, 8, 1000, out));
     TEST_ASSERT_EQUAL_UINT32(0, e.diag.echoCount);
 }
 void test_echo_faithful_preserves_handsonlevel()
 {
     DashEpasNagEngine e = makeArmedEngine();
     uint8_t in[8];
-    buildEpasFrame(in, 0, 5);
+    buildEpasFrame(in, 2, 5);
+    in[4] = 0xAB;
     uint8_t out[8];
-    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 1000, out));
+    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
     TEST_ASSERT_EQUAL_HEX8(in[4], out[4]);
 }
 void test_echo_counter_increments_and_wraps()
@@ -164,10 +194,11 @@ void test_echo_counter_increments_and_wraps()
     {
         uint8_t in[8];
         buildEpasFrame(in, 0, c);
+        in[6] = static_cast<uint8_t>(0xA0 | c);
         uint8_t out[8];
-        TEST_ASSERT_TRUE(e.tryBuildEcho(in, 1000 + c, out));
-        uint8_t expected = static_cast<uint8_t>((c + 1) & 0x0F);
-        TEST_ASSERT_EQUAL_HEX8(expected, out[6] & 0x0F);
+        TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000 + c, out));
+        uint8_t expected = static_cast<uint8_t>(0xA0 | ((c + 1) & 0x0F));
+        TEST_ASSERT_EQUAL_HEX8(expected, out[6]);
     }
 }
 void test_echo_checksum_correct()
@@ -176,7 +207,7 @@ void test_echo_checksum_correct()
     uint8_t in[8];
     buildEpasFrame(in, 0, 9);
     uint8_t out[8];
-    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 1000, out));
+    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
     uint16_t expected = 0x70u + 0x03u;
     for (int i = 0; i < 7; i++)
         expected += out[i];
@@ -188,7 +219,7 @@ void test_echo_torque_in_valid_range_data23()
     uint8_t in[8];
     buildEpasFrame(in, 0, 3);
     uint8_t out[8];
-    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 1000, out));
+    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
     uint16_t raw = static_cast<uint16_t>(((out[2] & 0x0F) << 8) | out[3]);
     TEST_ASSERT_TRUE(raw >= DashEpasNagEngine::kTorqueMin);
     TEST_ASSERT_TRUE(raw <= DashEpasNagEngine::kTorqueMax);
@@ -199,9 +230,9 @@ void test_echo_count_increments()
     uint8_t in[8];
     buildEpasFrame(in, 0, 1);
     uint8_t out[8];
-    e.tryBuildEcho(in, 1000, out);
-    e.tryBuildEcho(in, 1010, out);
-    e.tryBuildEcho(in, 1020, out);
+    e.tryBuildEcho(in, 8, 1000, out);
+    e.tryBuildEcho(in, 8, 1010, out);
+    e.tryBuildEcho(in, 8, 1020, out);
     TEST_ASSERT_EQUAL_UINT32(3, e.diag.echoCount);
 }
 void test_reset_clears_state()
@@ -210,7 +241,7 @@ void test_reset_clears_state()
     uint8_t in[8];
     buildEpasFrame(in, 0, 1);
     uint8_t out[8];
-    e.tryBuildEcho(in, 1000, out);
+    e.tryBuildEcho(in, 8, 1000, out);
     e.reset();
     TEST_ASSERT_EQUAL_UINT16(DashEpasNagEngine::kTorqueCenter, e.torqueWalk);
     TEST_ASSERT_EQUAL_UINT8(DashEpasNagEngine::kDasUnseen, e.dasHandsOnState);
@@ -225,6 +256,7 @@ int main()
     RUN_TEST(test_checksum_counter_additive);
     RUN_TEST(test_torque_stays_in_bounds);
     RUN_TEST(test_torque_reverts_toward_center);
+    RUN_TEST(test_torque_sequence_is_deterministic);
     RUN_TEST(test_gate_disabled_blocks);
     RUN_TEST(test_gate_canactive_blocks);
     RUN_TEST(test_gate_defense_blocks);
@@ -234,6 +266,8 @@ int main()
     RUN_TEST(test_gate_das_unseen_injects_d5);
     RUN_TEST(test_gate_das_escalating_injects);
     RUN_TEST(test_gate_blackout_blocks_then_clears);
+    RUN_TEST(test_gate_blackout_handles_zero_timestamp_edge);
+    RUN_TEST(test_echo_rejects_invalid_dlc);
     RUN_TEST(test_echo_gated_returns_false);
     RUN_TEST(test_echo_faithful_preserves_handsonlevel);
     RUN_TEST(test_echo_counter_increments_and_wraps);
