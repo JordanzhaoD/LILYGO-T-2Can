@@ -46,6 +46,7 @@
 #include "dash_power_mgmt.h"
 #include "dash_fog_light.h"
 #include "dash_wheel_dnd.h"
+#include "dash_epas_nag.h"
 #include "dash_tx_evidence.h"
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
@@ -194,6 +195,8 @@ static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行
 static bool dashDndSpeed = false;       // 速度滚轮DND（Phase 3实现执行逻辑）
 static bool dashBionicDisabled = false; // bionic auto-disabled after 3 failures
 static bool dashApEapCompatible = true;
+static bool dashEpasNagEnabled = false;   // EPAS-faithful nag (experimental, default off; D7)
+static DashEpasNagEngine dashEpasNagCtrl; // unified EPAS nag engine instance
 static LegacyFsdPolicy dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
 static bool dashLegacyFsdMux1Enable = false;
 static bool dashLegacyFsdProfileWriteEnable = false;
@@ -784,6 +787,43 @@ static void dashDrainLogRing()
     logRingDrainCursor = h;
 }
 
+// EPAS-faithful nag: observe DAS gate frames and echo 0x370 when the gate is open.
+// Hooked from mcpDashOnFrame (universal per-frame callback on the active bus).
+// Uses the global dashDriver to send — correct for the single-CAN Waveshare board
+// (0x370/0x399/0x39B all arrive on the main TWAI bus).
+static void dashEpasNagOnFrame(const CanFrame &f)
+{
+    if (!dashEpasNagEnabled)
+        return; // cheap early-out; engine also checks, but skip work when off
+    unsigned long now = millis();
+    dashEpasNagCtrl.noteRuntime(dashEpasNagEnabled, canActive, dashDefenseEnabled);
+    if (dashHandler)
+        dashEpasNagCtrl.noteApState((bool)dashHandler->APActive, now);
+
+    if (f.id == 921 || f.id == 923) // 0x399 / 0x39B DAS_status
+    {
+        if (f.dlc >= 6)
+            dashEpasNagCtrl.onDasGate(f.data);
+        return;
+    }
+    if (f.id == 880 && f.dlc >= 8) // 0x370 EPAS3P_sysStatus
+    {
+        uint8_t out[8];
+        if (dashEpasNagCtrl.tryBuildEcho(f.data, f.dlc, now, out))
+        {
+            CanFrame echo;
+            echo.id = 880;
+            echo.dlc = 8;
+            memcpy(echo.data, out, 8);
+            echo.bus = f.bus;
+            bool ok = dashDriver && dashDriver->send(echo);
+            dashEpasNagCtrl.diag.tx.recordAttempt(echo.id, echo.bus, echo.dlc, echo.data, now);
+            dashEpasNagCtrl.diag.tx.recordResult(ok);
+            dashRecordCanFrame(echo, ok ? 'T' : 'E');
+        }
+    }
+}
+
 // Public hooks
 static void mcpDashOnFrame(const CanFrame &f)
 {
@@ -802,6 +842,7 @@ static void mcpDashOnFrame(const CanFrame &f)
     if (f.id == 1016 && f.dlc > 5)
         followDist = (f.data[5] & 0xE0) >> 5;
     dashRecordApRestoreFrame(f, now);
+    dashEpasNagOnFrame(f);
     dashRecordCanFrame(f, 'R');
     // Phase 1: OTA guard 检测 0x318 帧
     dashOtaGuardProcessFrame(f);
@@ -1290,6 +1331,7 @@ static void dashApplyRuntimeState()
         dashHandler->bionicSteering = dashBionicSteering;
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->banShieldEnable = nvsBanShieldEnable;
+        dashHandler->epasNagActive = dashEpasNagEnabled && canActive && dashDefenseEnabled;
         dashHandler->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         dashHandler->overrideSpeedLimit = nvsOverrideSpeedLimit;
         dashHandler->legacyOffset = nvsLegacyOffset;
