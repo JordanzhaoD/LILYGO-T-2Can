@@ -541,7 +541,7 @@ void test_legacy_ignores_unrelated_can_id()
 
 void test_legacy_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(9, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(10, handler.filterIdCount());
 }
 
 void test_legacy_filter_ids_values()
@@ -551,11 +551,12 @@ void test_legacy_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(280, ids[1]);
     TEST_ASSERT_EQUAL_UINT32(390, ids[2]);
     TEST_ASSERT_EQUAL_UINT32(760, ids[3]);
-    TEST_ASSERT_EQUAL_UINT32(920, ids[4]);
-    TEST_ASSERT_EQUAL_UINT32(921, ids[5]);
-    TEST_ASSERT_EQUAL_UINT32(1006, ids[6]);
-    TEST_ASSERT_EQUAL_UINT32(1080, ids[7]);
-    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[8]);
+    TEST_ASSERT_EQUAL_UINT32(880, ids[4]);   // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
+    TEST_ASSERT_EQUAL_UINT32(920, ids[5]);
+    TEST_ASSERT_EQUAL_UINT32(921, ids[6]);
+    TEST_ASSERT_EQUAL_UINT32(1006, ids[7]);
+    TEST_ASSERT_EQUAL_UINT32(1080, ids[8]);
+    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[9]);
 }
 
 void test_legacy_health_no_source_when_mux0_stale()
