@@ -178,15 +178,18 @@ void test_echo_gated_returns_false()
     TEST_ASSERT_FALSE(e.tryBuildEcho(in, 8, 1000, out));
     TEST_ASSERT_EQUAL_UINT32(0, e.diag.echoCount);
 }
-void test_echo_faithful_preserves_handsonlevel()
+// B2 (real-car 2026-06-18): echoTorque=2230 already matched NagHandler yet nag
+// still fired — torque alone is insufficient. Force handsOnLevel active
+// (byte4 bit6=1), matching NagHandler byte4|=0x40. CSV showed handsOn=0 (hands
+// off) on every echoed frame; the car disbelieves "hands off + 1.80Nm torque".
+void test_echo_forces_handson_active()
 {
     DashEpasNagEngine e = makeArmedEngine();
     uint8_t in[8];
-    buildEpasFrame(in, 2, 5);
-    in[4] = 0xAB;
+    buildEpasFrame(in, 0, 5); // handsOnLevel=0 (hands off) — the nag-trigger case
     uint8_t out[8];
     TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
-    TEST_ASSERT_EQUAL_HEX8(in[4], out[4]);
+    TEST_ASSERT_EQUAL_HEX8(0x40, out[4] & 0x40); // bit6 forced set -> handsOn active
 }
 void test_echo_counter_increments_and_wraps()
 {
@@ -350,7 +353,7 @@ int main()
     RUN_TEST(test_gate_blackout_handles_zero_timestamp_edge);
     RUN_TEST(test_echo_rejects_invalid_dlc);
     RUN_TEST(test_echo_gated_returns_false);
-    RUN_TEST(test_echo_faithful_preserves_handsonlevel);
+    RUN_TEST(test_echo_forces_handson_active);
     RUN_TEST(test_echo_counter_increments_and_wraps);
     RUN_TEST(test_echo_checksum_correct);
     RUN_TEST(test_echo_torque_in_valid_range_data23);

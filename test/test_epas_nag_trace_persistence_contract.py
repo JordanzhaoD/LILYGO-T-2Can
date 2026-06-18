@@ -25,17 +25,18 @@ class PeriodicFlushContract(unittest.TestCase):
         self.assertIn("dashEpasNagLastFlushMs", body)
 
 
-class StopDeadlockContract(unittest.TestCase):
-    """Root cause A2 fix: the can-offline stop check must not live only
-    inside dashEpasNagOnFrame (it never fires once frames stop). The loop
-    task must stop the trace using the real bus-quiet signal (canOnline)."""
+class RecordingContinuityContract(unittest.TestCase):
+    """A3 fix (2026-06-18): the loop must NOT stop the trace on !canOnline.
+    The loop-side stop was too eager — a brief CAN glitch aborted recording at
+    8.3 s and missed the nag window (nag only fires once AP engages later).
+    The periodic 5 s flush already bounds power-off data loss; recording runs
+    until the onFrame stop (switch off / 3x tx fail)."""
 
-    def test_loop_stops_trace_when_bus_quiet(self):
+    def test_loop_does_not_stop_trace_on_canoffline(self):
         idx = D.find("static void mcpDashboardLoop()")
         self.assertGreater(idx, 0)
         body = D[idx:idx + 1400]
-        self.assertIn("dashEpasNagTraceStop", body)
-        self.assertIn("canOnline", body)
+        self.assertNotIn("dashEpasNagTraceStop", body)
 
 
 class SerialReadSpiffsContract(unittest.TestCase):

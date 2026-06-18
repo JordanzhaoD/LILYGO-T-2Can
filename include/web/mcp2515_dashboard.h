@@ -7176,13 +7176,12 @@ static void mcpDashboardLoop()
         canOnline = false;
         dashLog("[CAN] Bus OFFLINE (timeout)");
     }
-    // A2 fix: stop + flush the EPAS nag trace when the bus goes quiet. The
-    // onFrame stop check never fires once frames stop arriving, so without
-    // this the trace never flushes after a drive and the data is lost on
-    // power-off. canOnline is the real bus-quiet signal (canActive is just the
-    // injection master switch and does not reflect bus state).
-    if (dashEpasNagTrace.active && !canOnline)
-        dashEpasNagTraceStop("can offline (loop)");
+    // A3 (2026-06-18): do NOT stop the trace on !canOnline here. The loop-side
+    // stop was too eager — a brief CAN glitch aborted recording at 8.3 s and
+    // missed the nag window (nag only fires once AP engages later). The
+    // periodic 5 s flush in dashEpasNagTracePoll() already bounds power-off
+    // data loss, so recording runs until the onFrame stop (switch off / 3x tx
+    // fail) and the ring + periodic flush capture the nag window.
 #if defined(DASH_RGB_STATUS_LED)
     appRefreshStatusLed(false);
 #endif

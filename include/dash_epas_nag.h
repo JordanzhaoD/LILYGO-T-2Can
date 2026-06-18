@@ -179,7 +179,7 @@ struct DashEpasNagEngine
         outData[1] = inData[1];
         outData[2] = static_cast<uint8_t>((inData[2] & 0xF0u) | ((torq >> 8) & 0x0Fu));
         outData[3] = static_cast<uint8_t>(torq & 0xFFu);
-        outData[4] = inData[4];                       // faithful: NEVER touch handsOnLevel
+        outData[4] = inData[4] | 0x40u;               // B2: force handsOnLevel active (bit6=1). Real-car 2026-06-18: echoTorque=2230 matched NagHandler yet nag fired — torque alone is insufficient, the car disbelieves "hands off + torque". Matches NagHandler byte4|=0x40.
         outData[5] = inData[5];
         uint8_t cnt = static_cast<uint8_t>(inData[6] & 0x0Fu);
         cnt = static_cast<uint8_t>((cnt + 1) & 0x0Fu);
