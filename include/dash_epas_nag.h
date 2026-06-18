@@ -147,6 +147,54 @@ struct DashEpasNagEngine
         return kTorqueHoldNm;
     }
 
+    // ── Mode-C demand-state torque machine (spec §6.3) ───────────────
+    // Returns true + fills outTorque/outLevel when this 0x370 should be echoed;
+    // false (demand_idle) when the demand machine says "don't inject this frame".
+    bool nextDemandTorque(uint8_t das, uint32_t nowMs, uint16_t &outTorque, uint8_t &outLevel)
+    {
+        // edge detection — record entry timestamps per state
+        bool isStrong = (das == 3 || das == 4 || das == 5 || das == 0xFF);
+        bool prevStrong = (prevDas == 3 || prevDas == 4 || prevDas == 5 || prevDas == 0xFF);
+        if (prevDas != 1 && das == 1) s1EnterMs = nowMs;
+        if (das != 1) s1EnterMs = 0;
+        if (prevDas != 2 && das == 2) s2EnterMs = nowMs;
+        if (das != 2) { s2EnterMs = 0; s2HoldUntilMs = 0; s2Level2Active = false; }
+        if (!prevStrong && isStrong) strongEnterMs = nowMs;
+        if (!isStrong) strongEnterMs = 0;
+        prevDas = das;
+
+        diag.lastDemandState = das;
+
+        // AP gate + excluded das states (spec §6.3, upstream das_ap_state<2 analog)
+        if (!apActive || das == 0 || das == 8 || das == 15)
+        {
+            lastRaw = kTorqueCenter; lastLevel = 0;
+            diag.lastDemandGate = "demand_idle";
+            return false;
+        }
+
+        // direction: reverse-assist from 0x129 (spec §6.3 / upstream fsd_handler.c:973)
+        int8_t dir = (steerAngleX10 > 0) ? -1 : 1;
+
+        if (das == 1)
+        {
+            if (s1EnterMs != 0 && (nowMs - s1EnterMs) < 500u)
+            {
+                outTorque = (uint16_t)lastRaw; outLevel = lastLevel;
+                diag.lastDemandGate = "s1_hold";
+                return true;
+            }
+            lastRaw = kTorqueCenter; lastLevel = 0;
+            diag.lastDemandGate = "s1_done";
+            return false;
+        }
+
+        // mild (das==2) and strong (else) branches added in Task 4 / Task 5.
+        (void)dir;
+        diag.lastDemandGate = "demand_idle";
+        return false;
+    }
+
     // ── observation (called by dashboard glue) ───────────────
     void noteRuntime(bool enabled_, bool canActive_, bool defenseEnabled_)
     {
@@ -165,6 +213,7 @@ struct DashEpasNagEngine
     // Track AP falling edge for the G6 blackout window.
     void noteApState(bool active, uint32_t nowMs)
     {
+        apActive = active;                       // ★ Mode-C AP gate input
         if (prevApActive && !active)
         {
             apDisengageMs = nowMs;

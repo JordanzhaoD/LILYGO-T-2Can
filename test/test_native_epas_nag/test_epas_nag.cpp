@@ -69,6 +69,47 @@ void test_on_steering_angle_stores_and_defaults()
     TEST_ASSERT_EQUAL_INT16(-300, e.steerAngleX10);
 }
 
+// ── Mode-C: nextDemandTorque demand-state machine (spec §6.3) ───────
+// Helper: arm engine with given das state, AP on, no steering (dir +1).
+static DashEpasNagEngine makeDemandEngine(uint8_t dasState)
+{
+    DashEpasNagEngine e;
+    e.noteRuntime(true, true, true);
+    e.noteApState(true, 1000); // apActive=true
+    uint8_t das[8] = {0};
+    das[5] = static_cast<uint8_t>((dasState & 0x0F) << 2);
+    e.onDasGate(das);
+    return e;
+}
+
+void test_demand_rejects_excluded_das_states()
+{
+    const uint8_t excluded[] = {0u, 8u, 15u};
+    for (uint8_t d : excluded)
+    {
+        DashEpasNagEngine e = makeDemandEngine(d);
+        uint16_t t = 9999; uint8_t lvl = 9;
+        TEST_ASSERT_FALSE(e.nextDemandTorque(d, 5000, t, lvl));
+    }
+}
+void test_demand_ap_inactive_blocks()
+{
+    DashEpasNagEngine e = makeDemandEngine(3);
+    e.noteApState(false, 1000);
+    uint16_t t; uint8_t lvl;
+    TEST_ASSERT_FALSE(e.nextDemandTorque(3, 5000, t, lvl));
+}
+void test_demand_state1_holds_then_stops()
+{
+    DashEpasNagEngine e = makeDemandEngine(1);
+    uint16_t t; uint8_t lvl;
+    // first call at 1100: arms s1EnterMs, within 500ms -> holds lastRaw (2050 init)
+    TEST_ASSERT_TRUE(e.nextDemandTorque(1, 1100, t, lvl));
+    TEST_ASSERT_EQUAL_UINT16(2050, t);
+    // after 500ms window -> stops
+    TEST_ASSERT_FALSE(e.nextDemandTorque(1, 1700, t, lvl));
+}
+
 // ── checksum (additive, NOT crc) ─────────────────────────────────────
 void test_checksum_additive_formula()
 {
@@ -378,6 +419,9 @@ int main()
     RUN_TEST(test_hands_level_from_raw);
     RUN_TEST(test_clamp_int16);
     RUN_TEST(test_on_steering_angle_stores_and_defaults);
+    RUN_TEST(test_demand_rejects_excluded_das_states);
+    RUN_TEST(test_demand_ap_inactive_blocks);
+    RUN_TEST(test_demand_state1_holds_then_stops);
     RUN_TEST(test_checksum_additive_formula);
     RUN_TEST(test_checksum_counter_additive);
     RUN_TEST(test_torque_stays_in_bounds);
