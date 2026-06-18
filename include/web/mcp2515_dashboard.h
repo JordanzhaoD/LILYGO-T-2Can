@@ -213,6 +213,7 @@ static uint32_t dashEpasNagLastSwTxErr = 0;
 static bool dashEpasNagLastApActive = false;
 static const char *dashEpasNagLastGateStr = "idle";
 static bool dashEpasNagTracePendingFlush = false;
+static uint32_t dashEpasNagLastFlushMs = 0; // periodic flush watermark (A2: survive power loss)
 static bool dashEpasNagTraceManual = false; // explicit /epas_nag_trace_start
 // Forward declarations (defined after dashEpasNagOnFrame).
 static void dashEpasNagTraceSample(uint32_t now, bool injected, bool sendOk);
@@ -1007,9 +1008,19 @@ static void dashEpasNagTraceFlush()
 
 static void dashEpasNagTracePoll()
 {
+    uint32_t now = millis();
+    // A2 fix: periodic flush while active. The onFrame stop check never runs
+    // once frames stop arriving, and the operator may unplug USB without a
+    // clean stop — so flush every 5 s to bound data loss on sudden power-off.
+    if (dashEpasNagTrace.active && (now - dashEpasNagLastFlushMs) >= 5000)
+    {
+        dashEpasNagLastFlushMs = now;
+        dashEpasNagTraceFlush();
+    }
     if (dashEpasNagTracePendingFlush)
     {
         dashEpasNagTracePendingFlush = false;
+        dashEpasNagLastFlushMs = now;
         dashEpasNagTraceFlush();
     }
 }
@@ -5411,6 +5422,23 @@ static void dashSerialPrintEpasNagTrace()
     uint32_t h = dashEpasNagTrace.currentHead();
     uint32_t oldest = (h > EpasNagTraceRing::kCap) ? (h - EpasNagTraceRing::kCap) : 0;
     Serial.println();
+    if (h == 0)
+    {
+        // A1 fix: opening USB-CDC resets the board and clears the RAM ring.
+        // Fall back to the persisted SPIFFS CSV so the last drive's data is
+        // still recoverable right after a reset.
+        Serial.println("[epas_nag_trace] ring empty — reading /epas_nag_trace.csv");
+        File f = SPIFFS.open("/epas_nag_trace.csv", "r");
+        if (f)
+        {
+            String body = f.readString();
+            f.close();
+            Serial.print(body);
+            return;
+        }
+        Serial.println("(no flushed CSV on SPIFFS yet; call /epas_nag_trace_stop to flush)");
+        return;
+    }
     Serial.printf("[epas_nag_trace] %lu entries (showing last %u)\n",
                   (unsigned long)h,
                   (unsigned)(h - oldest));
@@ -7148,6 +7176,13 @@ static void mcpDashboardLoop()
         canOnline = false;
         dashLog("[CAN] Bus OFFLINE (timeout)");
     }
+    // A2 fix: stop + flush the EPAS nag trace when the bus goes quiet. The
+    // onFrame stop check never fires once frames stop arriving, so without
+    // this the trace never flushes after a drive and the data is lost on
+    // power-off. canOnline is the real bus-quiet signal (canActive is just the
+    // injection master switch and does not reflect bus state).
+    if (dashEpasNagTrace.active && !canOnline)
+        dashEpasNagTraceStop("can offline (loop)");
 #if defined(DASH_RGB_STATUS_LED)
     appRefreshStatusLed(false);
 #endif

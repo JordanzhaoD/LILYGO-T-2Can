@@ -66,16 +66,16 @@ void test_torque_stays_in_bounds()
     }
 }
 
-void test_torque_reverts_toward_center()
+// B1 fix (real-car evidence 2026-06-18: echoTorque=1908 = -1.42 Nm, yet nag
+// still fired). A mean-reverting torque that drifts back toward 0 Nm never
+// looks like "hands on" — the car ignores it. Echo must HOLD a sustained
+// positive torque (+1.80 Nm = raw 2230), matching the proven NagHandler
+// byte3=0xB6 strategy. Fixed, not a random walk.
+void test_torque_returns_fixed_positive()
 {
     DashEpasNagEngine e;
-    e.torqueWalk = DashEpasNagEngine::kTorqueMax;
-    uint32_t sum = 0;
-    const int N = 300;
-    for (int n = 0; n < N; n++)
-        sum += e.nextTorque();
-    uint32_t avg = sum / N;
-    TEST_ASSERT_TRUE(avg >= 1950 && avg <= 2150);
+    for (int n = 0; n < 50; n++)
+        TEST_ASSERT_EQUAL_UINT16(2230, e.nextTorque());
 }
 
 void test_torque_sequence_is_deterministic()
@@ -336,7 +336,7 @@ int main()
     RUN_TEST(test_checksum_additive_formula);
     RUN_TEST(test_checksum_counter_additive);
     RUN_TEST(test_torque_stays_in_bounds);
-    RUN_TEST(test_torque_reverts_toward_center);
+    RUN_TEST(test_torque_returns_fixed_positive);
     RUN_TEST(test_torque_sequence_is_deterministic);
     RUN_TEST(test_gate_disabled_blocks);
     RUN_TEST(test_gate_canactive_blocks);

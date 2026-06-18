@@ -47,7 +47,8 @@ struct DashEpasNagEngine
     static constexpr uint16_t kTorqueCenter{2050};  // raw for 0.00 Nm  (Nm = raw*0.01 - 20.5)
     static constexpr uint16_t kTorqueMin{1780};     // ~-2.70 Nm
     static constexpr uint16_t kTorqueMax{2500};     // ~+4.50 Nm
-    static constexpr uint16_t kPullDivisor{16};     // mean-reversion pull strength
+    static constexpr uint16_t kTorqueHoldNm{2230};  // B1: HOLD +1.80 Nm (raw 0x08B6, matches NagHandler byte3=0xB6). Real-car 2026-06-18 proved a mean-reverting ~0 Nm walk never suppresses nag.
+    static constexpr uint16_t kPullDivisor{16};     // legacy mean-reversion pull strength (unused after B1)
     static constexpr uint16_t kStepSpan{81};        // xorshift % 81 -> [0,80], step = -40..+40
     static constexpr uint32_t kBlackoutMs{1500};    // G6 post-disengage silence window
     static constexpr uint8_t kDasUnseen{0xFF};
@@ -95,14 +96,15 @@ struct DashEpasNagEngine
         return x;
     }
 
-    // Mean-reverting random walk centered on 0 Nm (raw 2050).
+    // B1 fix (2026-06-18 real-car evidence: echoTorque=1908=-1.42Nm, txOk=74078
+    // 100% success, yet nag still fired). The mean-reverting walk toward 0 Nm is
+    // the root cause — the car ignores torque that drifts back to 0. HOLD a
+    // sustained +1.80 Nm so the car reads continuous driver input, matching the
+    // proven NagHandler byte3=0xB6 strategy. The legacy xorshift walk below is
+    // kept for reference but no longer drives the echo.
     uint16_t nextTorque()
     {
-        int32_t step = static_cast<int32_t>(xorshift32() % kStepSpan) - 40; // ±40
-        int32_t w = static_cast<int32_t>(torqueWalk) + step;
-        w += (static_cast<int32_t>(kTorqueCenter) - w) / static_cast<int32_t>(kPullDivisor);
-        torqueWalk = clampTorque(w);
-        return torqueWalk;
+        return kTorqueHoldNm;
     }
 
     // ── observation (called by dashboard glue) ───────────────
