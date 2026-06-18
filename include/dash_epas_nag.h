@@ -86,6 +86,27 @@ struct DashEpasNagEngine
         return static_cast<uint16_t>(v);
     }
 
+    static uint8_t handsLevelFromRaw(int32_t raw)
+    {
+        const int32_t center = static_cast<int32_t>(kTorqueCenter);
+        int32_t a = (raw >= center) ? (raw - center) : (center - raw);
+        if (a >= 200)
+            return 2;
+        if (a >= 100)
+            return 1;
+        return 0;
+    }
+
+    // int16_t clamp for negative torque bands (clampTorque returns uint16_t).
+    static int16_t clampInt16(int32_t v, int32_t lo, int32_t hi)
+    {
+        if (v < lo)
+            return static_cast<int16_t>(lo);
+        if (v > hi)
+            return static_cast<int16_t>(hi);
+        return static_cast<int16_t>(v);
+    }
+
     uint32_t xorshift32()
     {
         uint32_t x = prng;

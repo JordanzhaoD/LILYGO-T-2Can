@@ -30,6 +30,27 @@ void test_nag_constants()
     TEST_ASSERT_EQUAL_UINT32(1500, DashEpasNagEngine::kBlackoutMs);
 }
 
+// ── Mode-C: handsOnLevel derived from torque magnitude (spec §7.1) ───
+void test_hands_level_from_raw()
+{
+    TEST_ASSERT_EQUAL_UINT8(0, DashEpasNagEngine::handsLevelFromRaw(2050)); // 0 Nm
+    TEST_ASSERT_EQUAL_UINT8(0, DashEpasNagEngine::handsLevelFromRaw(2149)); // <1.0 Nm
+    TEST_ASSERT_EQUAL_UINT8(1, DashEpasNagEngine::handsLevelFromRaw(2150)); // =1.0 Nm
+    TEST_ASSERT_EQUAL_UINT8(1, DashEpasNagEngine::handsLevelFromRaw(2249)); // <2.0 Nm
+    TEST_ASSERT_EQUAL_UINT8(2, DashEpasNagEngine::handsLevelFromRaw(2250)); // =2.0 Nm
+    TEST_ASSERT_EQUAL_UINT8(2, DashEpasNagEngine::handsLevelFromRaw(2260)); // strong peak
+    TEST_ASSERT_EQUAL_UINT8(1, DashEpasNagEngine::handsLevelFromRaw(1950)); // -1.0 Nm (dir=-1)
+    TEST_ASSERT_EQUAL_UINT8(2, DashEpasNagEngine::handsLevelFromRaw(1850)); // -2.0 Nm (dir=-1)
+    TEST_ASSERT_EQUAL_UINT8(2, DashEpasNagEngine::handsLevelFromRaw(1840)); // strong negative peak
+}
+
+void test_clamp_int16()
+{
+    TEST_ASSERT_EQUAL_INT16(-10, DashEpasNagEngine::clampInt16(-25, -10, 10));
+    TEST_ASSERT_EQUAL_INT16(10, DashEpasNagEngine::clampInt16(25, -10, 10));
+    TEST_ASSERT_EQUAL_INT16(3, DashEpasNagEngine::clampInt16(3, -10, 10));
+}
+
 // ── checksum (additive, NOT crc) ─────────────────────────────────────
 void test_checksum_additive_formula()
 {
@@ -336,6 +357,8 @@ int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_nag_constants);
+    RUN_TEST(test_hands_level_from_raw);
+    RUN_TEST(test_clamp_int16);
     RUN_TEST(test_checksum_additive_formula);
     RUN_TEST(test_checksum_counter_additive);
     RUN_TEST(test_torque_stays_in_bounds);
