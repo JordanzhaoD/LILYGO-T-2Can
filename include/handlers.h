@@ -156,7 +156,100 @@ struct CarManagerBase
     virtual ~CarManagerBase() = default;
 };
 
-struct LegacyHandler : public CarManagerBase
+struct TeslaHandlerBase : public CarManagerBase
+{
+  protected:
+    // CAN 280 (DI_systemStatus): gear/park/summon state
+    void handleDISystemStatus(CanFrame &frame)
+    {
+        if (frame.dlc < 3)
+            return;
+        uint8_t diGear = readDIGear(frame);
+        Parked = isVehicleParked(diGear);
+        // Only clear Summoning on a *definitive* Park (gear==1).
+        // SNA (7) and INVALID (0) can blip during gear transitions
+        // (e.g. during a Summon shift to Reverse) and would
+        // otherwise drop the gate mid-summon.
+        updateSummonFromDISystemStatus(frame);
+        clearSummonOnParkIfAcaInactive(diGear);
+    }
+
+    // CAN 390 (DI_forceStatus): gear/park state
+    void handleDIForceStatus(CanFrame &frame)
+    {
+        if (frame.dlc < 8)
+            return;
+        uint8_t difGear = readVehicleGear(frame);
+        Parked = isVehicleParked(difGear);
+        // Only clear Summoning on a *definitive* Park (gear==1).
+        // SNA (7) and INVALID (0) can blip during gear transitions.
+        clearSummonOnParkIfAcaInactive(difGear);
+    }
+
+    // CAN 921 (DAS_status): autopilot active/inactive
+    void handleDASStatus(CanFrame &frame)
+    {
+        if (frame.dlc < 1)
+            return;
+        APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+    }
+
+    // CAN 2047 mux 2: gateway autopilot state
+    void handleGTWStatus(CanFrame &frame, const char *handlerName)
+    {
+        if (frame.dlc < 6)
+            return;
+        if (readMuxID(frame) != 2)
+            return;
+
+        uint8_t next = readGTWAutopilot(frame);
+        int prev = gatewayAutopilot;
+        gatewayAutopilot = next;
+
+        if (enablePrint && prev != next)
+        {
+            char buf[LogRingBuffer::kMaxMsgLen];
+            snprintf(buf, sizeof(buf), "%s: GTW_autopilot: %d -> %u (%s)",
+                     handlerName, prev, (unsigned int)next, describeGTWAutopilot(next));
+            logRing.push(buf,
+#ifndef NATIVE_BUILD
+                     millis()
+#else
+                     0
+#endif
+            );
+#ifndef NATIVE_BUILD
+            Serial.println(buf);
+#endif
+        }
+    }
+
+    // Shared log helper for AD status lines
+    void logState(const char *handlerName, int extraOffset = -1)
+    {
+        if (!enablePrint)
+            return;
+        char buf[LogRingBuffer::kMaxMsgLen];
+        if (extraOffset >= 0)
+            snprintf(buf, sizeof(buf), "%s: AD: %d, Profile: %d, Offset: %d",
+                     handlerName, (bool)ADEnabled, (int)speedProfile, extraOffset);
+        else
+            snprintf(buf, sizeof(buf), "%s: AD: %d, Profile: %d",
+                     handlerName, (bool)ADEnabled, (int)speedProfile);
+        logRing.push(buf,
+#ifndef NATIVE_BUILD
+                     millis()
+#else
+                     0
+#endif
+        );
+#ifndef NATIVE_BUILD
+        Serial.println(buf);
+#endif
+    }
+};
+
+struct LegacyHandler : public TeslaHandlerBase
 {
     const uint32_t *filterIds() const override
     {
@@ -216,42 +309,9 @@ struct LegacyHandler : public CarManagerBase
             if (onSend) onSend(0, true);
             return;
         }
-        if (frame.id == 280)
-        {
-            if (frame.dlc < 3)
-                return;
-            {
-                uint8_t diGear = readDIGear(frame);
-                Parked = isVehicleParked(diGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions
-                // (e.g. during a Summon shift to Reverse) and would
-                // otherwise drop the gate mid-summon.
-                updateSummonFromDISystemStatus(frame);
-                clearSummonOnParkIfAcaInactive(diGear);
-            }
-            return;
-        }
-        if (frame.id == 390)
-        {
-            if (frame.dlc < 8)
-                return;
-            {
-                uint8_t difGear = readVehicleGear(frame);
-                Parked = isVehicleParked(difGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions.
-                clearSummonOnParkIfAcaInactive(difGear);
-            }
-            return;
-        }
-        if (frame.id == 921)
-        {
-            if (frame.dlc < 1)
-                return;
-            APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
-            return;
-        }
+        if (frame.id == 280) { handleDISystemStatus(frame); return; }
+        if (frame.id == 390) { handleDIForceStatus(frame); return; }
+        if (frame.id == 921) { handleDASStatus(frame); return; }
         if (frame.id == 1006)
         {
             if (frame.dlc < 8)
@@ -293,27 +353,12 @@ struct LegacyHandler : public CarManagerBase
                     onSend(1, true);
 #endif
             }
-            if (index == 0 && enablePrint)
-            {
-                char buf[LogRingBuffer::kMaxMsgLen];
-                snprintf(buf, sizeof(buf), "LegacyHandler: AD: %d, Profile: %d",
-                         (bool)ADEnabled, (int)speedProfile);
-                logRing.push(buf,
-#ifndef NATIVE_BUILD
-                             millis()
-#else
-                             0
-#endif
-                );
-#ifndef NATIVE_BUILD
-                Serial.println(buf);
-#endif
-            }
+            if (index == 0) logState("LegacyHandler");
         }
     }
 };
 
-struct HW3Handler : public CarManagerBase
+struct HW3Handler : public TeslaHandlerBase
 {
     const uint32_t *filterIds() const override
     {
@@ -326,35 +371,8 @@ struct HW3Handler : public CarManagerBase
     {
         if (onFrame)
             onFrame(frame);
-        if (frame.id == 280)
-        {
-            if (frame.dlc < 3)
-                return;
-            {
-                uint8_t diGear = readDIGear(frame);
-                Parked = isVehicleParked(diGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions
-                // (e.g. during a Summon shift to Reverse) and would
-                // otherwise drop the gate mid-summon.
-                updateSummonFromDISystemStatus(frame);
-                clearSummonOnParkIfAcaInactive(diGear);
-            }
-            return;
-        }
-        if (frame.id == 390)
-        {
-            if (frame.dlc < 8)
-                return;
-            {
-                uint8_t difGear = readVehicleGear(frame);
-                Parked = isVehicleParked(difGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions.
-                clearSummonOnParkIfAcaInactive(difGear);
-            }
-            return;
-        }
+        if (frame.id == 280) { handleDISystemStatus(frame); return; }
+        if (frame.id == 390) { handleDIForceStatus(frame); return; }
         if (frame.id == 1016)
         {
             if (frame.dlc < 6)
@@ -381,9 +399,7 @@ struct HW3Handler : public CarManagerBase
         }
         if (frame.id == 921)
         {
-            if (frame.dlc < 1)
-                return;
-            APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+            handleDASStatus(frame);
             // Capture ISA fused speed limit from byte1[4:0]. raw*5 = kph;
             // 0 = SNA, 31 = NONE-broadcast — both treated as "unknown" by the
             // HW3 mux-2 override path. Used by dashComputeHw3OffsetRaw().
@@ -391,35 +407,7 @@ struct HW3Handler : public CarManagerBase
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
             return;
         }
-        if (frame.id == 2047)
-        {
-            if (frame.dlc < 6)
-                return;
-            if (readMuxID(frame) != 2)
-                return;
-
-            uint8_t next = readGTWAutopilot(frame);
-            int prev = gatewayAutopilot;
-            gatewayAutopilot = next;
-
-            if (enablePrint && prev != next)
-            {
-                char buf[LogRingBuffer::kMaxMsgLen];
-                snprintf(buf, sizeof(buf), "HW3Handler: GTW_autopilot: %d -> %u (%s)",
-                         prev, (unsigned int)next, describeGTWAutopilot(next));
-                logRing.push(buf,
-#ifndef NATIVE_BUILD
-                             millis()
-#else
-                             0
-#endif
-                );
-#ifndef NATIVE_BUILD
-                Serial.println(buf);
-#endif
-            }
-            return;
-        }
+        if (frame.id == 2047) { handleGTWStatus(frame, "HW3Handler"); return; }
         if (frame.id == 1021)
         {
             if (frame.dlc < 8)
@@ -546,22 +534,7 @@ struct HW3Handler : public CarManagerBase
                     onSend(2, true);
             }
 #endif
-            if (index == 0 && enablePrint)
-            {
-                char buf[LogRingBuffer::kMaxMsgLen];
-                snprintf(buf, sizeof(buf), "HW3Handler: AD: %d, Profile: %d, Offset: %d",
-                         (bool)ADEnabled, (int)speedProfile, (int)speedOffset);
-                logRing.push(buf,
-#ifndef NATIVE_BUILD
-                             millis()
-#else
-                             0
-#endif
-                );
-#ifndef NATIVE_BUILD
-                Serial.println(buf);
-#endif
-            }
+            if (index == 0) logState("HW3Handler", (int)speedOffset);
         }
     }
 };
@@ -653,7 +626,7 @@ struct NagHandler : public CarManagerBase
     }
 };
 
-struct HW4Handler : public CarManagerBase
+struct HW4Handler : public TeslaHandlerBase
 {
     const uint32_t *filterIds() const override
     {
@@ -673,40 +646,11 @@ struct HW4Handler : public CarManagerBase
     {
         if (onFrame)
             onFrame(frame);
-        if (frame.id == 280)
-        {
-            if (frame.dlc < 3)
-                return;
-            {
-                uint8_t diGear = readDIGear(frame);
-                Parked = isVehicleParked(diGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions
-                // (e.g. during a Summon shift to Reverse) and would
-                // otherwise drop the gate mid-summon.
-                updateSummonFromDISystemStatus(frame);
-                clearSummonOnParkIfAcaInactive(diGear);
-            }
-            return;
-        }
-        if (frame.id == 390)
-        {
-            if (frame.dlc < 8)
-                return;
-            {
-                uint8_t difGear = readVehicleGear(frame);
-                Parked = isVehicleParked(difGear);
-                // Only clear Summoning on a *definitive* Park (gear==1).
-                // SNA (7) and INVALID (0) can blip during gear transitions.
-                clearSummonOnParkIfAcaInactive(difGear);
-            }
-            return;
-        }
+        if (frame.id == 280) { handleDISystemStatus(frame); return; }
+        if (frame.id == 390) { handleDIForceStatus(frame); return; }
         if (frame.id == 921)
         {
-            if (frame.dlc < 1)
-                return;
-            APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+            handleDASStatus(frame);
             // Capture ISA fused speed limit; same path as HW3.
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
@@ -758,35 +702,7 @@ struct HW4Handler : public CarManagerBase
                 break;
             }
         }
-        if (frame.id == 2047)
-        {
-            if (frame.dlc < 6)
-                return;
-            if (readMuxID(frame) != 2)
-                return;
-
-            uint8_t next = readGTWAutopilot(frame);
-            int prev = gatewayAutopilot;
-            gatewayAutopilot = next;
-
-            if (enablePrint && prev != next)
-            {
-                char buf[LogRingBuffer::kMaxMsgLen];
-                snprintf(buf, sizeof(buf), "HW4Handler: GTW_autopilot: %d -> %u (%s)",
-                         prev, (unsigned int)next, describeGTWAutopilot(next));
-                logRing.push(buf,
-#ifndef NATIVE_BUILD
-                             millis()
-#else
-                             0
-#endif
-                );
-#ifndef NATIVE_BUILD
-                Serial.println(buf);
-#endif
-            }
-            return;
-        }
+        if (frame.id == 2047) { handleGTWStatus(frame, "HW4Handler"); return; }
         if (frame.id == 1021)
         {
             if (frame.dlc < 8)
@@ -834,22 +750,7 @@ struct HW4Handler : public CarManagerBase
                 if (onSend)
                     onSend(1, true);
             }
-            if (index == 0 && enablePrint)
-            {
-                char buf[LogRingBuffer::kMaxMsgLen];
-                snprintf(buf, sizeof(buf), "HW4Handler: AD: %d, Profile: %d",
-                         (bool)ADEnabled, (int)speedProfile);
-                logRing.push(buf,
-#ifndef NATIVE_BUILD
-                             millis()
-#else
-                             0
-#endif
-                );
-#ifndef NATIVE_BUILD
-                Serial.println(buf);
-#endif
-            }
+            if (index == 0) logState("HW4Handler");
         }
     }
 };

@@ -26,6 +26,9 @@
 
 #ifdef DRIVER_T2CAN_DUAL
 #include "drivers/esp32_mcp2515_driver.h"
+#include "t2can_bus2_recovery.h"
+#include "t2can_bus2_table.h"
+#include "t2can_ota_rollback.h"
 #endif
 
 #ifdef DRIVER_MCP2515
@@ -93,6 +96,8 @@ static bool appTwaiGpioValid(gpio_num_t pin, bool tx)
 
 #ifdef DRIVER_T2CAN_DUAL
 static std::unique_ptr<ESP32_MCP2515Driver> appDriverSecondary;
+static T2CanBus2Recovery bus2Recovery;
+T2CanBus2Table g_bus2Table;
 static volatile uint32_t t2canSecondaryRxCount = 0;
 
 static void t2canSetupSecondary()
@@ -114,6 +119,7 @@ static void t2canSetupSecondary()
     }
     appDriverSecondary->mcp().setReceiveAllMode();
     Serial.println("CAN B (MCP2515) ready @ 500k");
+    bus2Recovery.begin(appDriverSecondary.get());
 }
 
 // Transmit on the secondary bus. No automatic logic targets bus B yet
@@ -127,56 +133,13 @@ bool t2canSendSecondary(const CanFrame &frame)
     return appDriverSecondary->send(f);
 }
 
-// ── bus2 discovered-ID table (X197 9/10) — for serial log + dashboard /bus2_ids ──
-struct T2canBus2Id
-{
-    uint16_t id;
-    uint8_t dlc;
-    uint8_t data[8];
-    uint32_t count;
-};
-static constexpr uint16_t kT2canBus2MaxIds = 160;
-static T2canBus2Id g_bus2Ids[kT2canBus2MaxIds];
-static volatile uint16_t g_bus2IdCount = 0;
-
-static void t2canRecordBus2(const CanFrame &f)
-{
-    if (f.id & 0x80000000UL)
-        return; // standard 11-bit IDs only (Tesla lighting/stalk are standard)
-    uint16_t sid = (uint16_t)(f.id & 0x7FF);
-    uint16_t n = g_bus2IdCount;
-    for (uint16_t i = 0; i < n; i++)
-    {
-        if (g_bus2Ids[i].id == sid)
-        {
-            g_bus2Ids[i].dlc = f.dlc;
-            memcpy(g_bus2Ids[i].data, f.data, 8);
-            g_bus2Ids[i].count = g_bus2Ids[i].count + 1;
-            return;
-        }
-    }
-    if (n < kT2canBus2MaxIds)
-    {
-        g_bus2Ids[n].id = sid;
-        g_bus2Ids[n].dlc = f.dlc;
-        memcpy(g_bus2Ids[n].data, f.data, 8);
-        g_bus2Ids[n].count = 1;
-        g_bus2IdCount = n + 1; // publish count last so readers never see uninit slots
-        Serial.printf("bus2 new id 0x%03X dlc=%u\n", sid, f.dlc);
-    }
-}
+// ── bus2 discovered-ID table (X197 9/10) — LRU eviction via g_bus2Table ──
 
 // Accessors used by the dashboard /bus2_ids handler.
-uint16_t t2canBus2IdCount(void) { return g_bus2IdCount; }
+uint16_t t2canBus2IdCount(void) { return g_bus2Table.count(); }
 bool t2canBus2IdAt(uint16_t i, uint16_t *id, uint8_t *dlc, uint8_t data[8], uint32_t *count)
 {
-    if (i >= g_bus2IdCount)
-        return false;
-    *id = g_bus2Ids[i].id;
-    *dlc = g_bus2Ids[i].dlc;
-    memcpy(data, g_bus2Ids[i].data, 8);
-    *count = g_bus2Ids[i].count;
-    return true;
+    return g_bus2Table.get(i, id, dlc, data, count);
 }
 
 static void t2canDrainSecondary()
@@ -190,7 +153,11 @@ static void t2canDrainSecondary()
             break;
         f.bus = T2CAN_SECONDARY_BUS;
         t2canSecondaryRxCount = t2canSecondaryRxCount + 1;
-        t2canRecordBus2(f);
+        bool isNew = g_bus2Table.record(f);
+        if (isNew) {
+            uint16_t sid = (uint16_t)(f.id & 0x7FF);
+            Serial.printf("bus2 new id 0x%03X dlc=%u\n", sid, f.dlc);
+        }
 #ifdef ESP32_DASHBOARD
         // Also feed bus2 frames into the CSV recorder (with bus column) so a
         // timestamped sequential capture of X197 9/10 can be downloaded for
@@ -272,6 +239,7 @@ static void app_main_setup()
 #ifdef DRIVER_T2CAN_DUAL
     t2canSetupSecondary();
 #endif
+    otaMarkValid();
 }
 
 static bool app_main_loop()
@@ -318,6 +286,7 @@ static void app_can_task(void *)
         bool processed = appLoop<TWAIDriver>();
 #ifdef DRIVER_T2CAN_DUAL
         t2canDrainSecondary();
+        bus2Recovery.tick();
         t2canServiceModeTick();
 #endif
         appCanTaskLoops = appCanTaskLoops + 1;
@@ -354,6 +323,8 @@ extern "C" void app_main(void)
         nvsErr = nvs_flash_init();
     }
     ESP_ERROR_CHECK(nvsErr);
+
+    otaCheckAndBoot();
 
     app_main_setup();
 #if defined(DRIVER_TWAI)

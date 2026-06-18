@@ -8,10 +8,10 @@
 
 ### 项目简介
 
-本项目是基于 [EV Open CAN Tools](https://github.com/ev-open-can-tools/ev-open-can-tools) 的固件，专为 **LILYGO T-2CAN**（ESP32-S3 N16R8）开发板适配，连接特斯拉 Model Y **X197 连接器**，实现双路 CAN 总线同时工作：
+本项目是基于 [EV Open CAN Tools](https://github.com/ev-open-can-tools/ev-open-can-tools) 的固件，专为 **LILYGO T-2CAN**（ESP32-S3 N16R8）开发板适配，连接特斯拉 Model Y **X179 连接器**，实现双路 CAN 总线同时工作：
 
-- **CAN 总线 1（TWAI，X197 Pin 13/14）**：FSD 功能解锁、车速控制
-- **CAN 总线 2（MCP2515 SPI，X197 Pin 9/10）**：维修模式控制、灯光控制（开发中）
+- **CAN 总线 1（TWAI，X179 Pin 13/14）**：FSD 功能解锁、车速控制
+- **CAN 总线 2（MCP2515 SPI，X179 Pin 9/10）**：维修模式控制、灯光控制（开发中）
 
 通过板载 WiFi 热点提供 Web 控制面板，无需手机 App，浏览器直接访问。
 
@@ -32,9 +32,9 @@
 
 ---
 
-### X197 接线说明
+### X179 接线说明
 
-| X197 引脚 | 功能 | 连接 |
+| X179 引脚 | 功能 | 连接 |
 |-----------|------|------|
 | Pin 13 | CAN High（总线 1） | TWAI TX → GPIO 7 |
 | Pin 14 | CAN Low（总线 1） | TWAI RX → GPIO 6 |
@@ -54,7 +54,7 @@
 - [x] 车速控制（CAN 总线 1）
 - [x] Web 控制面板（WiFi AP 模式）
 - [x] 维修模式开关（Web 面板控制，每 10ms 发送 0x339）
-- [x] Bus2 嗅探器（实时显示 X197 9/10 上的 CAN 帧）
+- [x] Bus2 嗅探器（实时显示 X179 9/10 上的 CAN 帧）
 - [x] USB-Serial/JTAG 控制台输出
 - [x] OTA 固件在线升级
 - [x] 系统状态显示（含开发板名称 LILYGO-T-2CAN）
@@ -111,7 +111,7 @@ pio run -e lilygo_t2can_dual -t upload --upload-port COM20
 
 ### 维修模式
 
-在 Web 面板中找到 **Service Mode** 开关，开启后设备每 10ms 向 X197 Pin 9/10 发送：
+在 Web 面板中找到 **Service Mode** 开关，开启后设备每 10ms 向 X179 Pin 9/10 发送：
 
 ```
 ID: 0x339  DLC: 8  Data: 00 00 00 00 00 E0 00 00
@@ -141,10 +141,10 @@ ID: 0x339  DLC: 8  Data: 00 00 00 00 00 E0 00 00
 
 ### Overview
 
-This project is a firmware adaptation of [EV Open CAN Tools](https://github.com/ev-open-can-tools/ev-open-can-tools) for the **LILYGO T-2CAN** (ESP32-S3 N16R8) development board. It connects to a Tesla Model Y via the **X197 connector** and operates dual CAN buses simultaneously:
+This project is a firmware adaptation of [EV Open CAN Tools](https://github.com/ev-open-can-tools/ev-open-can-tools) for the **LILYGO T-2CAN** (ESP32-S3 N16R8) development board. It connects to a Tesla Model Y via the **X179 connector** and operates dual CAN buses simultaneously:
 
-- **CAN Bus 1 (TWAI, X197 Pin 13/14)**: FSD unlock, speed control
-- **CAN Bus 2 (MCP2515 SPI, X197 Pin 9/10)**: Service mode control, lighting control (in development)
+- **CAN Bus 1 (TWAI, X179 Pin 13/14)**: FSD unlock, speed control
+- **CAN Bus 2 (MCP2515 SPI, X179 Pin 9/10)**: Service mode control, lighting control (in development)
 
 A web dashboard is served over the onboard WiFi hotspot — no app needed, just a browser.
 
@@ -165,9 +165,9 @@ A web dashboard is served over the onboard WiFi hotspot — no app needed, just 
 
 ---
 
-### X197 Wiring
+### X179 Wiring
 
-| X197 Pin | Function | Connection |
+| X179 Pin | Function | Connection |
 |----------|----------|------------|
 | Pin 13 | CAN High (Bus 1) | TWAI TX → GPIO 7 |
 | Pin 14 | CAN Low (Bus 1) | TWAI RX → GPIO 6 |
@@ -187,7 +187,7 @@ A web dashboard is served over the onboard WiFi hotspot — no app needed, just 
 - [x] Speed control (CAN Bus 1)
 - [x] Web dashboard (WiFi AP mode)
 - [x] Service mode toggle (web panel, sends 0x339 every 10ms)
-- [x] Bus2 sniffer (live view of CAN frames on X197 Pin 9/10)
+- [x] Bus2 sniffer (live view of CAN frames on X179 Pin 9/10)
 - [x] USB-Serial/JTAG console output
 - [x] OTA firmware updates
 - [x] System status with board name (LILYGO-T-2CAN)
@@ -244,7 +244,7 @@ pio run -e lilygo_t2can_dual -t upload --upload-port COM20
 
 ### Service Mode
 
-Toggle **Service Mode** in the web dashboard. When enabled, the device sends the following frame every 10ms to X197 Pin 9/10:
+Toggle **Service Mode** in the web dashboard. When enabled, the device sends the following frame every 10ms to X179 Pin 9/10:
 
 ```
 ID: 0x339  DLC: 8  Data: 00 00 00 00 00 E0 00 00
