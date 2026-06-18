@@ -380,7 +380,10 @@ static const char *dashWifiStatusName(int status);
 
 // CAN recorder
 #ifndef REC_CAP
-#define REC_CAP 8000
+// Real-car: 8000 frames (~560KB) written to a filling SPIFFS made /rec_stop
+// block until the browser fetch timed out ("cannot stop recording"). 2000
+// (~140KB) saves fast and slows SPIFFS accumulation.
+#define REC_CAP 2000
 #endif
 static constexpr unsigned long kRecMaxDurationMs = 60000UL;
 struct RecFrame
@@ -570,6 +573,9 @@ static bool dashSaveRecordingToSpiffs(int n)
     if (n > REC_CAP)
         n = REC_CAP;
 
+    // SPIFFS is log-structured: explicit remove frees stale blocks from prior
+    // recordings (real-car SPIFFS had accumulated to 86% full, slowing saves).
+    SPIFFS.remove("/rec.csv");
     File f = SPIFFS.open("/rec.csv", "w");
     if (!f)
     {

@@ -3493,7 +3493,8 @@ async function startRec(){
   setText('rec-status',T('录制中')||'Recording...');
 }
 async function stopRec(){
-  try{await postForm('/rec_stop',{});}catch(e){return}
+  setText('rec-status',T('保存中...')||'Saving...');
+  try{await postForm('/rec_stop',{});}catch(e){setText('rec-status',T('保存失败')||'Save failed');return}
   recActive=false;
   $('rec-start').disabled=false;$('rec-stop').disabled=true;$('rec-dl').disabled=false;
   setText('rec-status',T('已保存')||'Saved');
