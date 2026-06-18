@@ -36,6 +36,11 @@ struct DashEpasNagDiag
     uint16_t lastRealTorque = 0; // 0x370 bytes[2:3] raw ((b2&0x0F)<<8 | b3)
     uint8_t lastRealCnt = 0;     // 0x370 byte6 & 0x0F
     uint16_t lastEchoTorque = 0; // torque the last successful echo used
+    // Mode-C observability (spec §5 D8).
+    uint8_t lastDemandState = 0xFF;        // das snapshot at last inject
+    uint16_t lastDemandTorque = 0;         // torque the demand machine returned
+    uint8_t lastHandsLevel = 0;            // level written to byte4
+    const char *lastDemandGate = "idle";  // s1_hold/s2_mild/strong_ramp/...
 };
 
 struct DashEpasNagEngine
@@ -61,6 +66,20 @@ struct DashEpasNagEngine
     bool prevApActive{false};
     bool apBlackoutActive{false};
     uint32_t apDisengageMs{0};
+    // ── Mode-C demand-state machine (spec §6.2) ───────────────
+    bool apActive{false};       // current AP state (noteApState refreshes)
+    int16_t steerAngleX10{0};   // 0x129 angle x10 (onSteeringAngle); dir = >0?-1:+1
+    uint32_t s1EnterMs{0};
+    uint32_t s2EnterMs{0};
+    uint32_t strongEnterMs{0};
+    uint32_t s2HoldUntilMs{0};
+    int16_t mildWalk{kTorqueCenter};
+    int16_t s2HoldRaw{kTorqueCenter};
+    uint8_t s2HoldLevel{0};
+    bool s2Level2Active{false};
+    uint8_t prevDas{0};         // ★ 0 (not 0xFF) so first 0xFF triggers strongEnterMs (D5)
+    int16_t lastRaw{kTorqueCenter};
+    uint8_t lastLevel{0};
     uint16_t torqueWalk{kTorqueCenter};
     uint32_t prng{0xDEADBEEFu};
     DashEpasNagDiag diag{};
@@ -152,6 +171,13 @@ struct DashEpasNagEngine
             apBlackoutActive = true;
         }
         prevApActive = active;
+    }
+
+    // 0x129 steering angle (spec §6.3 dir input). x10 deg, offset-binary already
+    // decoded by mcp2515_dashboard.h:689; 0x3FFF-invalid arrives as 0 here.
+    void onSteeringAngle(int16_t x10)
+    {
+        steerAngleX10 = x10;
     }
 
     // ── gate G1-G6 ───────────────────────────────────────────

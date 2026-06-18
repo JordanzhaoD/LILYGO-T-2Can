@@ -51,6 +51,24 @@ void test_clamp_int16()
     TEST_ASSERT_EQUAL_INT16(3, DashEpasNagEngine::clampInt16(3, -10, 10));
 }
 
+// ── Mode-C: 0x129 steering direction + diag fields ──────────────────
+void test_on_steering_angle_stores_and_defaults()
+{
+    DashEpasNagEngine e;
+    TEST_ASSERT_EQUAL_UINT8(0xFF, e.diag.lastDemandState);
+    TEST_ASSERT_EQUAL_UINT16(0, e.diag.lastDemandTorque);
+    TEST_ASSERT_EQUAL_UINT8(0, e.diag.lastHandsLevel);
+    TEST_ASSERT_EQUAL_STRING("idle", e.diag.lastDemandGate);
+
+    // default 0 -> dir +1 path (verified in Task 4/5); setting positive flips dir
+    e.onSteeringAngle(0);
+    TEST_ASSERT_EQUAL_INT16(0, e.steerAngleX10);
+    e.onSteeringAngle(500); // right turn -> X10 positive
+    TEST_ASSERT_EQUAL_INT16(500, e.steerAngleX10);
+    e.onSteeringAngle(-300);
+    TEST_ASSERT_EQUAL_INT16(-300, e.steerAngleX10);
+}
+
 // ── checksum (additive, NOT crc) ─────────────────────────────────────
 void test_checksum_additive_formula()
 {
@@ -359,6 +377,7 @@ int main()
     RUN_TEST(test_nag_constants);
     RUN_TEST(test_hands_level_from_raw);
     RUN_TEST(test_clamp_int16);
+    RUN_TEST(test_on_steering_angle_stores_and_defaults);
     RUN_TEST(test_checksum_additive_formula);
     RUN_TEST(test_checksum_counter_additive);
     RUN_TEST(test_torque_stays_in_bounds);
