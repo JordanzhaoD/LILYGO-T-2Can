@@ -154,8 +154,13 @@ struct DashEpasNagEngine
 
         diag.lastDemandState = das;
 
-        // AP gate + excluded das states (spec §6.3, upstream das_ap_state<2 analog)
-        if (!apActive || das == 0 || das == 8 || das == 15)
+        // Excluded das states only. NOT gated on apActive: that field mirrors
+        // isDASAutopilotStatus (0x399 byte0 low-nibble ∈ {3,4,5}), which reads false
+        // on cars whose AP-status code is 6 even while AP is engaged and das is
+        // requesting — that made every frame demand_idle / echo=0 on the 2026-06-19
+        // real car (nag never suppressed). The das level itself is the reliable
+        // "AP engaged + hands requested" signal (0/8/15 excluded; 1/2/3/4/5/0xFF inject).
+        if (das == 0 || das == 8 || das == 15)
         {
             lastRaw = kTorqueCenter; lastLevel = 0;
             diag.lastDemandGate = "demand_idle";

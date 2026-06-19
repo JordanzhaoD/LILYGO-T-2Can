@@ -108,12 +108,35 @@ void test_demand_rejects_excluded_das_states()
         TEST_ASSERT_FALSE(e.nextDemandTorque(d, 5000, t, lvl));
     }
 }
-void test_demand_ap_inactive_blocks()
+// Regression (real-car 2026-06-19): apActive mirrors isDASAutopilotActive(), which
+// reads 0x399 byte0 low-nibble and only accepts {3,4,5}. Cars whose byte0 AP-status
+// code is 6 (e.g. Jordan's 2026.14.x — 22/22 frames byte0=6) read apActive=false
+// FOREVER, even though AP is engaged and the DAS hands-on level (byte5 bits[5:2])
+// is actively requesting (das=1/2/3/4/5). Gating the demand machine on apActive made
+// nextDemandTorque return demand_idle on the real car -> echo=0 -> nag never
+// suppressed -> escalated to red "take over immediately". The demand machine must be
+// driven by the das level ALONE (das==0/8/15 still excluded); apActive is NOT a
+// reliable AP signal here. was: test_demand_ap_inactive_blocks (locked the bug).
+void test_demand_injects_when_apactive_false_but_das_strong()
 {
-    DashEpasNagEngine e = makeDemandEngine(3);
-    e.noteApState(false, 1000);
+    DashEpasNagEngine e = makeDemandEngine(3); // das=3 strong; helper arms apActive=true
+    e.noteApState(false, 1000);                // simulate byte0=6 -> apActive=false (AP still engaged)
     uint16_t t; uint8_t lvl;
-    TEST_ASSERT_FALSE(e.nextDemandTorque(3, 5000, t, lvl));
+    e.nextDemandTorque(3, 1100, t, lvl);        // arm strongEnterMs=1100 (within 1000ms delay)
+    // past strong delay -> must inject (strong hold peak 2260), NOT demand_idle
+    TEST_ASSERT_TRUE(e.nextDemandTorque(3, 2700, t, lvl)); // active=600 -> phase=600 -> mag=210
+    TEST_ASSERT_EQUAL_UINT16(2260, t);
+    TEST_ASSERT_EQUAL_UINT8(2, lvl);
+}
+// Same regression at das==1 — the level Jordan's car actually broadcasts (byte5=0xC4
+// for all 22 frames). Proves even the lightest nag request injects without apActive.
+void test_demand_injects_s1_when_apactive_false_but_das_light()
+{
+    DashEpasNagEngine e = makeDemandEngine(1);
+    e.noteApState(false, 1000); // byte0=6 car: apActive=false, but das=1 requests hands-on
+    uint16_t t; uint8_t lvl;
+    TEST_ASSERT_TRUE(e.nextDemandTorque(1, 1100, t, lvl)); // s1 hold window -> inject 2050
+    TEST_ASSERT_EQUAL_UINT16(2050, t);
 }
 void test_demand_state1_holds_then_stops()
 {
@@ -547,7 +570,8 @@ int main()
     RUN_TEST(test_clamp_int16);
     RUN_TEST(test_on_steering_angle_stores_and_defaults);
     RUN_TEST(test_demand_rejects_excluded_das_states);
-    RUN_TEST(test_demand_ap_inactive_blocks);
+    RUN_TEST(test_demand_injects_when_apactive_false_but_das_strong);
+    RUN_TEST(test_demand_injects_s1_when_apactive_false_but_das_light);
     RUN_TEST(test_demand_state1_holds_then_stops);
     RUN_TEST(test_demand_state2_delays_then_mild_walks);
     RUN_TEST(test_demand_state2_negative_band_when_steer_right);
