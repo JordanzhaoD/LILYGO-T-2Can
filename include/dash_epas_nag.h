@@ -80,7 +80,6 @@ struct DashEpasNagEngine
     uint8_t prevDas{0};         // ★ 0 (not 0xFF) so first 0xFF triggers strongEnterMs (D5)
     int16_t lastRaw{kTorqueCenter};
     uint8_t lastLevel{0};
-    uint16_t torqueWalk{kTorqueCenter};
     uint32_t prng{0xDEADBEEFu};
     DashEpasNagDiag diag{};
 
@@ -134,17 +133,6 @@ struct DashEpasNagEngine
         x ^= x << 5;
         prng = x;
         return x;
-    }
-
-    // B1 fix (2026-06-18 real-car evidence: echoTorque=1908=-1.42Nm, txOk=74078
-    // 100% success, yet nag still fired). The mean-reverting walk toward 0 Nm is
-    // the root cause — the car ignores torque that drifts back to 0. HOLD a
-    // sustained +1.80 Nm so the car reads continuous driver input, matching the
-    // proven NagHandler byte3=0xB6 strategy. The legacy xorshift walk below is
-    // kept for reference but no longer drives the echo.
-    uint16_t nextTorque()
-    {
-        return kTorqueHoldNm;
     }
 
     // ── Mode-C demand-state torque machine (spec §6.3) ───────────────
@@ -298,7 +286,6 @@ struct DashEpasNagEngine
             return false;
         }
 
-        // Snapshot the real 0x370 we just saw (observability only).
         diag.lastRealTorque = static_cast<uint16_t>(((inData[2] & 0x0Fu) << 8) | inData[3]);
         diag.lastRealCnt = static_cast<uint8_t>(inData[6] & 0x0Fu);
 
@@ -312,32 +299,43 @@ struct DashEpasNagEngine
             return false;
         }
 
-        const uint16_t torq = nextTorque();
+        uint16_t torq = 0;
+        uint8_t level = 0;
+        if (!nextDemandTorque(dasHandsOnState, nowMs, torq, level))
+        {
+            diag.suppressCount++;
+            diag.lastGate = diag.lastDemandGate; // demand_idle / s1_done / *_delay
+            return false;
+        }
+
+        diag.lastDemandTorque = torq;
+        diag.lastHandsLevel = level;
         diag.lastEchoTorque = torq;
+        diag.lastGate = diag.lastDemandGate;
+
         outData[0] = inData[0];
         outData[1] = inData[1];
         outData[2] = static_cast<uint8_t>((inData[2] & 0xF0u) | ((torq >> 8) & 0x0Fu));
         outData[3] = static_cast<uint8_t>(torq & 0xFFu);
-        outData[4] = inData[4] | 0x40u;               // B2: force handsOnLevel active (bit6=1). Real-car 2026-06-18: echoTorque=2230 matched NagHandler yet nag fired — torque alone is insufficient, the car disbelieves "hands off + torque". Matches NagHandler byte4|=0x40.
+        outData[4] = static_cast<uint8_t>((inData[4] & 0x3Fu) | (uint8_t)(level << 6)); // ★ level derived
         outData[5] = inData[5];
         uint8_t cnt = static_cast<uint8_t>(inData[6] & 0x0Fu);
         cnt = static_cast<uint8_t>((cnt + 1) & 0x0Fu);
         outData[6] = static_cast<uint8_t>((inData[6] & 0xF0u) | cnt);
-        outData[7] = teslaChecksum0x370(outData);     // sum(outData[0..6]) + 0x73
+        outData[7] = teslaChecksum0x370(outData);
 
         diag.echoCount++;
-        diag.lastGate = "inject";
         return true;
     }
 
     void reset()
     {
-        torqueWalk = kTorqueCenter;
         prng = 0xDEADBEEFu;
         dasHandsOnState = kDasUnseen;
         diag.dasHandsOnState = kDasUnseen;
         prevApActive = false;
         apBlackoutActive = false;
         apDisengageMs = 0;
+        // Task 8 will also reset mildWalk/prevDas/steerAngleX10/demand fields here.
     }
 };

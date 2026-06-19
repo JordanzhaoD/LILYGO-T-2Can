@@ -18,6 +18,22 @@ static DashEpasNagEngine makeArmedEngine()
     return e;
 }
 
+// Mode-C: engine armed + das==2 (mild) + delay window already burned, so the
+// NEXT tryBuildEcho at nowMs>=3001 injects. Used by frame-construction tests
+// (checksum/counter/count/diag) that need a guaranteed inject on one call.
+static DashEpasNagEngine makeDemandArmedEngine()
+{
+    DashEpasNagEngine e;
+    e.noteRuntime(true, true, true);
+    e.noteApState(true, 1000);
+    uint8_t das[8] = {0};
+    das[5] = static_cast<uint8_t>(2 << 2);
+    e.onDasGate(das);
+    uint8_t in[8]; buildEpasFrame(in, 0, 1); uint8_t out[8];
+    e.tryBuildEcho(in, 8, 1100, out); // arm s2EnterMs=1100, returns false (in delay)
+    return e;
+}
+
 // ── constants ────────────────────────────────────────────────────────
 void test_nag_constants()
 {
@@ -235,38 +251,6 @@ void test_checksum_counter_additive()
     TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>((cs0 + 1) & 0xFF), cs1);
 }
 
-// ── torque walk ──────────────────────────────────────────────────────
-void test_torque_stays_in_bounds()
-{
-    DashEpasNagEngine e;
-    for (int n = 0; n < 500; n++)
-    {
-        uint16_t t = e.nextTorque();
-        TEST_ASSERT_TRUE(t >= DashEpasNagEngine::kTorqueMin);
-        TEST_ASSERT_TRUE(t <= DashEpasNagEngine::kTorqueMax);
-    }
-}
-
-// B1 fix (real-car evidence 2026-06-18: echoTorque=1908 = -1.42 Nm, yet nag
-// still fired). A mean-reverting torque that drifts back toward 0 Nm never
-// looks like "hands on" — the car ignores it. Echo must HOLD a sustained
-// positive torque (+1.80 Nm = raw 2230), matching the proven NagHandler
-// byte3=0xB6 strategy. Fixed, not a random walk.
-void test_torque_returns_fixed_positive()
-{
-    DashEpasNagEngine e;
-    for (int n = 0; n < 50; n++)
-        TEST_ASSERT_EQUAL_UINT16(2230, e.nextTorque());
-}
-
-void test_torque_sequence_is_deterministic()
-{
-    DashEpasNagEngine a;
-    DashEpasNagEngine b;
-    for (int n = 0; n < 64; n++)
-        TEST_ASSERT_EQUAL_UINT16(a.nextTorque(), b.nextTorque());
-}
-
 // ── gate G1-G6 truth table ───────────────────────────────────────────
 void test_gate_disabled_blocks()
 {
@@ -359,40 +343,57 @@ void test_echo_gated_returns_false()
     TEST_ASSERT_FALSE(e.tryBuildEcho(in, 8, 1000, out));
     TEST_ASSERT_EQUAL_UINT32(0, e.diag.echoCount);
 }
-// B2 (real-car 2026-06-18): echoTorque=2230 already matched NagHandler yet nag
-// still fired — torque alone is insufficient. Force handsOnLevel active
-// (byte4 bit6=1), matching NagHandler byte4|=0x40. CSV showed handsOn=0 (hands
-// off) on every echoed frame; the car disbelieves "hands off + 1.80Nm torque".
-void test_echo_forces_handson_active()
+// Mode-C (replaces B2): handsOnLevel is DERIVED from torque magnitude, not
+// forced to 1. Strong peak (2.1Nm) -> level 2; mild midband (>=1Nm) -> level 1.
+void test_echo_level_derived_from_torque()
 {
-    DashEpasNagEngine e = makeArmedEngine();
-    uint8_t in[8];
-    buildEpasFrame(in, 0, 5); // handsOnLevel=0 (hands off) — the nag-trigger case
+    // strong peak path: das==0xFF, AP on, advance past delay -> 2260 -> level 2
+    DashEpasNagEngine e;
+    e.noteRuntime(true, true, true);
+    e.noteApState(true, 1000);
+    uint8_t in[8]; buildEpasFrame(in, 0, 5);
     uint8_t out[8];
-    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
-    TEST_ASSERT_EQUAL_HEX8(0x40, out[4] & 0x40); // bit6 forced set -> handsOn active
+    e.tryBuildEcho(in, 8, 1100, out);            // arm strongEnterMs (das 0xFF unseen)
+    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 2700, out));   // peak hold
+    TEST_ASSERT_EQUAL_UINT8(2, (out[4] >> 6) & 0x03);     // level 2 written to bits[7:6]
+    TEST_ASSERT_EQUAL_UINT8(2, e.diag.lastHandsLevel);
+}
+// Mode-C: tryBuildEcho's reject path. When the demand machine says "don't
+// inject" (das==2 still in its 2000ms delay), tryBuildEcho must return false,
+// NOT increment echoCount, increment suppressCount, and propagate the demand
+// gate string. (Task 6 integration — the production path to the vehicle.)
+void test_echo_demand_reject_propagates_gate()
+{
+    DashEpasNagEngine e = makeDemandEngine(2);
+    uint8_t in[8]; buildEpasFrame(in, 0, 1);
+    uint8_t out[8];
+    // das==2 within its 2000ms delay -> nextDemandTorque returns false
+    TEST_ASSERT_FALSE(e.tryBuildEcho(in, 8, 1100, out));
+    TEST_ASSERT_EQUAL_UINT32(0, e.diag.echoCount);
+    TEST_ASSERT_TRUE(e.diag.suppressCount >= 1);
+    TEST_ASSERT_EQUAL_STRING("s2_delay", e.diag.lastGate);
 }
 void test_echo_counter_increments_and_wraps()
 {
-    DashEpasNagEngine e = makeArmedEngine();
     for (uint8_t c = 0; c < 16; c++)
     {
+        DashEpasNagEngine e = makeDemandArmedEngine();
         uint8_t in[8];
         buildEpasFrame(in, 0, c);
         in[6] = static_cast<uint8_t>(0xA0 | c);
         uint8_t out[8];
-        TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000 + c, out));
+        TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 3100, out));
         uint8_t expected = static_cast<uint8_t>(0xA0 | ((c + 1) & 0x0F));
         TEST_ASSERT_EQUAL_HEX8(expected, out[6]);
     }
 }
 void test_echo_checksum_correct()
 {
-    DashEpasNagEngine e = makeArmedEngine();
+    DashEpasNagEngine e = makeDemandArmedEngine();
     uint8_t in[8];
     buildEpasFrame(in, 0, 9);
     uint8_t out[8];
-    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
+    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 3100, out));
     uint16_t expected = 0x70u + 0x03u;
     for (int i = 0; i < 7; i++)
         expected += out[i];
@@ -400,60 +401,64 @@ void test_echo_checksum_correct()
 }
 void test_echo_torque_in_valid_range_data23()
 {
-    DashEpasNagEngine e = makeArmedEngine();
+    DashEpasNagEngine e = makeDemandArmedEngine();
     uint8_t in[8];
     buildEpasFrame(in, 0, 3);
     uint8_t out[8];
-    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
+    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 3100, out));
     uint16_t raw = static_cast<uint16_t>(((out[2] & 0x0F) << 8) | out[3]);
     TEST_ASSERT_TRUE(raw >= DashEpasNagEngine::kTorqueMin);
     TEST_ASSERT_TRUE(raw <= DashEpasNagEngine::kTorqueMax);
 }
 void test_echo_count_increments()
 {
-    DashEpasNagEngine e = makeArmedEngine();
+    DashEpasNagEngine e = makeDemandArmedEngine();
     uint8_t in[8];
     buildEpasFrame(in, 0, 1);
     uint8_t out[8];
-    e.tryBuildEcho(in, 8, 1000, out);
-    e.tryBuildEcho(in, 8, 1010, out);
-    e.tryBuildEcho(in, 8, 1020, out);
+    e.tryBuildEcho(in, 8, 3100, out);
+    e.tryBuildEcho(in, 8, 3110, out);
+    e.tryBuildEcho(in, 8, 3120, out);
     TEST_ASSERT_EQUAL_UINT32(3, e.diag.echoCount);
 }
 void test_reset_clears_state()
 {
-    DashEpasNagEngine e = makeArmedEngine();
+    DashEpasNagEngine e = makeDemandArmedEngine();
     uint8_t in[8];
     buildEpasFrame(in, 0, 1);
     uint8_t out[8];
-    e.tryBuildEcho(in, 8, 1000, out);
+    e.tryBuildEcho(in, 8, 3100, out);
     e.reset();
-    TEST_ASSERT_EQUAL_UINT16(DashEpasNagEngine::kTorqueCenter, e.torqueWalk);
     TEST_ASSERT_EQUAL_UINT8(DashEpasNagEngine::kDasUnseen, e.dasHandsOnState);
     TEST_ASSERT_EQUAL_UINT32(0, e.apDisengageMs);
+    // Task 8 will restore these assertions (reset() does not yet clear
+    // mildWalk/prevDas/steerAngleX10 — left RED for Task 8):
+    // TEST_ASSERT_EQUAL_UINT16(2050, (uint16_t)e.mildWalk);   // mildWalk reset to center
+    // TEST_ASSERT_EQUAL_UINT8(0, e.prevDas);                  // prevDas reset to 0 (not 0xFF)
+    // TEST_ASSERT_EQUAL_INT16(0, e.steerAngleX10);
 }
 
 // ── diag snapshots (observability) ───────────────────────────────────
 void test_diag_records_real_torque_and_counter()
 {
-    DashEpasNagEngine e = makeArmedEngine();
+    DashEpasNagEngine e = makeDemandArmedEngine();
     uint8_t in[8] = {0};
     in[2] = 0x0A; // torque high nibble
     in[3] = 0x34; // torque low byte -> raw 0xA34
     in[4] = 0x00; // handsOnLevel 0
     in[6] = 0x07; // counter 7
     uint8_t out[8];
-    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
+    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 3100, out));
     TEST_ASSERT_EQUAL_UINT16(0x0A34, e.diag.lastRealTorque);
     TEST_ASSERT_EQUAL_UINT8(7, e.diag.lastRealCnt);
 }
 void test_diag_records_echo_torque()
 {
-    DashEpasNagEngine e = makeArmedEngine();
+    DashEpasNagEngine e = makeDemandArmedEngine();
     uint8_t in[8];
     buildEpasFrame(in, 0, 1);
     uint8_t out[8];
-    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 1000, out));
+    TEST_ASSERT_TRUE(e.tryBuildEcho(in, 8, 3100, out));
     uint16_t used = e.diag.lastEchoTorque;
     TEST_ASSERT_TRUE(used >= DashEpasNagEngine::kTorqueMin);
     TEST_ASSERT_TRUE(used <= DashEpasNagEngine::kTorqueMax);
@@ -533,9 +538,6 @@ int main()
     RUN_TEST(test_demand_unseen_0xff_falls_into_strong);
     RUN_TEST(test_checksum_additive_formula);
     RUN_TEST(test_checksum_counter_additive);
-    RUN_TEST(test_torque_stays_in_bounds);
-    RUN_TEST(test_torque_returns_fixed_positive);
-    RUN_TEST(test_torque_sequence_is_deterministic);
     RUN_TEST(test_gate_disabled_blocks);
     RUN_TEST(test_gate_canactive_blocks);
     RUN_TEST(test_gate_defense_blocks);
@@ -548,7 +550,8 @@ int main()
     RUN_TEST(test_gate_blackout_handles_zero_timestamp_edge);
     RUN_TEST(test_echo_rejects_invalid_dlc);
     RUN_TEST(test_echo_gated_returns_false);
-    RUN_TEST(test_echo_forces_handson_active);
+    RUN_TEST(test_echo_level_derived_from_torque);
+    RUN_TEST(test_echo_demand_reject_propagates_gate);
     RUN_TEST(test_echo_counter_increments_and_wraps);
     RUN_TEST(test_echo_checksum_correct);
     RUN_TEST(test_echo_torque_in_valid_range_data23);
