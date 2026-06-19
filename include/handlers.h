@@ -543,6 +543,16 @@ struct HW3Handler : public CarManagerBase
             // HW3 mux-2 override path. Used by dashComputeHw3OffsetRaw().
             if (frame.dlc >= 2)
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
+            // ISA chime suppress — runtime gate (spec Task 2, 对齐 HW4Handler:856-864)
+            if ((bool)isaChimeSuppress && frame.dlc >= 8 && injectionAllowed())
+            {
+                frame.data[1] |= 0x20;
+                frame.data[7] = computeVehicleChecksum(frame);
+                framesSent++;
+                driver.send(frame);
+                if (onSend) onSend(0, true);
+                return;
+            }
             return;
         }
         if (frame.id == 2047)

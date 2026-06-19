@@ -781,6 +781,65 @@ void test_hw3_sync_legacy_shims_custom_mode()
     TEST_ASSERT_TRUE(hw3HighSpeedEnable);
 }
 
+// --- ISA speed chime suppression, HW3 (CAN ID 921) — spec Task 2 ---
+
+void test_hw3_isa_suppress_sets_bit5_of_data1()
+{
+    fusedSpeedLimitRaw = 0;
+    handler.isaChimeSuppress = true;
+    CanFrame f = {.id = 921};
+    f.dlc = 8;
+    f.data[1] = 0x00;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x20, mock.sent[0].data[1] & 0x20);
+}
+
+void test_hw3_isa_suppress_preserves_existing_data1_bits()
+{
+    fusedSpeedLimitRaw = 0;
+    handler.isaChimeSuppress = true;
+    CanFrame f = {.id = 921};
+    f.dlc = 8;
+    f.data[1] = 0xC3;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL_HEX8(0xE3, mock.sent[0].data[1]); // 0xC3 | 0x20
+}
+
+void test_hw3_isa_suppress_checksum_correct()
+{
+    fusedSpeedLimitRaw = 0;
+    handler.isaChimeSuppress = true;
+    CanFrame f = {.id = 921};
+    f.dlc = 8;
+    f.data[0] = 0x10; f.data[1] = 0x05;
+    f.data[2] = 0; f.data[3] = 0; f.data[4] = 0; f.data[5] = 0; f.data[6] = 0;
+    handler.handleMessage(f, mock);
+    // OR 后 data[1]=0x25; checksum = id_lo+id_hi + data[0..6] = 0x99+0x03+0x10+0x25 = 0xD1
+    TEST_ASSERT_EQUAL_HEX8(0xD1, mock.sent[0].data[7]);
+}
+
+void test_hw3_isa_suppress_runtime_off_skips_send()
+{
+    fusedSpeedLimitRaw = 0;
+    handler.isaChimeSuppress = false;
+    CanFrame f = {.id = 921};
+    f.dlc = 8;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+void test_hw3_isa_suppress_still_captures_fused_limit()
+{
+    fusedSpeedLimitRaw = 0;
+    handler.isaChimeSuppress = true;
+    CanFrame f = {.id = 921};
+    f.dlc = 8;
+    f.data[1] = 0x15;             // fused limit raw = 0x15
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL_UINT8(0x15, fusedSpeedLimitRaw);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -855,6 +914,13 @@ int main()
     RUN_TEST(test_hw3_sync_legacy_shims_fixed_mode);
     RUN_TEST(test_hw3_sync_legacy_shims_auto_mode);
     RUN_TEST(test_hw3_sync_legacy_shims_custom_mode);
+
+    // ISA speed chime suppression, HW3 (CAN ID 921) — spec Task 2
+    RUN_TEST(test_hw3_isa_suppress_sets_bit5_of_data1);
+    RUN_TEST(test_hw3_isa_suppress_preserves_existing_data1_bits);
+    RUN_TEST(test_hw3_isa_suppress_checksum_correct);
+    RUN_TEST(test_hw3_isa_suppress_runtime_off_skips_send);
+    RUN_TEST(test_hw3_isa_suppress_still_captures_fused_limit);
 
     return UNITY_END();
 }
