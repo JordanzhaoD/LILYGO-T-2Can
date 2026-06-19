@@ -291,6 +291,14 @@ void test_gate_das_suspended_blocks()
     e.onDasGate(das);
     TEST_ASSERT_FALSE(e.shouldInject(0, 1000));
 }
+void test_gate_das_15_blocks()
+{
+    DashEpasNagEngine e = makeArmedEngine();
+    uint8_t das[8] = {0};
+    das[5] = static_cast<uint8_t>(15 << 2);
+    e.onDasGate(das);
+    TEST_ASSERT_FALSE(e.shouldInject(0, 1000));
+}
 void test_gate_das_unseen_injects_d5()
 {
     DashEpasNagEngine e = makeArmedEngine();
@@ -544,6 +552,7 @@ int main()
     RUN_TEST(test_gate_real_hand_blocks);
     RUN_TEST(test_gate_das_satisfied_blocks);
     RUN_TEST(test_gate_das_suspended_blocks);
+    RUN_TEST(test_gate_das_15_blocks);
     RUN_TEST(test_gate_das_unseen_injects_d5);
     RUN_TEST(test_gate_das_escalating_injects);
     RUN_TEST(test_gate_blackout_blocks_then_clears);

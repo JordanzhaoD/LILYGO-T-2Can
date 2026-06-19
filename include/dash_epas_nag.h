@@ -268,7 +268,7 @@ struct DashEpasNagEngine
         if (handsOn == 1)                                        // G4: real hand detected
             return false;
         const uint8_t das = dasHandsOnState;
-        if (das == 0 || das == 8)                                // G5: NOT_REQD / SUSPENDED
+        if (das == 0 || das == 8 || das == 15)                   // G5: NOT_REQD / SUSPENDED / (15)
             return false;                                        //     (0xFF unseen -> passes -> D5 inject)
         if (apBlackoutActive && (nowMs - apDisengageMs) < kBlackoutMs) // G6
             return false;
