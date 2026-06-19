@@ -1,5 +1,7 @@
 # EPAS-Faithful 统一方向盘 Nag 抑制 — 设计规格
 
+> ⛔ **已下架（2026-06-19）**：本 spec 描述的引擎因实车安全事故（注入篡改的 0x370 帧触发车身控制故障）被物理移除。见 `docs/EPAS-NAG-REMOVAL-INCIDENT.md` 与 `docs/superpowers/specs/2026-06-19-remove-epas-nag-design.md`。请勿据此复辟。
+
 - **日期**: 2026-06-17
 - **项目**: LILYGO-T-2Can-firmware（微雪 ESP32-S3 单 CAN 独立固件）
 - **状态**: 设计已确认（2026-06-17），待实现计划

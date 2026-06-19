@@ -1,5 +1,7 @@
 # EPAS-Faithful Nag 对齐上游 Mode-C（v2.16-beta.8）— 设计规格
 
+> ⛔ **已下架（2026-06-19）**：本 spec 描述的引擎因实车安全事故（注入篡改的 0x370 帧触发车身控制故障）被物理移除。见 `docs/EPAS-NAG-REMOVAL-INCIDENT.md` 与 `docs/superpowers/specs/2026-06-19-remove-epas-nag-design.md`。请勿据此复辟。
+
 - **日期**: 2026-06-19
 - **项目**: LILYGO-T-2Can-firmware（微雪 ESP32-S3 单 CAN 独立固件）
 - **状态**: 设计已确认（2026-06-19），待实现计划
@@ -166,8 +168,14 @@ if (!prevStrong && isStrong) strongEnterMs = nowMs;
 if (!isStrong) strongEnterMs = 0;
 prevDas = das;
 
-// AP 门（Mode-C 内层冗余，对齐上游 das_ap_state<2 不注入）
-if (!apActive || das==0 || das==8 || das==15) {
+// ⚠️ 2026-06-19 实车证伪并移除（commit 2f75109）：apActive = isDASAutopilotActive
+//   (can_helpers.h:70-78 读 0x399 byte0∈{3,4,5})，对 byte0=6 的车（Jordan 2026.14.x，
+//   录制 CSV 22/22 帧 byte0=6）恒 false → demand_idle → echo=0 → nag 完全未抑制 + 红色
+//   接管。das hands-on (byte5 bits[5:2]) 才是可靠的"AP engaged + hands requested"信号。
+//   代码已删 !apActive 门控，das 等级自决（das==0/8/15 仍排除）。下文伪代码保留作历史
+//   设计记录，实现以 include/dash_epas_nag.h 为准。
+// AP 门（Mode-C 内层冗余，对齐上游 das_ap_state<2 不注入）【!apActive 已于 2f75109 移除】
+if (!apActive || das==0 || das==8 || das==15) {   // ← 实现中已改为 das==0||8||15
     lastRaw = 2050; lastLevel = 0; return false;   // demand_idle
 }
 
