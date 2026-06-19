@@ -1539,7 +1539,6 @@ static void dashApplyRuntimeState()
         dashHandler->bionicSteering = dashBionicSteering;
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->banShieldEnable = nvsBanShieldEnable;
-        dashHandler->epasNagActive = dashEpasNagEnabled && canActive && dashDefenseEnabled;
         dashHandler->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         dashHandler->overrideSpeedLimit = nvsOverrideSpeedLimit;
         dashHandler->legacyOffset = nvsLegacyOffset;

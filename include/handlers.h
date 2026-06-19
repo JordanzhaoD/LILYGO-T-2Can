@@ -70,7 +70,6 @@ struct CarManagerBase
     Shared<bool> bionicSteering{false};   // Phase 3: bionic steering mode
     Shared<uint8_t> hw4OffsetRaw{0};
     Shared<bool> banShieldEnable{false};
-    Shared<bool> epasNagActive{false};  // EPAS-faithful nag engine active (D7): when true, skip bit19 nag
     Shared<uint32_t> banShieldBlocks{0};
     Shared<uint8_t> hwDetected{0};
     Shared<bool> autoModeEnabled{false};
@@ -601,8 +600,8 @@ struct HW3Handler : public CarManagerBase
                 if (onSend) onSend(0, true);
             }
 
-            // ── Mux 1: Nag suppression (skipped when EPAS-faithful nag active — D7) ──
-            if (index == 1 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed() && !(bool)epasNagActive)
+            // ── Mux 1: Nag suppression (bit-19 clear, legacy baseline) ──
+            if (index == 1 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
             {
                 setBit(frame, 19, false);
                 framesSent++;
@@ -948,13 +947,10 @@ struct HW4Handler : public CarManagerBase
             }
 
             // Mux 1: FSD-ready signal (bit 47) + nag suppression (bit 19).
-            // bit-47 FSD-ready is independent of the nag engine; only the bit-19
-            // nag clear is skipped when EPAS-faithful nag is active (D7).
             if (index == 1 && (bool)fsdTriggered && injectionAllowed() && builtInFsdInjectionAllowed())
             {
                 setBit(frame, 47, true);
-                if (!(bool)epasNagActive)                 // D7: bit-19 nag skipped when faithful active
-                    setBit(frame, 19, false);
+                setBit(frame, 19, false);
                 framesSent++;
                 driver.send(frame);
                 if (onSend) onSend(1, true);
