@@ -9,7 +9,8 @@
 // per-generation DAS hands-on gate (0x399 legacy/HW3, 0x39B Highland
 // HW3/HW4) only decides WHEN to inject.
 //
-// Spec: docs/superpowers/specs/2026-06-17-epas-faithful-nag-unified-design.md
+// Spec: docs/superpowers/specs/2026-06-19-upstream-epas-nag-modec-align-design.md
+//      (supersedes 2026-06-17-epas-faithful-nag-unified-design.md — Mode-C demand-state)
 // Default OFF (experimental). bit19 nag stays as default-on baseline;
 // this engine takes over only when dashEpasNagEnabled is set (D7).
 //

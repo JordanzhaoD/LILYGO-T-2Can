@@ -56,5 +56,23 @@ def test_epasNagDiag_has_modec_fields():
     assert '\\"gate\\"' in block, 'demand object missing gate'
 
 
+def test_dash_epas_nag_has_modec_symbols():
+    import pathlib
+    src = pathlib.Path("include/dash_epas_nag.h").read_text()
+    for sym in ("nextDemandTorque", "handsLevelFromRaw", "onSteeringAngle",
+                "clampInt16", "demand_idle", "strong_ramp", "s2_mild"):
+        assert sym in src, f"dash_epas_nag.h missing Mode-C symbol: {sym}"
+    # B1/B2 removed
+    assert "nextTorque()" not in src, "B1 nextTorque() must be removed"
+    assert "| 0x40u" not in src and "|= 0x40u" not in src, "B2 forced level must be removed"
+
+
+def test_dash_epas_nag_spec_ref_updated():
+    import pathlib
+    src = pathlib.Path("include/dash_epas_nag.h").read_text()
+    assert "2026-06-19-upstream-epas-nag-modec-align-design.md" in src, \
+        "header must reference the Mode-C spec"
+
+
 if __name__ == "__main__":
     unittest.main()
