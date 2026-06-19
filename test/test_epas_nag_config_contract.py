@@ -23,5 +23,17 @@ class ConfigContract(unittest.TestCase):
         self.assertIn('",\\"epasNag\\":', D)
 
 
+def test_0x129_feeds_onSteeringAngle():
+    import pathlib
+    p = pathlib.Path("include/web/mcp2515_dashboard.h")
+    src = p.read_text()
+    # the 0x129 block must call onSteeringAngle with the parsed steerAngleX10
+    block = src[src.index("frame.id == 0x129 && frame.dlc >= 6"):]
+    block = block[:block.index("return;")]
+    assert "dashEpasNagCtrl.onSteeringAngle" in block, \
+        "0x129 block must feed steerAngleX10 to the nag engine"
+    assert "steerAngleX10" in block
+
+
 if __name__ == "__main__":
     unittest.main()

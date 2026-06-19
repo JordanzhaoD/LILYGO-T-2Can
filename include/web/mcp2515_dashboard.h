@@ -689,6 +689,7 @@ static void dashRecordApRestoreFrame(const CanFrame &frame, unsigned long now)
         apRestoreState.steerAngleX10 = angleRaw == 0x3FFF ? 0 : static_cast<int16_t>(angleRaw) - 8192;
         apRestoreState.steerSpeedX10 = static_cast<int16_t>(static_cast<int32_t>(speedRaw) * 5 - 40960);
         apRestoreState.steerMs = now;
+        dashEpasNagCtrl.onSteeringAngle(apRestoreState.steerAngleX10); // Mode-C dir input (spec D4)
         return;
     }
     if (frame.id == 0x293 && frame.dlc >= 8)
