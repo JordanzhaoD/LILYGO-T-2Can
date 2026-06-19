@@ -2763,7 +2763,15 @@ static void handleStatus()
         j += (unsigned)ng.lastHandsOn;
         j += ",\"torque\":";
         j += (unsigned)ng.lastEchoTorque;
-        j += "}}";
+        j += "},\"demand\":{\"state\":";
+        j += (unsigned)ng.lastDemandState;
+        j += ",\"torque\":";
+        j += (unsigned)ng.lastDemandTorque;
+        j += ",\"handsLevel\":";
+        j += (unsigned)ng.lastHandsLevel;
+        j += ",\"gate\":\"";
+        j += ng.lastDemandGate ? ng.lastDemandGate : "idle";
+        j += "\"}}";
     }
     appendCapabilitiesJson(j, hwMode, effectiveHw);
     j += "}";

@@ -35,5 +35,26 @@ def test_0x129_feeds_onSteeringAngle():
     assert "steerAngleX10" in block
 
 
+def test_epasNagDiag_has_modec_fields():
+    import pathlib
+    src = pathlib.Path("include/web/mcp2515_dashboard.h").read_text()
+    # The C++ builds JSON via string literals with escaped quotes, so the
+    # source contains \"epasNagDiag\". Accept both escaped and unescaped.
+    key = '\\"epasNagDiag\\"' if '\\"epasNagDiag\\"' in src else '"epasNagDiag"'
+    block = src[src.index(key):]
+    # bound the block at the next function/section; appendCapabilitiesJson
+    # terminates the epasNagDiag JSON construction in handleStatus.
+    end_anchor = "appendCapabilitiesJson" if "appendCapabilitiesJson" in block else None
+    if end_anchor:
+        block = block[:block.index(end_anchor)]
+    # Mode-C: nested "demand" object (acceptance: /status.epasNagDiag.demand.gate
+    # toggles s2_mild/strong_ramp/strong_hold; demand.torque / demand.handsLevel).
+    assert '\\"demand\\"' in block or '"demand"' in block, 'epasNagDiag JSON missing "demand" object'
+    assert '\\"state\\"' in block, 'demand object missing state'
+    assert '\\"torque\\"' in block, 'demand object missing torque'
+    assert '\\"handsLevel\\"' in block, 'demand object missing handsLevel'
+    assert '\\"gate\\"' in block, 'demand object missing gate'
+
+
 if __name__ == "__main__":
     unittest.main()
