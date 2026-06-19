@@ -336,6 +336,12 @@ struct DashEpasNagEngine
         prevApActive = false;
         apBlackoutActive = false;
         apDisengageMs = 0;
-        // Task 8 will also reset mildWalk/prevDas/steerAngleX10/demand fields here.
+        // Mode-C machine
+        apActive = false;
+        steerAngleX10 = 0;
+        s1EnterMs = s2EnterMs = strongEnterMs = s2HoldUntilMs = 0;
+        mildWalk = kTorqueCenter; s2HoldRaw = kTorqueCenter; s2HoldLevel = 0;
+        s2Level2Active = false;
+        prevDas = 0; lastRaw = kTorqueCenter; lastLevel = 0;
     }
 };

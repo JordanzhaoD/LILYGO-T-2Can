@@ -439,11 +439,24 @@ void test_reset_clears_state()
     e.reset();
     TEST_ASSERT_EQUAL_UINT8(DashEpasNagEngine::kDasUnseen, e.dasHandsOnState);
     TEST_ASSERT_EQUAL_UINT32(0, e.apDisengageMs);
-    // Task 8 will restore these assertions (reset() does not yet clear
-    // mildWalk/prevDas/steerAngleX10 — left RED for Task 8):
-    // TEST_ASSERT_EQUAL_UINT16(2050, (uint16_t)e.mildWalk);   // mildWalk reset to center
-    // TEST_ASSERT_EQUAL_UINT8(0, e.prevDas);                  // prevDas reset to 0 (not 0xFF)
-    // TEST_ASSERT_EQUAL_INT16(0, e.steerAngleX10);
+    TEST_ASSERT_EQUAL_UINT16(2050, (uint16_t)e.mildWalk);   // mildWalk reset to center
+    TEST_ASSERT_EQUAL_UINT8(0, e.prevDas);                  // prevDas reset to 0 (not 0xFF)
+    TEST_ASSERT_EQUAL_INT16(0, e.steerAngleX10);
+}
+
+// Mode-C: reset() must clear the demand-state machine fields so a stale
+// session can't bleed torque/timer state into the next one.
+void test_reset_clears_demand_machine()
+{
+    DashEpasNagEngine e = makeDemandArmedEngine();
+    uint8_t in[8]; buildEpasFrame(in, 0, 1); uint8_t out[8];
+    e.tryBuildEcho(in, 8, 3100, out);    // populate s2EnterMs/mildWalk/prevDas
+    e.reset();
+    TEST_ASSERT_EQUAL_UINT32(0, e.s1EnterMs);
+    TEST_ASSERT_EQUAL_UINT32(0, e.s2EnterMs);
+    TEST_ASSERT_EQUAL_UINT32(0, e.strongEnterMs);
+    TEST_ASSERT_EQUAL_UINT8(0, e.prevDas);
+    TEST_ASSERT_FALSE(e.apActive);
 }
 
 // ── diag snapshots (observability) ───────────────────────────────────
@@ -566,6 +579,7 @@ int main()
     RUN_TEST(test_echo_torque_in_valid_range_data23);
     RUN_TEST(test_echo_count_increments);
     RUN_TEST(test_reset_clears_state);
+    RUN_TEST(test_reset_clears_demand_machine);
     RUN_TEST(test_diag_records_real_torque_and_counter);
     RUN_TEST(test_diag_records_echo_torque);
     RUN_TEST(test_trace_ring_push_and_read);
