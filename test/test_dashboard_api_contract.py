@@ -1381,8 +1381,13 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("bionicDisabled()", body)
         self.assertIn("dashBionicDisabled", body)
 
-    def test_phase3_defense_ui_has_8_toggles(self) -> None:
-        """Defense page must have all 8 toggle switches in pg-defense section."""
+    def test_phase3_defense_ui_has_7_toggles(self) -> None:
+        """Defense page must have all 7 toggle switches in pg-defense section.
+
+        (Was 8; the EPAS-nag toggle ``def-epnag-tgl`` was intentionally removed
+        in the nag-injection safety takedown — see ``test_no_epas_nag_contract``
+        for the guard that keeps it gone.)
+        """
         defense_page = re.search(r'id="pg-defense".*?id="pg-ota"', self.ui, re.S)
         self.assertIsNotNone(defense_page)
         body = defense_page.group(0)
@@ -1394,17 +1399,13 @@ class DashboardApiContractTests(unittest.TestCase):
             'id="def-speed-nd-tgl"',
             'id="def-dnd-spd-tgl"',
             'id="def-apeap-tgl"',
-            'id="def-epnag-tgl"',
         ]
+        self.assertEqual(len(toggles), 7)
         for tid in toggles:
             with self.subTest(toggle=tid):
                 self.assertIn(tid, body)
-
-    def test_epas_nag_defense_toggle_is_wired(self) -> None:
-        """EPAS nag toggle must load/save the epas_nag field, not just render."""
-        self.assertIn('id="def-epnag-tgl"', self.ui)
-        self.assertIn("epnag.checked=!!d.epas_nag", self.ui)              # loadDefenseConfig reads /defense_config.epas_nag
-        self.assertIn("epas_nag:epnag&&epnag.checked?'1':'0'", self.ui)   # saveDefenseConfig POSTs epas_nag
+        # Sanity: the removed nag toggle must NOT be present (guarded elsewhere too).
+        self.assertNotIn('id="def-epnag-tgl"', body)
 
     def test_phase3_defense_ui_bionic_warning_element(self) -> None:
         """UI must have bionic-disabled warning element."""

@@ -46,8 +46,6 @@
 #include "dash_power_mgmt.h"
 #include "dash_fog_light.h"
 #include "dash_wheel_dnd.h"
-#include "dash_epas_nag.h"
-#include "dash_epas_nag_trace.h"
 #include "dash_tx_evidence.h"
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
@@ -196,30 +194,6 @@ static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行
 static bool dashDndSpeed = false;       // 速度滚轮DND（Phase 3实现执行逻辑）
 static bool dashBionicDisabled = false; // bionic auto-disabled after 3 failures
 static bool dashApEapCompatible = true;
-static bool dashEpasNagEnabled = false;   // EPAS-faithful nag (experimental, default off; D7)
-static DashEpasNagEngine dashEpasNagCtrl; // unified EPAS nag engine instance
-
-// ── EPAS nag observability (read-only trace ring, default off) ──
-// Records what the nag engine already decided, so the real-car failure can be
-// diagnosed post-drive. Never alters nag/injection behaviour. Auto-arms only
-// when dashEpasNagEnabled is on; flush is deferred to the loop task (never on
-// the 100 Hz onFrame hot path).
-static EpasNagTraceRing dashEpasNagTrace;
-static EpasNagTraceEntry dashEpasNagLastEntry{};
-static uint32_t dashEpasNagLastSampleMs = 0;
-static uint32_t dashEpasNagConsecFail = 0;
-static uint32_t dashEpasNagLastTxFail = 0;
-static uint32_t dashEpasNagLastSwTxErr = 0;
-static bool dashEpasNagLastApActive = false;
-static const char *dashEpasNagLastGateStr = "idle";
-static bool dashEpasNagTracePendingFlush = false;
-static uint32_t dashEpasNagLastFlushMs = 0; // periodic flush watermark (A2: survive power loss)
-static bool dashEpasNagTraceManual = false; // explicit /epas_nag_trace_start
-// Forward declarations (defined after dashEpasNagOnFrame).
-static void dashEpasNagTraceSample(uint32_t now, bool injected, bool sendOk);
-static void dashEpasNagTraceFlush();
-static void dashEpasNagTraceStop(const char *reason);
-static void dashEpasNagTracePoll();
 static LegacyFsdPolicy dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
 static bool dashLegacyFsdMux1Enable = false;
 static bool dashLegacyFsdProfileWriteEnable = false;
@@ -689,7 +663,6 @@ static void dashRecordApRestoreFrame(const CanFrame &frame, unsigned long now)
         apRestoreState.steerAngleX10 = angleRaw == 0x3FFF ? 0 : static_cast<int16_t>(angleRaw) - 8192;
         apRestoreState.steerSpeedX10 = static_cast<int16_t>(static_cast<int32_t>(speedRaw) * 5 - 40960);
         apRestoreState.steerMs = now;
-        dashEpasNagCtrl.onSteeringAngle(apRestoreState.steerAngleX10); // Mode-C dir input (spec D4)
         return;
     }
     if (frame.id == 0x293 && frame.dlc >= 8)
@@ -817,221 +790,6 @@ static void dashDrainLogRing()
     logRingDrainCursor = h;
 }
 
-// EPAS-faithful nag: observe DAS gate frames and echo 0x370 when the gate is open.
-// Hooked from mcpDashOnFrame (universal per-frame callback on the active bus).
-// Uses the global dashDriver to send — correct for the single-CAN Waveshare board
-// (0x370/0x399/0x39B all arrive on the main TWAI bus).
-//
-// Observability: arms the trace ring on the first DAS_status frame and records a
-// sample (10 Hz + edges) around each 0x370 decision. Auto-stops on can-offline,
-// 3 consecutive tx fails, or EPAS disabled; the SPIFFS flush is deferred to
-// dashEpasNagTracePoll() (loop task) so the 100 Hz hot path never touches flash.
-static void dashEpasNagOnFrame(const CanFrame &f)
-{
-    if (!dashEpasNagEnabled)
-    {
-        if (dashEpasNagTrace.active)
-            dashEpasNagTraceStop("epas_nag disabled");
-        return; // cheap early-out; engine also checks, but skip work when off
-    }
-    unsigned long now = millis();
-    dashEpasNagCtrl.noteRuntime(dashEpasNagEnabled, canActive, dashDefenseEnabled);
-    if (dashHandler)
-        dashEpasNagCtrl.noteApState((bool)dashHandler->APActive, now);
-
-    if (f.id == 921 || f.id == 923) // 0x399 / 0x39B DAS_status
-    {
-        if (f.dlc >= 6)
-        {
-            dashEpasNagCtrl.onDasGate(f.data);
-            dashEpasNagTrace.armed = true; // seen a DAS frame -> eligible to record
-        }
-        return;
-    }
-    if (f.id == 880 && f.dlc >= 8) // 0x370 EPAS3P_sysStatus
-    {
-        // Auto-start: armed + canActive + first 0x370 edge.
-        if (!dashEpasNagTrace.active && dashEpasNagTrace.armed && canActive)
-        {
-            dashEpasNagTrace.active = true;
-            dashLog("[EPAS-NAG-TRACE] auto-start");
-        }
-
-        uint8_t out[8];
-        bool injected = dashEpasNagCtrl.tryBuildEcho(f.data, f.dlc, now, out);
-        bool sendOk = false;
-        if (injected)
-        {
-            CanFrame echo;
-            echo.id = 880;
-            echo.dlc = 8;
-            memcpy(echo.data, out, 8);
-            echo.bus = f.bus;
-            sendOk = dashDriver && dashDriver->send(echo);
-            dashEpasNagCtrl.diag.tx.recordAttempt(echo.id, echo.bus, echo.dlc, echo.data, now);
-            dashEpasNagCtrl.diag.tx.recordResult(sendOk);
-            dashRecordCanFrame(echo, sendOk ? 'T' : 'E');
-        }
-        dashEpasNagTraceSample((uint32_t)now, injected, sendOk);
-
-        // Auto-stop conditions (flush deferred to loop task).
-        if (dashEpasNagTrace.active)
-        {
-            if (!canActive)
-                dashEpasNagTraceStop("can offline");
-            else if (injected && !sendOk)
-            {
-                if (++dashEpasNagConsecFail >= 3)
-                    dashEpasNagTraceStop("3 consecutive tx fail");
-            }
-            else if (injected && sendOk)
-                dashEpasNagConsecFail = 0;
-        }
-    }
-}
-
-// TWAI tx error counter snapshot (single-CAN board: mcpEflg is meaningless 0).
-static uint16_t dashEpasNagSnapshotTec()
-{
-#if defined(ESP_PLATFORM) && defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
-    if (dashDriver)
-    {
-        TWAIDriver *twai = static_cast<TWAIDriver *>(dashDriver);
-        if (twai)
-            return (uint16_t)twai->snapshotDiag().txErrorCounter;
-    }
-#endif
-    return 0;
-}
-
-static EpasNagGate epasNagGateFromName(const char *s)
-{
-    if (!s)
-        return EpasNagGate::Idle;
-    if (strcmp(s, "inject") == 0)
-        return EpasNagGate::Inject;
-    if (strcmp(s, "gated") == 0)
-        return EpasNagGate::Gated;
-    if (strcmp(s, "invalid_dlc") == 0)
-        return EpasNagGate::InvalidDlc;
-    return EpasNagGate::Idle;
-}
-
-// Build + push a trace entry on edge or 10 Hz period. Read-only: sources only
-// existing diag fields + txErrCount + framesSent + TWAI tec.
-static void dashEpasNagTraceSample(uint32_t now, bool injected, bool sendOk)
-{
-    (void)sendOk;
-    if (!dashEpasNagTrace.active)
-        return;
-    const DashEpasNagDiag &diag = dashEpasNagCtrl.diag;
-    bool apActive = dashHandler && (bool)dashHandler->APActive;
-    uint32_t swTxErr = (uint32_t)txErrCount;
-    const char *gate = diag.lastGate ? diag.lastGate : "idle";
-    uint32_t txFail = diag.tx.txErr;
-
-    bool edge = strcmp(gate, dashEpasNagLastGateStr) != 0 ||
-                apActive != dashEpasNagLastApActive ||
-                txFail != dashEpasNagLastTxFail ||
-                swTxErr != dashEpasNagLastSwTxErr;
-    bool periodic = (now - dashEpasNagLastSampleMs) >= 100;
-    if (!edge && !periodic)
-        return;
-
-    EpasNagTraceEntry e{};
-    e.ts_ms = now;
-    e.decision = injected ? (uint8_t)EpasNagDecision::Inject : (uint8_t)EpasNagDecision::Suppress;
-    e.gate = (uint8_t)epasNagGateFromName(gate);
-    e.handsOn = diag.lastHandsOn;
-    e.dasHandsOn = diag.dasHandsOnState;
-    e.apActive = apActive ? 1 : 0;
-    e.apBlackout = dashEpasNagCtrl.apBlackoutActive ? 1 : 0;
-    e.realTorque = diag.lastRealTorque;
-    e.realCnt = diag.lastRealCnt;
-    e.echoTorque = diag.lastEchoTorque;
-    e.echoCnt = (uint8_t)((diag.lastRealCnt + 1) & 0x0Fu);
-    e.txAttempt = diag.tx.txOk + diag.tx.txErr;
-    e.txOk = diag.tx.txOk;
-    e.twaiTec = dashEpasNagSnapshotTec();
-    e.swTxErr = swTxErr;
-    e.framesSent = dashHandler ? (uint32_t)dashHandler->framesSent : 0;
-
-    dashEpasNagTrace.push(e);
-    dashEpasNagLastEntry = e;
-
-    dashEpasNagLastSampleMs = now;
-    dashEpasNagLastGateStr = gate;
-    dashEpasNagLastApActive = apActive;
-    dashEpasNagLastTxFail = txFail;
-    dashEpasNagLastSwTxErr = swTxErr;
-}
-
-static void dashEpasNagTraceStop(const char *reason)
-{
-    if (!dashEpasNagTrace.active && !dashEpasNagTraceManual)
-        return;
-    dashEpasNagTrace.active = false;
-    dashEpasNagTraceManual = false;
-    dashEpasNagTracePendingFlush = true;
-    if (reason && *reason)
-        dashLog(String("[EPAS-NAG-TRACE] stop: ") + reason);
-}
-
-// Flush the ring to SPIFFS. Bounded: kCap rows × <128B ≈ <256 KB (partition 7.59 MiB).
-static void dashEpasNagTraceFlush()
-{
-    File f = SPIFFS.open("/epas_nag_trace.csv", "w");
-    if (!f)
-    {
-        dashLog("[EPAS-NAG-TRACE] SPIFFS write failed");
-        return;
-    }
-    f.println("ts_ms,decision,gate,handsOn,dasHandsOn,apActive,apBlackout,realTorque,realCnt,echoTorque,echoCnt,txAttempt,txOk,twaiTec,swTxErr,framesSent");
-    uint32_t h = dashEpasNagTrace.currentHead();
-    uint32_t oldest = (h > EpasNagTraceRing::kCap) ? (h - EpasNagTraceRing::kCap) : 0;
-    char line[160];
-    uint32_t written = 0;
-    for (uint32_t i = oldest; i < h; i++)
-    {
-        const EpasNagTraceEntry &e = dashEpasNagTrace.at(i);
-        int len = snprintf(line, sizeof(line),
-                           "%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%lu,%lu,%u,%lu,%lu\n",
-                           (unsigned long)e.ts_ms, (unsigned)e.decision, (unsigned)e.gate,
-                           (unsigned)e.handsOn, (unsigned)e.dasHandsOn,
-                           (unsigned)e.apActive, (unsigned)e.apBlackout,
-                           (unsigned)e.realTorque, (unsigned)e.realCnt,
-                           (unsigned)e.echoTorque, (unsigned)e.echoCnt,
-                           (unsigned long)e.txAttempt, (unsigned long)e.txOk,
-                           (unsigned)e.twaiTec, (unsigned long)e.swTxErr,
-                           (unsigned long)e.framesSent);
-        if (len > 0)
-            f.write(reinterpret_cast<const uint8_t *>(line),
-                    static_cast<size_t>(len < static_cast<int>(sizeof(line)) ? len : sizeof(line) - 1));
-        written++;
-    }
-    f.close();
-    dashLog("[EPAS-NAG-TRACE] flushed " + String(written) + " entries to SPIFFS");
-}
-
-static void dashEpasNagTracePoll()
-{
-    uint32_t now = millis();
-    // A2 fix: periodic flush while active. The onFrame stop check never runs
-    // once frames stop arriving, and the operator may unplug USB without a
-    // clean stop — so flush every 5 s to bound data loss on sudden power-off.
-    if (dashEpasNagTrace.active && (now - dashEpasNagLastFlushMs) >= 5000)
-    {
-        dashEpasNagLastFlushMs = now;
-        dashEpasNagTraceFlush();
-    }
-    if (dashEpasNagTracePendingFlush)
-    {
-        dashEpasNagTracePendingFlush = false;
-        dashEpasNagLastFlushMs = now;
-        dashEpasNagTraceFlush();
-    }
-}
-
 // Public hooks
 static void mcpDashOnFrame(const CanFrame &f)
 {
@@ -1050,7 +808,6 @@ static void mcpDashOnFrame(const CanFrame &f)
     if (f.id == 1016 && f.dlc > 5)
         followDist = (f.data[5] & 0xE0) >> 5;
     dashRecordApRestoreFrame(f, now);
-    dashEpasNagOnFrame(f);
     dashRecordCanFrame(f, 'R');
     // Phase 1: OTA guard 检测 0x318 帧
     dashOtaGuardProcessFrame(f);
@@ -1595,7 +1352,6 @@ static void dashSavePrefs()
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
     prefs.putBool("def_apeap", dashApEapCompatible);
-    prefs.putBool("def_epnag", dashEpasNagEnabled);
     prefs.putUChar("lfsd_pol", dashLegacyFsdPolicy == LegacyFsdPolicy::TeslaParity ? 2 : (dashLegacyFsdPolicy == LegacyFsdPolicy::Experimental ? 1 : 0));
     prefs.putBool("lfsd_m1", dashLegacyFsdMux1Enable);
     prefs.putBool("lfsd_prof", dashLegacyFsdProfileWriteEnable);
@@ -1798,7 +1554,6 @@ static void dashLoadPrefs()
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
     dashApEapCompatible = prefs.getBool("def_apeap", true);
-    dashEpasNagEnabled = prefs.getBool("def_epnag", false);
     {
         uint8_t lfsdPolicy = prefs.getUChar("lfsd_pol", 0);
         dashLegacyFsdPolicy = lfsdPolicy == 2 ? LegacyFsdPolicy::TeslaParity : (lfsdPolicy == 1 ? LegacyFsdPolicy::Experimental : LegacyFsdPolicy::Stable);
@@ -2712,66 +2467,6 @@ static void handleStatus()
     j += dashDndVolume ? "true" : "false";
     j += ",\"dndSpeed\":";
     j += dashDndSpeed ? "true" : "false";
-    j += ",\"epasNag\":";
-    j += dashEpasNagEnabled ? "true" : "false";
-    {
-        // EPAS nag observability: the gate inputs + outcome + real-vs-echo 0x370
-        // side by side, plus bus-health via TWAI tx error counter (NOT mcpEflg,
-        // which is a meaningless static const 0 on the single-CAN board).
-        const DashEpasNagDiag &ng = dashEpasNagCtrl.diag;
-        bool ngApActive = dashHandler && (bool)dashHandler->APActive;
-        j += ",\"epasNagDiag\":{\"enabled\":";
-        j += dashEpasNagEnabled ? "true" : "false";
-        j += ",\"defenseOn\":";
-        j += dashDefenseEnabled ? "true" : "false";
-        j += ",\"canActive\":";
-        j += canActive ? "true" : "false";
-        j += ",\"echo\":";
-        j += (unsigned long)ng.echoCount;
-        j += ",\"suppress\":";
-        j += (unsigned long)ng.suppressCount;
-        j += ",\"lastGate\":\"";
-        j += ng.lastGate ? ng.lastGate : "idle";
-        j += "\",\"handsOn\":";
-        j += (unsigned)ng.lastHandsOn;
-        j += ",\"dasHandsOn\":";
-        j += (unsigned)ng.dasHandsOnState;
-        j += ",\"apActive\":";
-        j += ngApActive ? "true" : "false";
-        j += ",\"apBlackout\":";
-        j += dashEpasNagCtrl.apBlackoutActive ? "true" : "false";
-        j += ",\"txAttempt\":";
-        j += (unsigned long)(ng.tx.txOk + ng.tx.txErr);
-        j += ",\"txOk\":";
-        j += (unsigned long)ng.tx.txOk;
-        j += ",\"txFail\":";
-        j += (unsigned long)ng.tx.txErr;
-        j += ",\"swTxErr\":";
-        j += (unsigned long)txErrCount;
-        j += ",\"twaiTec\":";
-        j += (unsigned)dashEpasNagLastEntry.twaiTec;
-        j += ",\"real370\":{\"cnt\":";
-        j += (unsigned)ng.lastRealCnt;
-        j += ",\"handsOn\":";
-        j += (unsigned)ng.lastHandsOn;
-        j += ",\"torque\":";
-        j += (unsigned)ng.lastRealTorque;
-        j += "},\"echo370\":{\"cnt\":";
-        j += (unsigned)((ng.lastRealCnt + 1) & 0x0Fu);
-        j += ",\"handsOn\":";
-        j += (unsigned)ng.lastHandsOn;
-        j += ",\"torque\":";
-        j += (unsigned)ng.lastEchoTorque;
-        j += "},\"demand\":{\"state\":";
-        j += (unsigned)ng.lastDemandState;
-        j += ",\"torque\":";
-        j += (unsigned)ng.lastDemandTorque;
-        j += ",\"handsLevel\":";
-        j += (unsigned)ng.lastHandsLevel;
-        j += ",\"gate\":\"";
-        j += ng.lastDemandGate ? ng.lastDemandGate : "idle";
-        j += "\"}}";
-    }
     appendCapabilitiesJson(j, hwMode, effectiveHw);
     j += "}";
     server.send(200, "application/json", j);
@@ -3313,8 +3008,6 @@ static String dashDefenseConfigJson()
     j += dashDndSpeed ? "true" : "false";
     j += ",\"ap_eap_compatible\":";
     j += dashApEapCompatible ? "true" : "false";
-    j += ",\"epas_nag\":";
-    j += dashEpasNagEnabled ? "true" : "false";
     j += ",\"slew_rate_enabled\":";
     j += hw3OffsetSlew ? "true" : "false";
     j += ",\"ban_shield\":";
@@ -3328,7 +3021,7 @@ static void handleDefenseConfig()
     if (server.hasArg("enabled") || server.hasArg("bionic_steering") ||
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
-        server.hasArg("dnd_speed") || server.hasArg("epas_nag"))
+        server.hasArg("dnd_speed"))
     {
         bool prevDefenseEnabled = dashDefenseEnabled;
         bool prevDndVolume = dashDndVolume;
@@ -3370,8 +3063,6 @@ static void handleDefenseConfig()
             dashWheelDndCtrl.startSpeed();
         if (server.hasArg("ap_eap_compatible"))
             dashApEapCompatible = dashArgTruthy(server.arg("ap_eap_compatible"));
-        if (server.hasArg("epas_nag"))
-            dashEpasNagEnabled = dashArgTruthy(server.arg("epas_nag"));
         hw3OffsetSlew = dashDefenseEnabled;
         nvsBanShieldEnable = dashDefenseEnabled;
         if (dashHandler)
@@ -3991,38 +3682,6 @@ static void handleRecDownload()
     server.sendHeader("Content-Disposition", "attachment; filename=\"can_recording.csv\"");
     server.streamFile(f, "text/csv");
     f.close();
-}
-
-// EPAS nag trace — auto-recorded diagnostic for the real-car nag failure.
-static void handleEpasNagTraceDownload()
-{
-    if (!SPIFFS.exists("/epas_nag_trace.csv"))
-    {
-        server.send(404, "text/plain", "No EPAS nag trace yet");
-        return;
-    }
-    File f = SPIFFS.open("/epas_nag_trace.csv", "r");
-    server.sendHeader("Content-Disposition", "attachment; filename=\"epas_nag_trace.csv\"");
-    server.streamFile(f, "text/csv");
-    f.close();
-}
-
-static void handleEpasNagTraceStart()
-{
-    dashEpasNagTrace.armed = true;
-    dashEpasNagTrace.active = true;
-    dashEpasNagTraceManual = true;
-    dashEpasNagLastSampleMs = 0;
-    server.send(200, "text/plain", "EPAS nag trace started");
-}
-
-static void handleEpasNagTraceStop()
-{
-    bool was = dashEpasNagTrace.active;
-    dashEpasNagTraceStop("http stop");
-    if (was)
-        dashEpasNagTraceFlush(); // best-effort immediate flush on explicit stop
-    server.send(200, "text/plain", was ? "EPAS nag trace stopped + flushed" : "EPAS nag trace was not active");
 }
 
 static void handleDisable()
@@ -5410,71 +5069,6 @@ static void handleTaskStats()
 #endif
 
 #ifdef ESP_PLATFORM
-static void dashSerialPrintEpasNagStatus()
-{
-    const DashEpasNagDiag &ng = dashEpasNagCtrl.diag;
-    Serial.println();
-    Serial.println("[epas_nag]");
-    Serial.printf("enabled=%d defenseOn=%d canActive=%d armed=%d active=%d\n",
-                  (int)dashEpasNagEnabled, (int)dashDefenseEnabled, (int)canActive,
-                  (int)dashEpasNagTrace.armed, (int)dashEpasNagTrace.active);
-    Serial.printf("echo=%lu suppress=%lu lastGate=%s handsOn=%u dasHandsOn=0x%02X\n",
-                  (unsigned long)ng.echoCount, (unsigned long)ng.suppressCount,
-                  ng.lastGate ? ng.lastGate : "idle", (unsigned)ng.lastHandsOn,
-                  (unsigned)ng.dasHandsOnState);
-    Serial.printf("tx ok=%lu fail=%lu | swTxErr=%lu twaiTec=%u framesSent=%lu\n",
-                  (unsigned long)ng.tx.txOk, (unsigned long)ng.tx.txErr,
-                  (unsigned long)txErrCount, (unsigned)dashEpasNagLastEntry.twaiTec,
-                  dashHandler ? (unsigned long)dashHandler->framesSent : 0UL);
-    Serial.printf("real370 cnt=%u torque=%u | echo370 cnt=%u torque=%u\n",
-                  (unsigned)ng.lastRealCnt, (unsigned)ng.lastRealTorque,
-                  (unsigned)((ng.lastRealCnt + 1) & 0x0Fu), (unsigned)ng.lastEchoTorque);
-}
-
-static void dashSerialPrintEpasNagTrace()
-{
-    uint32_t h = dashEpasNagTrace.currentHead();
-    uint32_t oldest = (h > EpasNagTraceRing::kCap) ? (h - EpasNagTraceRing::kCap) : 0;
-    Serial.println();
-    if (h == 0)
-    {
-        // A1 fix: opening USB-CDC resets the board and clears the RAM ring.
-        // Fall back to the persisted SPIFFS CSV so the last drive's data is
-        // still recoverable right after a reset.
-        Serial.println("[epas_nag_trace] ring empty — reading /epas_nag_trace.csv");
-        File f = SPIFFS.open("/epas_nag_trace.csv", "r");
-        if (f)
-        {
-            String body = f.readString();
-            f.close();
-            Serial.print(body);
-            return;
-        }
-        Serial.println("(no flushed CSV on SPIFFS yet; call /epas_nag_trace_stop to flush)");
-        return;
-    }
-    Serial.printf("[epas_nag_trace] %lu entries (showing last %u)\n",
-                  (unsigned long)h,
-                  (unsigned)(h - oldest));
-    Serial.println("ts_ms,decision,gate,handsOn,dasHandsOn,apAct,apBlk,realTorque,realCnt,echoTorque,echoCnt,txOk,twaiTec,swTxErr,framesSent");
-    int shown = 0;
-    for (uint32_t i = oldest; i < h && shown < 64; i++, shown++)
-    {
-        const EpasNagTraceEntry &e = dashEpasNagTrace.at(i);
-        Serial.printf("%lu,%s,%u,%u,0x%02X,%u,%u,%u,%u,%u,%u,%lu,%u,%lu,%lu\n",
-                      (unsigned long)e.ts_ms,
-                      e.decision == (uint8_t)EpasNagDecision::Inject ? "inject" : "suppress",
-                      (unsigned)e.gate, (unsigned)e.handsOn, (unsigned)e.dasHandsOn,
-                      (unsigned)e.apActive, (unsigned)e.apBlackout,
-                      (unsigned)e.realTorque, (unsigned)e.realCnt,
-                      (unsigned)e.echoTorque, (unsigned)e.echoCnt,
-                      (unsigned long)e.txOk, (unsigned)e.twaiTec,
-                      (unsigned long)e.swTxErr, (unsigned long)e.framesSent);
-    }
-    if (!SPIFFS.exists("/epas_nag_trace.csv"))
-        Serial.println("(no flushed CSV on SPIFFS yet; call /epas_nag_trace_stop to flush)");
-}
-
 static void dashSerialPrintHelp()
 {
     Serial.println();
@@ -5484,8 +5078,6 @@ static void dashSerialPrintHelp()
     Serial.println("  system_status  print CPU/heap/WiFi summary");
     Serial.println("  can_status     print CAN/injection summary");
     Serial.println("  task_stats     sample FreeRTOS tasks for 1s asynchronously");
-    Serial.println("  epas_nag       print EPAS nag diag counters + real/echo 0x370");
-    Serial.println("  epas_nag_trace dump EPAS nag trace ring (last 64 samples)");
     Serial.println();
 }
 
@@ -5628,10 +5220,6 @@ static void dashSerialRunCommand(char *cmd)
         dashSerialPrintCanStatus();
     else if (strcmp(start, "task_stats") == 0 || strcmp(start, "tasks") == 0)
         dashSerialStartTaskStats();
-    else if (strcmp(start, "epas_nag_status") == 0 || strcmp(start, "epas_nag") == 0)
-        dashSerialPrintEpasNagStatus();
-    else if (strcmp(start, "epas_nag_trace") == 0)
-        dashSerialPrintEpasNagTrace();
     else if (*start)
         Serial.println("Unknown command. Type help.");
 }
@@ -7114,9 +6702,6 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/bus2_ids", HTTP_GET, handleBus2Ids);
 #endif
     server.on("/rec_download", HTTP_GET, handleRecDownload);
-    server.on("/epas_nag_trace", HTTP_GET, handleEpasNagTraceDownload);
-    server.on("/epas_nag_trace_start", HTTP_POST, handleEpasNagTraceStart);
-    server.on("/epas_nag_trace_stop", HTTP_POST, handleEpasNagTraceStop);
     server.on("/disable", HTTP_POST, handleDisable);
     server.on("/reboot", HTTP_GET, handleReboot);
     server.on("/reboot", HTTP_POST, handleReboot);
@@ -7184,18 +6769,11 @@ static void mcpDashboardLoop()
     if (recActive && (millis() - recStartMs >= kRecMaxDurationMs))
         dashStopRecordingAndSave("time limit");
     dashCheckBusHealth();
-    dashEpasNagTracePoll(); // deferred SPIFFS flush for the EPAS nag trace ring
     if (canOnline && millis() - lastFrameMs > 10000)
     {
         canOnline = false;
         dashLog("[CAN] Bus OFFLINE (timeout)");
     }
-    // A3 (2026-06-18): do NOT stop the trace on !canOnline here. The loop-side
-    // stop was too eager — a brief CAN glitch aborted recording at 8.3 s and
-    // missed the nag window (nag only fires once AP engages later). The
-    // periodic 5 s flush in dashEpasNagTracePoll() already bounds power-off
-    // data loss, so recording runs until the onFrame stop (switch off / 3x tx
-    // fail) and the ring + periodic flush capture the nag window.
 #if defined(DASH_RGB_STATUS_LED)
     appRefreshStatusLed(false);
 #endif

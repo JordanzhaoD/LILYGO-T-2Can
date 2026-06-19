@@ -1260,11 +1260,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-defense-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-defense-run">待检测</div></div>
 </div>
-<div class="status-triplet" id="def-epas-nag-row" style="display:none">
-  <div class="status-chip"><div class="lbl">EPAS Nag 回声/抑制</div><div class="val" id="def-epas-echo">--</div></div>
-  <div class="status-chip"><div class="lbl">lastGate / TX ok</div><div class="val" id="def-epas-tx">--</div></div>
-  <div class="status-chip"><div class="lbl">真/回声 扭矩(raw)</div><div class="val" id="def-epas-tq">--</div></div>
-</div>
 <!-- Master switch + 5 defense toggles -->
 <div class="card cockpit-card">
   <div class="card-title">FSD 防护状态</div>
@@ -1321,13 +1316,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="setting-desc">保留 AP/EAP 兼容策略位</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-apeap-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">EPAS 方向盘 nag <span class="exp-badge">实验</span></div>
-      <div class="setting-desc">回声 0x370 推断手在盘(替代强制位,默认关)</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="def-epnag-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
 </div>
 
@@ -1848,8 +1836,6 @@ function experimentSummary(){
   if(light&&light.checked)flags.push('灯光爆闪');
   var apeap=$('def-apeap-tgl');
   if(apeap&&apeap.checked)flags.push('AP/EAP');
-  var epnag=$('def-epnag-tgl');
-  if(epnag&&epnag.checked)flags.push('EPAS nag');
   var bionic=$('def-bionic-tgl');
   if(bionic&&bionic.checked)flags.push('FSD增强');
   return flags.length?('实验: '+flags.join('/')):'实验项需实车验证';
@@ -2196,16 +2182,6 @@ async function poll(){
   setStatusTriplet('hw',(d.hwName||hwLabel(d.hw)),'mode_hw: '+(d.hwName||hwLabel(d.hw)),(d.can?'CAN运行 / ':'CAN离线 / ')+(d.hwName||hwLabel(d.hw)),d.can?'ok':'warn');
   setStatusTriplet('speed','偏移 '+(d.soff!==undefined?d.soff:'--'),driveLabel(d.sp,d.spAuto),d.fusedSpeedLimitKph?('Fused '+d.fusedSpeedLimitKph+' kph'):'CAN未给出速度',d.can?'ok':'warn');
   setStatusTriplet('defense',d.hw3OffsetSlew?'防御 ON':'防御 OFF','slew '+(d.hw3OffsetSlew?'ON':'OFF'),'触发 '+(d.hw3SlewCount||0)+' / offset '+(d.hw3OffsetLast!==undefined?d.hw3OffsetLast:'--'),d.hw3OffsetSlew?'ok':'warn');
-  var ng=d.epasNagDiag;
-  var ngRow=$('def-epas-nag-row');
-  if(ngRow)ngRow.style.display=(ng&&ng.enabled)?'grid':'none';
-  if(ng&&ng.enabled){
-    setText('def-epas-echo',(ng.echo||0)+'/'+(ng.suppress||0));
-    setText('def-epas-tx',(ng.lastGate||'idle')+' / '+(ng.txOk||0));
-    var rq=ng.real370&&ng.real370.torque!==undefined?ng.real370.torque:'--';
-    var eq=ng.echo370&&ng.echo370.torque!==undefined?ng.echo370.torque:'--';
-    setText('def-epas-tq',rq+' / '+eq);
-  }
 
   // FSD page toggle
   updateFsdToggle(d.ci);
@@ -2403,10 +2379,9 @@ async function loadDefenseConfig(){
   var nd=$('def-speed-nd-tgl');if(nd)nd.checked=!!d.speed_no_disturb;
   var dndSpd=$('def-dnd-spd-tgl');if(dndSpd)dndSpd.checked=!!d.dnd_speed;
   var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
-  var epnag=$('def-epnag-tgl');if(epnag)epnag.checked=!!d.epas_nag;
   setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
   var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
-  var exp=(d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed||d.epas_nag);
+  var exp=(d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
   setStatusTriplet('defense',d.enabled?'防御 ON':'防御 OFF',
     'NVS '+(d.enabled?'ON':'OFF')+(exp?' / 含实验项':''),
     exp?'实验项需实车验证':'等待 /status 运行确认',
@@ -2706,7 +2681,6 @@ async function saveDefenseConfig(){
   var nd=$('def-speed-nd-tgl');
   var dndSpd=$('def-dnd-spd-tgl');
   var apeap=$('def-apeap-tgl');
-  var epnag=$('def-epnag-tgl');
   var data={
     enabled:tgl&&tgl.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
@@ -2714,8 +2688,7 @@ async function saveDefenseConfig(){
     dnd_volume:dndVol&&dndVol.checked?'1':'0',
     speed_no_disturb:nd&&nd.checked?'1':'0',
     dnd_speed:dndSpd&&dndSpd.checked?'1':'0',
-    ap_eap_compatible:apeap&&apeap.checked?'1':'0',
-    epas_nag:epnag&&epnag.checked?'1':'0'
+    ap_eap_compatible:apeap&&apeap.checked?'1':'0'
   };
   try{await postForm('/defense_config',data);}
   catch(e){loadDefenseConfig()}
