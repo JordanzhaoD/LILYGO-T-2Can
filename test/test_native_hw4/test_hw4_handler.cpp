@@ -460,6 +460,49 @@ void test_hw4_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[9]);
 }
 
+// --- ISA override rewrite speed limit, HW4 (CAN ID 923 / 0x39B) — spec Task 3 ---
+
+void test_hw4_isa_override_sets_fused_limit_to_none()
+{
+    handler.isaOverride = true;
+    CanFrame f = {.id = 923};
+    f.data[1] = 0x00;
+    f.data[2] = 0x00;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x1F, mock.sent[0].data[1] & 0x1F);
+    TEST_ASSERT_EQUAL_HEX8(0x1F, mock.sent[0].data[2] & 0x1F);
+}
+
+void test_hw4_isa_override_preserves_high_bits()
+{
+    handler.isaOverride = true;
+    CanFrame f = {.id = 923};
+    f.data[1] = 0xE0; f.data[2] = 0xE0;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, mock.sent[0].data[1]);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, mock.sent[0].data[2]);
+}
+
+void test_hw4_isa_override_checksum_correct()
+{
+    handler.isaOverride = true;
+    CanFrame f = {.id = 923};
+    f.data[0] = 0x10; f.data[1] = 0x00; f.data[2] = 0x00;
+    f.data[3] = 0; f.data[4] = 0; f.data[5] = 0; f.data[6] = 0;
+    handler.handleMessage(f, mock);
+    // OR 后 data[1]=0x1F, data[2]=0x1F; checksum = 0x9B+0x03+0x10+0x1F+0x1F = 0xEC
+    TEST_ASSERT_EQUAL_HEX8(0xEC, mock.sent[0].data[7]);
+}
+
+void test_hw4_isa_override_runtime_off_skips_send()
+{
+    handler.isaOverride = false;
+    CanFrame f = {.id = 923};
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
 // --- Ban Shield ---
 
 void test_hw4_ban_shield_blocks_changed_2047_mux2()
@@ -532,6 +575,11 @@ int main()
     RUN_TEST(test_hw4_gear_drive_clears_parked);
 
     RUN_TEST(test_hw4_ban_shield_blocks_changed_2047_mux2);
+
+    RUN_TEST(test_hw4_isa_override_sets_fused_limit_to_none);
+    RUN_TEST(test_hw4_isa_override_preserves_high_bits);
+    RUN_TEST(test_hw4_isa_override_checksum_correct);
+    RUN_TEST(test_hw4_isa_override_runtime_off_skips_send);
 
     return UNITY_END();
 }

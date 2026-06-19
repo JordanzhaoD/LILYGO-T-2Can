@@ -1291,6 +1291,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
+      <div class="setting-name">限速覆盖 <span class="exp-badge">HW4</span></div>
+      <div class="setting-desc">0x39B 强写融合/视觉限速为 NONE</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-isa-override-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
       <div class="setting-name">音量滚轮DND <span class="exp-badge">Phase 3</span></div>
       <div class="setting-desc">0x3C2 四步序列消除音量提示音</div>
     </div>
@@ -2375,6 +2382,7 @@ async function loadDefenseConfig(){
   var bioWarn=$('def-bionic-warn');
   if(bioWarn)bioWarn.style.display=!!d.bionic_disabled?'block':'none';
   var sound=$('def-sound-tgl');if(sound)sound.checked=!!d.sound_warning_suppression;
+  var isaOvr=$('def-isa-override-tgl');if(isaOvr)isaOvr.checked=!!d.isa_override;
   var dndVol=$('def-dnd-vol-tgl');if(dndVol)dndVol.checked=!!d.dnd_volume;
   var nd=$('def-speed-nd-tgl');if(nd)nd.checked=!!d.speed_no_disturb;
   var dndSpd=$('def-dnd-spd-tgl');if(dndSpd)dndSpd.checked=!!d.dnd_speed;
@@ -2677,6 +2685,7 @@ async function saveDefenseConfig(){
   var tgl=$('hw3-slew-tgl');
   var bio=$('def-bionic-tgl');
   var sound=$('def-sound-tgl');
+  var isaOvr=$('def-isa-override-tgl');
   var dndVol=$('def-dnd-vol-tgl');
   var nd=$('def-speed-nd-tgl');
   var dndSpd=$('def-dnd-spd-tgl');
@@ -2685,6 +2694,7 @@ async function saveDefenseConfig(){
     enabled:tgl&&tgl.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
+    isa_override:isaOvr&&isaOvr.checked?'1':'0',
     dnd_volume:dndVol&&dndVol.checked?'1':'0',
     speed_no_disturb:nd&&nd.checked?'1':'0',
     dnd_speed:dndSpd&&dndSpd.checked?'1':'0',

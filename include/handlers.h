@@ -67,6 +67,7 @@ struct CarManagerBase
     Shared<bool> tlsscBypass{false};
     Shared<bool> emergencyVehicleDetection{true};
     Shared<bool> isaChimeSuppress{false};
+    Shared<bool> isaOverride{false};      // spec Task 3: HW4 重写限速 5b (0x39B raw=31 NONE)
     Shared<bool> bionicSteering{false};   // Phase 3: bionic steering mode
     Shared<uint8_t> hw4OffsetRaw{0};
     Shared<bool> banShieldEnable{false};
@@ -872,6 +873,18 @@ struct HW4Handler : public CarManagerBase
                 if (onSend) onSend(0, true);
                 return;
             }
+            return;
+        }
+        // ISA override — rewrite fused/vision speed limit to NONE (spec Task 3, 对齐 tesla handleDASStatusISAOverride)
+        if (frame.id == 923 && frame.dlc >= 8 &&
+            (bool)isaOverride && injectionAllowed())
+        {
+            frame.data[1] |= 0x1F;   // DAS_fusedSpeedLimit = 31 (NONE)
+            frame.data[2] |= 0x1F;   // DAS_visionOnlySpeedLimit = 31 (NONE)
+            frame.data[7] = computeVehicleChecksum(frame);
+            framesSent++;
+            driver.send(frame);
+            if (onSend) onSend(0, true);
             return;
         }
         if (frame.id == 1016)

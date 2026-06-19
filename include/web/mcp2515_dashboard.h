@@ -211,6 +211,7 @@ static bool nvsAutoModeEnabled = false;
 static bool nvsTlsscBypass = false;
 static bool nvsEmergencyVehicleDetection = true;
 static bool nvsIsaChimeSuppress = false;
+static bool nvsIsaOverride = false;
 static uint8_t nvsHw4OffsetRaw = 0;
 static bool nvsBanShieldEnable = false;
 static int nvsLegacyOffset = 0;
@@ -1295,6 +1296,7 @@ static void dashApplyRuntimeState()
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
+        dashHandler->isaOverride = nvsIsaOverride;
         dashHandler->banShieldEnable = nvsBanShieldEnable;
         dashHandler->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         dashHandler->overrideSpeedLimit = nvsOverrideSpeedLimit;
@@ -1395,6 +1397,7 @@ static void dashSavePrefs()
         prefs.putBool("fb", (bool)dashHandler->tlsscBypass);
         prefs.putBool("fc", (bool)dashHandler->emergencyVehicleDetection);
         prefs.putBool("fd", (bool)dashHandler->isaChimeSuppress);
+        prefs.putBool("fj", (bool)dashHandler->isaOverride);
         prefs.putUChar("fe", (uint8_t)dashHandler->hw4OffsetRaw);
         prefs.putBool("ff", (bool)dashHandler->banShieldEnable);
         prefs.putUChar("fg", (uint8_t)((int)dashHandler->legacyOffset + 30));
@@ -1612,6 +1615,7 @@ static void dashLoadPrefs()
     nvsTlsscBypass = prefs.getBool("fb", false);
     nvsEmergencyVehicleDetection = prefs.getBool("fc", true);
     nvsIsaChimeSuppress = prefs.getBool("fd", false);
+    nvsIsaOverride = prefs.getBool("fj", false);
     nvsHw4OffsetRaw = prefs.getUChar("fe", 0);
     nvsBanShieldEnable = prefs.getBool("ff", false);
     {
@@ -2337,6 +2341,8 @@ static void handleStatus()
     j += dashHandler ? ((bool)dashHandler->tlsscBypass ? "true" : "false") : "false";
     j += ",\"isaChimeSuppress\":";
     j += dashHandler ? ((bool)dashHandler->isaChimeSuppress ? "true" : "false") : "false";
+    j += ",\"isaOverride\":";
+    j += dashHandler ? ((bool)dashHandler->isaOverride ? "true" : "false") : "false";
     j += ",\"evd\":";
     j += dashHandler ? ((bool)dashHandler->emergencyVehicleDetection ? "true" : "false") : "false";
     j += ",\"hw4OffsetRaw\":";
@@ -3000,6 +3006,8 @@ static String dashDefenseConfigJson()
     j += bionicDisabled ? "true" : "false";
     j += ",\"sound_warning_suppression\":";
     j += dashHandler ? ((bool)dashHandler->isaChimeSuppress ? "true" : "false") : (nvsIsaChimeSuppress ? "true" : "false");
+    j += ",\"isa_override\":";
+    j += dashHandler ? ((bool)dashHandler->isaOverride ? "true" : "false") : (nvsIsaOverride ? "true" : "false");
     j += ",\"dnd_volume\":";
     j += dashDndVolume ? "true" : "false";
     j += ",\"speed_no_disturb\":";
@@ -3021,7 +3029,7 @@ static void handleDefenseConfig()
     if (server.hasArg("enabled") || server.hasArg("bionic_steering") ||
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
-        server.hasArg("dnd_speed"))
+        server.hasArg("dnd_speed") || server.hasArg("isa_override"))
     {
         bool prevDefenseEnabled = dashDefenseEnabled;
         bool prevDndVolume = dashDndVolume;
@@ -3048,6 +3056,13 @@ static void handleDefenseConfig()
             nvsIsaChimeSuppress = v;
             if (dashHandler)
                 dashHandler->isaChimeSuppress = v;
+        }
+        if (server.hasArg("isa_override"))
+        {
+            bool v = dashArgTruthy(server.arg("isa_override"));
+            nvsIsaOverride = v;
+            if (dashHandler)
+                dashHandler->isaOverride = v;
         }
         if (server.hasArg("dnd_volume"))
             dashDndVolume = dashArgTruthy(server.arg("dnd_volume"));
@@ -5404,6 +5419,7 @@ static void handleSettingsExport()
     bool storedTlsscBypass = nvsTlsscBypass;
     bool storedEvd = nvsEmergencyVehicleDetection;
     bool storedIsaChimeSuppress = nvsIsaChimeSuppress;
+    bool storedIsaOverride = nvsIsaOverride;
     uint8_t storedHw4OffsetRaw = nvsHw4OffsetRaw;
     bool storedBanShield = nvsBanShieldEnable;
     int storedLegacyOffset = nvsLegacyOffset;
@@ -5464,6 +5480,7 @@ static void handleSettingsExport()
         storedTlsscBypass = p.getBool("fb", nvsTlsscBypass);
         storedEvd = p.getBool("fc", nvsEmergencyVehicleDetection);
         storedIsaChimeSuppress = p.getBool("fd", nvsIsaChimeSuppress);
+        storedIsaOverride = p.getBool("fj", nvsIsaOverride);
         storedHw4OffsetRaw = p.getUChar("fe", nvsHw4OffsetRaw);
         storedBanShield = p.getBool("ff", nvsBanShieldEnable);
         storedLegacyOffset = (int)p.getUChar("fg", (uint8_t)(nvsLegacyOffset + 30)) - 30;
@@ -5598,6 +5615,7 @@ static void handleSettingsExport()
     j += ",\"tlsscBypass\":" + String(storedTlsscBypass ? "true" : "false");
     j += ",\"evd\":" + String(storedEvd ? "true" : "false");
     j += ",\"isaChimeSuppress\":" + String(storedIsaChimeSuppress ? "true" : "false");
+    j += ",\"isaOverride\":" + String(storedIsaOverride ? "true" : "false");
     j += ",\"hw4OffsetRaw\":" + String(storedHw4OffsetRaw);
     j += ",\"banShield\":" + String(storedBanShield ? "true" : "false");
     j += ",\"legacyOffset\":" + String(storedLegacyOffset);
@@ -5894,6 +5912,8 @@ static void handleSettingsImport()
             p.putBool("fc", fsd["evd"].as<bool>());
         if (fsd["isaChimeSuppress"].is<bool>())
             p.putBool("fd", fsd["isaChimeSuppress"].as<bool>());
+        if (fsd["isaOverride"].is<bool>())
+            p.putBool("fj", fsd["isaOverride"].as<bool>());
         if (fsd["hw4OffsetRaw"].is<int>())
         {
             int raw = fsd["hw4OffsetRaw"].as<int>();
@@ -6580,6 +6600,7 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->tlsscBypass = nvsTlsscBypass;
         handlerPool[i]->emergencyVehicleDetection = nvsEmergencyVehicleDetection;
         handlerPool[i]->isaChimeSuppress = nvsIsaChimeSuppress;
+        handlerPool[i]->isaOverride = nvsIsaOverride;
         handlerPool[i]->hw4OffsetRaw = nvsHw4OffsetRaw;
         handlerPool[i]->banShieldEnable = nvsBanShieldEnable;
         handlerPool[i]->bionicSteering = dashBionicSteering;
