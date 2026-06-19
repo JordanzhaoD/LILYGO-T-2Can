@@ -156,6 +156,61 @@ void test_demand_state2_level2_hold_emits_held_value()
     TEST_ASSERT_TRUE(t >= 2100 && t <= 2250);   // mild band again
 }
 
+void test_demand_state3_delays_then_ramps_positive()
+{
+    DashEpasNagEngine e = makeDemandEngine(3);
+    uint16_t t; uint8_t lvl;
+    TEST_ASSERT_FALSE(e.nextDemandTorque(3, 1100, t, lvl));   // within 1000ms delay
+    TEST_ASSERT_FALSE(e.nextDemandTorque(3, 2000, t, lvl));   // 2000-1100=900 <1000, still delay
+    // just past delay: mag should be small (ramp start)
+    bool ok = e.nextDemandTorque(3, 2100, t, lvl);            // active=2100-1100-1000=0 -> mag=0
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_TRUE(t >= 2050 && t <= 2092);                  // 2050+0..42
+}
+void test_demand_state3_ramp_peaks_at_2260()
+{
+    DashEpasNagEngine e = makeDemandEngine(3);
+    uint16_t t; uint8_t lvl;
+    e.nextDemandTorque(3, 1100, t, lvl);                       // arm strongEnterMs=1100 (delay)
+    // active = now-1100-1000; phase in [500,1500) -> mag=210 hold
+    TEST_ASSERT_TRUE(e.nextDemandTorque(3, 2700, t, lvl));     // active=600, phase=600 -> mag=210
+    TEST_ASSERT_EQUAL_UINT16(2260, t);                         // 2050+210
+    TEST_ASSERT_EQUAL_UINT8(2, lvl);
+}
+// Mode-C: strong ramp is LINEAR between delay-end (mag 0) and hold (mag 210).
+// Pins the (phase*210/500) formula — boundary tests at phase=0 and phase>=500
+// alone cannot detect a malformed divisor/multiplier.
+void test_demand_state3_ramp_midpoint_linear()
+{
+    DashEpasNagEngine e = makeDemandEngine(3);
+    uint16_t t; uint8_t lvl;
+    e.nextDemandTorque(3, 1100, t, lvl);    // arm strongEnterMs=1100 (delay)
+    // active=2350-1100-1000=250, phase=250 -> mag=105 -> torq=2155, level 1
+    TEST_ASSERT_TRUE(e.nextDemandTorque(3, 2350, t, lvl));
+    TEST_ASSERT_EQUAL_UINT16(2155, t);
+    TEST_ASSERT_EQUAL_UINT8(1, lvl);
+}
+void test_demand_state3_negative_when_steer_right()
+{
+    DashEpasNagEngine e = makeDemandEngine(3);
+    e.onSteeringAngle(500);
+    uint16_t t; uint8_t lvl;
+    e.nextDemandTorque(3, 1100, t, lvl);
+    TEST_ASSERT_TRUE(e.nextDemandTorque(3, 2700, t, lvl));
+    TEST_ASSERT_EQUAL_UINT16(1840, t);                         // 2050-210
+    TEST_ASSERT_EQUAL_UINT8(2, lvl);
+}
+void test_demand_unseen_0xff_falls_into_strong()
+{
+    // makeArmedEngine leaves dasHandsOnState=0xFF (unseen). D5: treat as strong.
+    DashEpasNagEngine e = makeArmedEngine();
+    e.noteApState(true, 1000);
+    uint16_t t; uint8_t lvl;
+    e.nextDemandTorque(0xFF, 1100, t, lvl);                    // prevDas 0 -> 0xFF, arms strongEnterMs=1100
+    TEST_ASSERT_TRUE(e.nextDemandTorque(0xFF, 2700, t, lvl));  // peak
+    TEST_ASSERT_EQUAL_UINT16(2260, t);
+}
+
 // ── checksum (additive, NOT crc) ─────────────────────────────────────
 void test_checksum_additive_formula()
 {
@@ -471,6 +526,11 @@ int main()
     RUN_TEST(test_demand_state2_delays_then_mild_walks);
     RUN_TEST(test_demand_state2_negative_band_when_steer_right);
     RUN_TEST(test_demand_state2_level2_hold_emits_held_value);
+    RUN_TEST(test_demand_state3_delays_then_ramps_positive);
+    RUN_TEST(test_demand_state3_ramp_peaks_at_2260);
+    RUN_TEST(test_demand_state3_ramp_midpoint_linear);
+    RUN_TEST(test_demand_state3_negative_when_steer_right);
+    RUN_TEST(test_demand_unseen_0xff_falls_into_strong);
     RUN_TEST(test_checksum_additive_formula);
     RUN_TEST(test_checksum_counter_additive);
     RUN_TEST(test_torque_stays_in_bounds);

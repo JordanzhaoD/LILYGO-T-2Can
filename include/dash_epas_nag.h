@@ -221,10 +221,21 @@ struct DashEpasNagEngine
             return true;
         }
 
-        // strong (das==3/4/5/0xFF) added in Task 5.
-        (void)dir;
-        diag.lastDemandGate = "demand_idle";
-        return false;
+        // strong: das==3/4/5 (and 0xFF D5 fallback). 1s pause, then 0->2.1Nm ramp, 1.5s cycle.
+        if (strongEnterMs != 0 && (nowMs - strongEnterMs) < 1000u)
+        {
+            diag.lastDemandGate = "strong_delay";
+            return false;
+        }
+        uint32_t active = strongEnterMs ? (nowMs - strongEnterMs - 1000u) : 0u;
+        uint16_t phase = (uint16_t)(active % 1500u);
+        int16_t mag = (phase < 500u) ? (int16_t)(((int32_t)phase * 210) / 500) : 210;
+        int16_t torq = (int16_t)(2050 + dir * mag);
+        outTorque = (uint16_t)clampTorque((int32_t)torq);
+        outLevel = handsLevelFromRaw(torq);
+        lastRaw = torq; lastLevel = outLevel;
+        diag.lastDemandGate = (phase < 500u) ? "strong_ramp" : "strong_hold";
+        return true;
     }
 
     // ── observation (called by dashboard glue) ───────────────
