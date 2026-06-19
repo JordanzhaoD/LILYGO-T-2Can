@@ -32,18 +32,22 @@
 
 第 5 轮 apActive 修复让 `echo` 从 0 变 >0，**正是这些假帧开始上总线的瞬间，也正是故障出现的瞬间**——两件事是同一件事。**拔模块 → 假帧消失 → 重启车机 → 恢复**，因果链完整。
 
-这是**原理性**隐患，不是调参 bug：任何向 0x370 注入篡改帧都可能让转向故障，属 **life-critical**（行车安全）级别。
+这是 **life-critical**（行车安全）级别隐患。根因是 **demand-state 动态扭矩状态机**（0→2.1 Nm 爬升 + 从扭矩幅值反推 handsOn）与真实驾驶员输入产生语义矛盾，触发 EPAS 故障保护。需要区分两点：**(a) 动态/爬升/与真实输入矛盾的注入方式是危险的**（本次事故证明）；**(b) 0x370 注入本身存在原理性风险**（counter 冲突、与真 ECU 竞争同一个 ID），即使固定温和方式也不能视为普适安全——"某台车没出事"不等于"所有车都安全"（车型/EPAS 固件差异）。
 
-## ⛔ 禁令
+## ⛔ 禁令（2026-06-20 措辞订正：从"禁止任何注入"精化为"禁止未经台架验证的注入"）
 
-**禁止任何形式的"回声 / 伪造 0x370（EPAS 状态报文）注入"**——无论是固定扭矩、状态机扭矩、还是 counter+1 之外的任何篡改，都不行。0x370 是助力转向 ECU 的自身状态，向其注入假帧会触发车身控制故障。
+**禁止未经台架验证的 0x370（EPAS 状态报文）注入。** 事故根因是 demand-state 动态扭矩状态机（见上"根因"），不是"任何 0x370 注入必然立即危险"——但 0x370 是助力转向 ECU 的自身状态报文，注入存在原理性风险（counter 冲突、与真 ECU 竞争同一个 ID），**任何复活必须先过台架验证**。
 
 - 永久守卫测试 `test/test_no_epas_nag_contract.py` 会阻止 `DashEpasNag` / `dashEpasNag` / `epasNagDiag` / `tryBuildEcho` / `nextDemandTorque` / `EpasNagTraceRing` / `dash_epas_nag` / `def_epnag` 这类符号重新进入编译源（扫描 `include/`、`src/`、`platformio.ini`）。
-- 任何"复活 nag 抑制"的想法，必须先回答：**它是否向 0x370 注入任何帧？** 若是，停止。
+- 任何"复活 nag 抑制"的想法，必须先回答两个问题：
+  1. **它是否向 0x370 注入任何帧？** 若否，不受本禁令约束（如 bit-19 baseline 走 `0x3EE`/`0x3FD`/`1021`，安全）。
+  2. **若是，是否经过台架验证（车辆不上路）证明该注入方式不触发 EPAS 故障？** 未经验证 → 停止。验证通过且经 Jordan 书面授权，方可解禁该**特定方式**。
+- **台架验证前提**（未来若探索 0x370 nag 必须全部满足）：(1) 台架环境，车辆不上路行驶；(2) 明确的安全方式定义（扭矩曲线 / handsOn / counter 策略）；(3) 严格门控（默认关、AP 激活才发、一键关停）；(4) 异常立即停止 + 回滚。
 
 ## 保留项（为何不一起删）
 
-- **老 `NagHandler` + bit-19 baseline**（`include/handlers.h`）：counter+1 轻度回声 + bit-19 清除，实测未出事，Jordan 2026-06-19 授权保留。它与本事故的"篡改扭矩 / 伪造 handsOn"引擎是**不同代码路径**，由 `nagKillerRuntime` 独立门控，有独立单测 `test_native_nag`。
+- **老 `NagHandler`**（`include/handlers.h:705-828`）——⚠️ **2026-06-20 订正**：原文档将其描述为"counter+1 轻度回声 + bit-19 清除"，**与代码不符**。实际代码显示 NagHandler **仍向 0x370 注入篡改帧**：固定扭矩 `data[3]=0xB6`（1.80 Nm）+ `data[4]|=0x40`（handsOnLevel=1）+ counter+1 + 重算校验和 + `driver.send()`。它和已下架的 `DashEpasNagEngine` **都是 0x370 注入**，区别仅在算法（固定值 vs 动态状态机）。NagHandler 在 Model Y 2022 HW3 实测未出事（`handlers.h:700` 注释），但**这不构成普适安全保证**（车型/EPAS 固件差异 + counter 冲突原理性风险）。**NagHandler 的 0x370 注入待清理（backlog），未清理前属已知 life-critical 安全债。** 由 `nagKillerRuntime` 独立门控，有独立单测 `test_native_nag`。
+- **bit-19 baseline**（`0x3EE`/`0x3FD`/`1021` mux-1 `setBit(19,false)`）：**非 0x370 路径**，不在本禁令范围，安全保留。
 - **FSD unlock / AP Gate / 防御系统 / 轮 DND**：与 0x370 注入无关，全部保留，下架后回归测试全绿。
 
 ## 教训
