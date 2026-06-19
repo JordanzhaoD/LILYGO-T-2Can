@@ -109,6 +109,52 @@ void test_demand_state1_holds_then_stops()
     // after 500ms window -> stops
     TEST_ASSERT_FALSE(e.nextDemandTorque(1, 1700, t, lvl));
 }
+void test_demand_state2_delays_then_mild_walks()
+{
+    DashEpasNagEngine e = makeDemandEngine(2);
+    uint16_t t; uint8_t lvl;
+    // within 2000ms delay -> no inject
+    TEST_ASSERT_FALSE(e.nextDemandTorque(2, 1100, t, lvl));
+    // still in delay at 2000 (3000-1000=1900 < 2000)
+    TEST_ASSERT_FALSE(e.nextDemandTorque(2, 3000, t, lvl));
+    // past delay -> mild walk in positive band [2100,2250] (dir +1, no steer)
+    TEST_ASSERT_TRUE(e.nextDemandTorque(2, 3100, t, lvl));
+    TEST_ASSERT_TRUE(t >= 2100 && t <= 2250);
+    TEST_ASSERT_TRUE(lvl == 1 || lvl == 2); // 0.5..2.0 Nm
+}
+void test_demand_state2_negative_band_when_steer_right()
+{
+    DashEpasNagEngine e = makeDemandEngine(2);
+    e.onSteeringAngle(500); // right turn -> dir -1
+    uint16_t t; uint8_t lvl;
+    TEST_ASSERT_FALSE(e.nextDemandTorque(2, 1100, t, lvl)); // delay
+    TEST_ASSERT_TRUE(e.nextDemandTorque(2, 3100, t, lvl));
+    TEST_ASSERT_TRUE(t >= 1850 && t <= 2000); // negative band
+    TEST_ASSERT_TRUE(lvl == 1 || lvl == 2);
+}
+
+// Mode-C: das==2 level-2 hold gate. Once a walk arms a level-2 hold
+// (s2HoldUntilMs/s2HoldRaw/s2HoldLevel), subsequent frames within the hold
+// window emit the held value at gate "s2_hold" (spec §6.3 s2 hold bookkeeping).
+void test_demand_state2_level2_hold_emits_held_value()
+{
+    DashEpasNagEngine e = makeDemandEngine(2);
+    uint16_t t; uint8_t lvl;
+    e.nextDemandTorque(2, 1100, t, lvl);   // arm s2EnterMs (in delay)
+    e.nextDemandTorque(2, 3100, t, lvl);   // enter walk phase (past 2000ms delay)
+    // Simulate a level-2 walk having armed the hold (public struct members):
+    e.s2HoldUntilMs = 5000;
+    e.s2HoldRaw = 2250;     // positive-band level-2 peak
+    e.s2HoldLevel = 2;
+    // within hold window -> held value, gate s2_hold
+    TEST_ASSERT_TRUE(e.nextDemandTorque(2, 4000, t, lvl));
+    TEST_ASSERT_EQUAL_UINT16(2250, t);
+    TEST_ASSERT_EQUAL_UINT8(2, lvl);
+    // past hold window -> back to mild walk (not the held value)
+    bool ok = e.nextDemandTorque(2, 5100, t, lvl);
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_TRUE(t >= 2100 && t <= 2250);   // mild band again
+}
 
 // ── checksum (additive, NOT crc) ─────────────────────────────────────
 void test_checksum_additive_formula()
@@ -422,6 +468,9 @@ int main()
     RUN_TEST(test_demand_rejects_excluded_das_states);
     RUN_TEST(test_demand_ap_inactive_blocks);
     RUN_TEST(test_demand_state1_holds_then_stops);
+    RUN_TEST(test_demand_state2_delays_then_mild_walks);
+    RUN_TEST(test_demand_state2_negative_band_when_steer_right);
+    RUN_TEST(test_demand_state2_level2_hold_emits_held_value);
     RUN_TEST(test_checksum_additive_formula);
     RUN_TEST(test_checksum_counter_additive);
     RUN_TEST(test_torque_stays_in_bounds);

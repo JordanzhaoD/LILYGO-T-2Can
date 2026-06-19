@@ -189,7 +189,39 @@ struct DashEpasNagEngine
             return false;
         }
 
-        // mild (das==2) and strong (else) branches added in Task 4 / Task 5.
+        if (das == 2)
+        {
+            if (s2EnterMs != 0 && (nowMs - s2EnterMs) < 2000u)
+            {
+                diag.lastDemandGate = "s2_delay";
+                return false;
+            }
+            if (nowMs < s2HoldUntilMs)
+            {
+                outTorque = (uint16_t)s2HoldRaw; outLevel = s2HoldLevel;
+                diag.lastDemandGate = "s2_hold";
+                return true;
+            }
+            int16_t lo = (dir < 0) ? 1850 : 2100;
+            int16_t hi = (dir < 0) ? 2000 : 2250;
+            if (mildWalk < lo || mildWalk > hi)
+                mildWalk = (int16_t)((lo + hi) / 2);
+            mildWalk += (int16_t)((int)(xorshift32() % 25u) - 12);
+            mildWalk = clampInt16(mildWalk, lo, hi);
+            outTorque = (uint16_t)mildWalk;
+            outLevel = handsLevelFromRaw(mildWalk);
+            if (handsLevelFromRaw(mildWalk) == 2 && !s2Level2Active)
+            {
+                s2HoldUntilMs = nowMs + 1000u;
+                s2HoldRaw = mildWalk; s2HoldLevel = 2;
+            }
+            s2Level2Active = (handsLevelFromRaw(mildWalk) == 2);
+            lastRaw = mildWalk; lastLevel = outLevel;
+            diag.lastDemandGate = "s2_mild";
+            return true;
+        }
+
+        // strong (das==3/4/5/0xFF) added in Task 5.
         (void)dir;
         diag.lastDemandGate = "demand_idle";
         return false;
