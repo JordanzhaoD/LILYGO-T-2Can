@@ -263,26 +263,12 @@ void test_legacy_tesla_parity_mux1_clears_bit19()
     TEST_ASSERT_EQUAL(FsdSkipReason::Sent, handler.legacyFsdDiag.mux1.lastSkip);
 }
 
-void test_legacy_tesla_parity_does_not_clear_bit48_even_when_vision_flag_enabled()
-{
-    handler.legacyFsdDiag.policy = LegacyFsdPolicy::TeslaParity;
-    handler.legacyFsdDiag.visionLimitClearEnable = true;
-
-    CanFrame f0 = {.id = 1006};
-    f0.data[0] = 0x00;
-    f0.data[4] = 0x40;
-    handler.handleMessage(f0, mock);
-
-    CanFrame f1 = {.id = 1006};
-    f1.data[0] = 0x01;
-    setBit(f1, 19, true);
-    setBit(f1, 48, true);
-    handler.handleMessage(f1, mock);
-
-    TEST_ASSERT_EQUAL(2, mock.sent.size());
-    TEST_ASSERT_FALSE((mock.sent[1].data[2] >> 3) & 0x01);
-    TEST_ASSERT_TRUE(mock.sent[1].data[6] & 0x01);
-}
+// Pre-fix this test asserted bit48 was PRESERVED under TeslaParity even with
+// visionLimitClearEnable=true (because line 465 required policy==Experimental).
+// Spec Task 1 made visionLimitClearEnable policy-independent, so the old
+// expectation is inverted. The post-fix behavior is covered by
+// test_legacy_vision_clear_works_under_tesla_parity_policy and
+// test_legacy_vision_clear_disabled_does_not_clear_bit48 below.
 
 void test_legacy_trigger_source_force_vs_ui_bit_vs_false()
 {
@@ -353,6 +339,58 @@ void test_legacy_gate_block_uses_resolver_reason()
     TEST_ASSERT_EQUAL(FsdSkipReason::GateBlocked, handler.legacyFsdDiag.mux0.lastSkip);
     TEST_ASSERT_EQUAL(FsdHealthState::GateBlocked, handler.legacyFsdDiag.health);
     TEST_ASSERT_EQUAL(FsdGateBlockReason::ApGate, handler.legacyFsdDiag.lastBlockedBy);
+}
+
+// --- 视觉限速 clear 独立于 policy (spec Task 1) ---
+// NOTE: Stable policy short-circuits mux-1 at handlers.h:431 (DisabledInStable),
+// so the effective demonstration of policy-independent visionLimitClearEnable
+// uses TeslaParity (which already permits mux-1 injection). The old behavior
+// (Experimental-only gate) was recorded by test_legacy_tesla_parity_does_not_clear_bit48_...
+
+void test_legacy_vision_clear_works_under_tesla_parity_policy()
+{
+    // Pre-fix: line 465 required policy==Experimental, so TeslaParity+vision=true
+    // did NOT clear bit48. Post-fix: visionLimitClearEnable gates independently.
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::TeslaParity;
+    handler.legacyFsdDiag.visionLimitClearEnable = true;
+
+    // mux-0 first to arm fsdTriggered (matches existing TeslaParity test pattern)
+    CanFrame f0 = {.id = 1006};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+
+    CanFrame f1 = {.id = 1006};
+    f1.data[0] = 0x01; // mux 1
+    setBit(f1, 19, true);
+    setBit(f1, 48, true); // bit48 set, expect cleared post-fix
+    handler.handleMessage(f1, mock);
+
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+    TEST_ASSERT_FALSE((mock.sent[1].data[2] >> 3) & 0x01); // bit19 cleared (existing behavior)
+    TEST_ASSERT_FALSE(mock.sent[1].data[6] & 0x01);        // bit48 cleared (NEW: post-fix)
+    TEST_ASSERT_EQUAL(FsdSkipReason::Sent, handler.legacyFsdDiag.mux1.lastSkip);
+}
+
+void test_legacy_vision_clear_disabled_does_not_clear_bit48()
+{
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::TeslaParity;
+    handler.legacyFsdDiag.visionLimitClearEnable = false;
+
+    CanFrame f0 = {.id = 1006};
+    f0.data[0] = 0x00;
+    f0.data[4] = 0x40;
+    handler.handleMessage(f0, mock);
+
+    CanFrame f1 = {.id = 1006};
+    f1.data[0] = 0x01;
+    setBit(f1, 19, true);
+    setBit(f1, 48, true);
+    handler.handleMessage(f1, mock);
+
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+    TEST_ASSERT_FALSE((mock.sent[1].data[2] >> 3) & 0x01); // bit19 still cleared
+    TEST_ASSERT_TRUE(mock.sent[1].data[6] & 0x01);         // bit48 PRESERVED (flag off)
 }
 
 // --- CAN 760 offset write ---
@@ -681,7 +719,8 @@ int main()
     RUN_TEST(test_legacy_experimental_mux1_can_clear_bit19);
     RUN_TEST(test_legacy_tesla_parity_mux0_writes_speed_profile);
     RUN_TEST(test_legacy_tesla_parity_mux1_clears_bit19);
-    RUN_TEST(test_legacy_tesla_parity_does_not_clear_bit48_even_when_vision_flag_enabled);
+    RUN_TEST(test_legacy_vision_clear_works_under_tesla_parity_policy);
+    RUN_TEST(test_legacy_vision_clear_disabled_does_not_clear_bit48);
     RUN_TEST(test_legacy_trigger_source_force_vs_ui_bit_vs_false);
     RUN_TEST(test_legacy_mux0_records_can_a_twai_labels);
     RUN_TEST(test_legacy_gate_block_records_gate_blocked_health);

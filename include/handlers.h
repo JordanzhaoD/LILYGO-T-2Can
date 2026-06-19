@@ -462,7 +462,7 @@ struct LegacyHandler : public CarManagerBase
 
                 legacyFsdDiag.mux1.recordBefore(frame.data);
                 setBit(frame, 19, false);
-                if (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental && legacyFsdDiag.visionLimitClearEnable)
+                if (legacyFsdDiag.visionLimitClearEnable)
                     setBit(frame, 48, false);
                 legacyFsdDiag.mux1.recordAfter(frame.data);
                 framesSent++;
