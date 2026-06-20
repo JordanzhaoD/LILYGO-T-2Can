@@ -98,9 +98,7 @@ Jordan 实车 Legacy Model X 完成 L0 验证（6 小时稳定运行，FSD 正�
 
 **验证闭环**：设置 → 重启 → Dashboard 值保留 → 录制验证 0x2F8 b5 改动（offset≠0 不再短路）+ 0x438 出现 TX（override=true 不再短路）。
 
-**测试**：
-- native 单测（若 handleConfig JSON 解析能抽可测函数）：验证 legacyOffset/overrideSpeedLimit 解析 + 镜像更新
-- 真机回归（必须）：完整 NVS 往返，证伪"重启丢配置"
+**测试**：只靠真机回归（Jordan 决策，handleConfig 依赖 WebServer 重构成本不值）：设置 → 重启 → Dashboard 值保留 → 录制验证 0x2F8/0x438 注入。
 
 ### 第 2 块：UI 统一
 
@@ -157,7 +155,7 @@ Jordan 实车 Legacy Model X 完成 L0 验证（6 小时稳定运行，FSD 正�
 
 **release 资产**：固件二进制放 GitHub Releases（不进 git 历史），tag 关联。
 
-**事故文档**：`EPAS-NAG-REMOVAL-INCIDENT.md` 进 repo 用**精简版**（教训总结 + 安全原则，不暴露具体扭矩值/counter 细节）。Jordan 审 spec 时可定要不要进。
+**事故文档**：`EPAS-NAG-REMOVAL-INCIDENT.md` **不进 repo**（Jordan 决策，避免暴露事故细节）。
 
 ---
 
@@ -173,7 +171,7 @@ Jordan 实车 Legacy Model X 完成 L0 验证（6 小时稳定运行，FSD 正�
 
 | 块 | 验证 | 通过标准 |
 |----|------|---------|
-| 持久化 | 真机回归（必须）+ native 单测 | 重启后配置不丢，0x2F8/0x438 注入 |
+| 持久化 | 真机回归（必须）| 重启后配置不丢，0x2F8/0x438 注入 |
 | UI 统一 | 浏览器截图对比 | 列表项视觉与主卡一致 |
 | 0x370 禁令守卫 | `test_no_epas_nag_contract.py` | 2/2 绿 |
 | 构建 | `pio run -t clean && pio run` | SUCCESS |
