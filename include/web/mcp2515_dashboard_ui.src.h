@@ -765,8 +765,16 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
             <label class="tgl"><input type="checkbox" id="legacy-fsd-profile" onchange="saveLegacyFsdExperimental()"><div class="tgl-track"></div></label>
           </div>
           <div class="setting-row">
-            <div><div class="setting-name">清除视觉限速</div><div class="setting-desc">实验模式：清除视觉限速位。</div></div>
-            <label class="tgl"><input type="checkbox" id="legacy-fsd-vision" onchange="saveLegacyFsdExperimental()"><div class="tgl-track"></div></label>
+            <div><div class="setting-name">清除视觉限速</div><div class="setting-desc">清除视觉限速位（独立于 policy）。</div></div>
+            <label class="tgl"><input type="checkbox" id="legacy-fsd-vision" onchange="saveLegacyVision()"><div class="tgl-track"></div></label>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-name">Legacy 速度偏移</div><div class="setting-desc">0x2F8 UI_userSpeedOffset，0-33 km/h（0=关）</div></div>
+            <input class="inp" type="number" min="0" max="33" id="legacy-offset-inp" value="0" style="width:86px" onchange="saveLegacyOffset()">
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-name">重写限速 <span class="exp-badge">Legacy</span></div><div class="setting-desc">0x438 visionSpeedSlider=100 覆盖限速</div></div>
+            <label class="tgl"><input type="checkbox" id="legacy-override-tgl" onchange="saveLegacyOverride()"><div class="tgl-track"></div></label>
           </div>
         </div>
 
@@ -3578,6 +3586,14 @@ async function loadLegacyFsdConfig(){
   if(profile)profile.checked=!!cfg.profile;
   if(vision)vision.checked=!!cfg.vision;
   if(cfg.policy)renderLegacyFsdPolicyCards(cfg.policy);
+  // Task 6 UI 补全：从 /config fsdRuntime 读 Legacy offset + overrideSpeedLimit
+  var conf=await fetchJson('/config');
+  if(conf&&conf.fsdRuntime){
+    var offset=document.getElementById('legacy-offset-inp');
+    var override=document.getElementById('legacy-override-tgl');
+    if(offset&&conf.fsdRuntime.legacyOffset!==undefined)offset.value=conf.fsdRuntime.legacyOffset;
+    if(override)override.checked=!!conf.fsdRuntime.overrideSpeedLimit;
+  }
   legacyFsdConfigLoaded=true;
   return true;
 }
@@ -3594,15 +3610,54 @@ async function saveLegacyFsdExperimental(){
   }
   var mux1=document.getElementById('legacy-fsd-mux1-tgl');
   var profile=document.getElementById('legacy-fsd-profile');
-  var vision=document.getElementById('legacy-fsd-vision');
   await postForm('/legacy_fsd_config',{
     policy:'experimental',
     mux1:mux1&&mux1.checked?'1':'0',
-    profile:profile&&profile.checked?'1':'0',
-    vision:vision&&vision.checked?'1':'0'
+    profile:profile&&profile.checked?'1':'0'
   });
   showToast('实验模式配置已保存');
   poll();
+}
+// Task 6 UI 补全：POST JSON 到 /config（fsdRuntime 块）
+async function postConfigJson(data){
+  var r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  return r;
+}
+// 功能1：Legacy 速度偏移（0x2F8 UI_userSpeedOffset，0-33 km/h）
+async function saveLegacyOffset(){
+  var el=document.getElementById('legacy-offset-inp');
+  if(!el)return;
+  var v=parseInt(el.value)||0;
+  if(v<0)v=0;if(v>33)v=33;el.value=v;
+  try{
+    await postConfigJson({fsdRuntime:{legacyOffset:v}});
+    showToast('Legacy 速度偏移已保存: '+v+' km/h',true);
+    poll();
+  }catch(e){showToast('保存失败');}
+}
+// 功能5a：重写限速（0x438 visionSpeedSlider=100）
+async function saveLegacyOverride(){
+  var el=document.getElementById('legacy-override-tgl');
+  if(!el)return;
+  try{
+    await postConfigJson({fsdRuntime:{overrideSpeedLimit:el.checked}});
+    showToast('重写限速已'+(el.checked?'开启':'关闭'),true);
+    poll();
+  }catch(e){showToast('保存失败');}
+}
+// 功能2：视觉限速 clear（独立于 policy，只 POST vision，Task 1 后端独立门控）
+async function saveLegacyVision(){
+  if(!legacyFsdConfigLoaded){
+    await loadLegacyFsdConfig();
+    if(!legacyFsdConfigLoaded){showToast('配置未同步，请稍后再试');return;}
+  }
+  var vision=document.getElementById('legacy-fsd-vision');
+  try{
+    await postForm('/legacy_fsd_config',{vision:vision&&vision.checked?'1':'0'});
+    showToast('视觉限速清除已'+(vision&&vision.checked?'开启':'关闭'),true);
+    poll();
+  }catch(e){showToast('保存失败');}
 }
 function renderLegacyTruth(d){
   const set=(id,v)=>{const e=document.getElementById(id); if(e)e.innerText=v;};
