@@ -2480,6 +2480,41 @@ static void handleStatus()
 
 static void handleConfig()
 {
+    // --- FSD runtime JSON body ({fsdRuntime:{legacyOffset,overrideSpeedLimit}}) ---
+    // UI postConfigJson() posts here as application/json. Without this branch the
+    // body was silently dropped and legacyOffset/overrideSpeedLimit never reached
+    // NVS (reboot reset them). Must update nvs mirror THEN dashApplyRuntimeState,
+    // else the next apply overwrites with the stale mirror.
+    if (server.hasArg("plain"))
+    {
+        String body = server.arg("plain");
+        JsonDocument doc;
+        DeserializationError jsonErr = deserializeJson(doc, body);
+        if (!jsonErr && doc["fsdRuntime"].is<JsonObject>())
+        {
+            JsonObject fsd = doc["fsdRuntime"].as<JsonObject>();
+            bool changed = false;
+            if (fsd["legacyOffset"].is<int>())
+            {
+                int offset = fsd["legacyOffset"].as<int>();
+                if (offset < -30) offset = -30;
+                if (offset > 225) offset = 225;
+                nvsLegacyOffset = offset;
+                changed = true;
+            }
+            if (fsd["overrideSpeedLimit"].is<bool>())
+            {
+                nvsOverrideSpeedLimit = fsd["overrideSpeedLimit"].as<bool>();
+                changed = true;
+            }
+            if (changed)
+            {
+                dashApplyRuntimeState();  // nvs mirror -> dashHandler fields
+                dashSavePrefs();          // dashHandler fields -> NVS commit
+                dashLog("[CFG] fsdRuntime JSON: legacyOffset/overrideSpeedLimit applied");
+            }
+        }
+    }
     bool hwChanged = false;
     if (server.hasArg("hw"))
     {
