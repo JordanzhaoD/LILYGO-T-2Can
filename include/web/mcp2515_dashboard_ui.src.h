@@ -445,6 +445,18 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .ds-select { background:rgba(0,0,0,.25); border:1px solid var(--ds-card-stroke); border-radius:7px; color:var(--tx1); padding:6px; }
 .plugin-list { display:grid; gap:8px; }
 .collapse { margin-top:14px; background:rgba(255,255,255,.03); border:1px solid var(--ds-card-stroke); border-radius:10px; padding:10px 14px; font-size:11.5px; color:var(--cockpit-dim); }
+/* === 已安装插件列表项（renderPluginsStatus，套驾驶舱设计系统） === */
+.plugin-item { background:rgba(255,255,255,.03); border:1px solid var(--ds-card-stroke); border-radius:11px; padding:11px 15px; }
+.plugin-item .pi-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.plugin-item .pi-name { font-weight:600; color:var(--tx1); font-size:13px; }
+.plugin-item .pi-ver { color:var(--cockpit-dim); font-size:10.5px; }
+.plugin-item .pi-controls { display:flex; align-items:center; gap:10px; }
+.plugin-item .pi-prio { width:56px; margin-bottom:0; text-align:center; }
+.plugin-item .pi-hint { font-size:10.5px; color:var(--cockpit-dim); margin-top:6px; }
+.plugin-item .pi-warn { font-size:10.5px; color:var(--warn); margin-top:4px; }
+.plugin-item .pi-details { margin-top:8px; }
+.plugin-item .pi-details > pre { margin:6px 0 0; background:rgba(0,0,0,.25); border:1px solid var(--ds-card-stroke); border-radius:7px; padding:8px; font-size:10px; color:var(--tx2); overflow:auto; }
+.ds-btn-danger { background:linear-gradient(135deg,#991b1b,#ef4444); }
 .diag-shell { display: grid; grid-template-columns: 260px minmax(0,1fr); gap: 14px; }
 .diag-console { align-items: start; }
 .diag-kpi-rail { display: grid; gap: 10px; }
@@ -2652,13 +2664,17 @@ function renderPluginsStatus(j){
     var name=String(p.name||'');
     var ids=(p.targetIds||[]).join(', ');
     var conflicts=(p.conflicts||[]).join(' · ');
-    return '<div class="plugin-item"><div><b>'+esc(name)+'</b> <small>'+esc(p.version||'1.0')+'</small>'
-      +'<div class="hint">目标ID: '+esc(ids)+' · 规则: '+(p.ruleCount||0)+'</div>'
-      +'<div class="warn">'+esc(conflicts||p.lastError||'')+'</div></div>'
-      +'<label>启用 <input type="checkbox" '+(p.enabled?'checked':'')+' onchange="togglePlugin(\''+escAttr(name)+'\',this.checked)"></label>'
-      +'<label>优先级 <input type="number" min="1" max="8" value="'+(p.priority||1)+'" onchange="setPluginPriority(\''+escAttr(name)+'\',this.value)"></label>'
-      +'<button onclick="removePlugin(\''+escAttr(name)+'\')">删除</button>'
-      +'<details><summary>详情</summary><pre>'+esc(JSON.stringify(p,null,2))+'</pre></details></div>';
+    return '<div class="plugin-item">'
+      +'<div class="pi-head"><div><span class="pi-name">'+esc(name)+'</span> <small class="pi-ver">'+esc(p.version||'1.0')+'</small></div>'
+      +'<div class="pi-controls">'
+      +'<label class="tgl" title="启用"><input type="checkbox" '+(p.enabled?'checked':'')+' onchange="togglePlugin(\''+escAttr(name)+'\',this.checked)"><div class="tgl-track"></div></label>'
+      +'<input class="mock-input pi-prio" type="number" min="1" max="8" value="'+(p.priority||1)+'" onchange="setPluginPriority(\''+escAttr(name)+'\',this.value)" title="优先级">'
+      +'<button class="ds-btn ds-btn-danger" onclick="removePlugin(\''+escAttr(name)+'\')">删除</button>'
+      +'</div></div>'
+      +'<div class="pi-hint">目标ID: '+esc(ids)+' · 规则: '+(p.ruleCount||0)+'</div>'
+      +(conflicts||p.lastError ? '<div class="pi-warn">'+esc(conflicts||p.lastError)+'</div>' : '')
+      +'<details class="collapse pi-details"><summary>详情</summary><pre>'+esc(JSON.stringify(p,null,2))+'</pre></details>'
+      +'</div>';
   }).join('');
   list.innerHTML=html||'<div class="hint">暂无插件。新安装默认禁用。</div>';
   var rc=document.getElementById('plugin-replay-count'); if(rc)rc.value=String(j.replayCount||1);
