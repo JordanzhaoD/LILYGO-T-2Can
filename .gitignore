@@ -253,3 +253,12 @@ dependencies.lock
 # Embedded upstream clone (kept for reference, not part of this fork)
 ev-open-can-tools-repo/
 
+# Tooling artifacts (Playwright MCP sessions/screenshots, etc.)
+.playwright-cli/
+.playwright-mcp/
+output/
+
+# Per-build firmware artifact dirs (reproducible builds; only the tracked
+# LILYGO-T-2CAN_latest_* set is committed to avoid bloating git history).
+firmware-assets/v4.*/
+

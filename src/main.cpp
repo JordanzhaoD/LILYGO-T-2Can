@@ -133,12 +133,12 @@ static void t2canSetupSecondary()
         Serial.println("CAN B (MCP2515) init failed");
         return;
     }
-    appDriverSecondary->mcp().setReceiveAllMode();
+    appDriverSecondary->setReceiveAllMode();
     Serial.println("CAN B (MCP2515) ready @ 500k");
 }
 
-// Transmit on the secondary bus. No automatic logic targets bus B yet
-// (service-mode / lighting features land later); this is the TX entry point.
+// Transmit direct secondary-bus commands. Handler-driven Legacy NAG and smart
+// speed replies use the CanDriver instance that supplied their native frame.
 bool t2canSendSecondary(const CanFrame &frame)
 {
     if (!appDriverSecondary)
@@ -211,6 +211,8 @@ uint32_t t2canBus2RxCount(void) { return t2canSecondaryRxCount; }
 uint32_t t2canBus2TxCount(void) { return t2canSecondaryTxCount; }
 uint32_t t2canBus2TxErrCount(void) { return t2canSecondaryTxErrCount; }
 uint8_t t2canBus2Eflg(void) { return t2canSecondaryEflg; }
+uint32_t t2canBus2RecoveryCount(void) { return appDriverSecondary ? appDriverSecondary->recoveryCount() : 0; }
+uint8_t t2canBus2ConsecutiveTxFailures(void) { return appDriverSecondary ? appDriverSecondary->consecutiveTxFailures() : 0; }
 const DashTxEvidence &t2canServiceTxEvidence(void) { return serviceTxEvidence; }
 uint8_t t2canServiceLastCommand(void) { return g_svcLastCommand; }
 bool t2canBus2IdAt(uint16_t i, uint16_t *id, uint8_t *dlc, uint8_t data[8], uint32_t *count)
@@ -237,17 +239,13 @@ static void t2canDrainSecondary()
         t2canSecondaryRxCount = t2canSecondaryRxCount + 1;
         t2canRecordBus2(f);
 #ifdef ESP32_DASHBOARD
-        dashRecordCanFrame(f, 'R');
-        // CAN B is Party CAN — the FSD activation frame (0x3EE/0x3FD) lives here.
-        // Dispatch FSD-relevant frames to the active handler so injection can
-        // modify and retransmit them on the same bus (MCP2515).
-        // NOTE: Do NOT call dashPostProcessFrame here — the handler already
-        // injects, and calling it again would double-send (DASH_FSD_252_COMPAT=1),
-        // overflowing the MCP2515's 3-slot TX buffer and causing Tx errors.
+        // Legacy activation follows the controller that supplied the native
+        // frame, matching tesla-fsd-controller: the handler modifies and
+        // retransmits on this same CanDriver. Do not hardcode TWAI here; on
+        // some T-2CAN harnesses the vehicle's physical CAN1 is wired to the
+        // MCP2515 channel despite the UI's historical CAN1/CAN2 labels.
         if (appActiveHandler)
-        {
             appActiveHandler->handleMessage(f, *appDriverSecondary);
-        }
 #endif
     }
 }
@@ -588,45 +586,65 @@ static void t2canFogLightTick()
         g_fogLastMs = 0;
 }
 
-// ── Wheel DND tick (Phase 3: 0x3C2 on bus B) ──────────────────
-static bool g_wheelDndGateWasOpen = false;
+// Legacy Model X Scroll DND: 0x399 warning transition -> one CAN1 native 0x045
+// positive tick. An unsuccessful action is balanced while the warning remains;
+// warning clear cancels the inverse so the clearing action is consumed only by
+// the prompt.
+// The CAN2 0x3C2 implementation remains compiled as a separate newer-vehicle
+// protocol, but it is never selected by this Legacy path.
 
 static void t2canWheelDndTick()
 {
-    if (!appDriverSecondary)
-        return;
-    bool gateOpen = canActive && dashDefenseEnabled && (dashDndVolume || dashDndSpeed);
-    if (!gateOpen)
+    const uint32_t now = millis();
+    dashLegacyWheel045DndCtrl.configure(dashDndVolume);
+
+    DashLegacyWheel045Block gateBlock = DashLegacyWheel045Block::None;
+    if (!canActive || !dashDndVolume)
+        gateBlock = DashLegacyWheel045Block::Disabled;
+    else if (!dashLegacyHandlerActive())
+        gateBlock = DashLegacyWheel045Block::NotLegacy;
+    else if (vehicleOtaActive)
+        gateBlock = DashLegacyWheel045Block::OtaGuard;
+    else if (dashHandler && !dashHandler->abortGuard.allowsInjection())
     {
-        dashWheelDndCtrl.reset();
-        g_wheelDndGateWasOpen = false;
-        return;
+        dashHandler->abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyWheel045Dnd);
+        gateBlock = DashLegacyWheel045Block::AbortGuard;
     }
-    if (!g_wheelDndGateWasOpen)
+    else if (!appDriver)
+        gateBlock = DashLegacyWheel045Block::TwaiUnavailable;
+
+#if defined(ESP_PLATFORM) && defined(DRIVER_TWAI)
+    static uint32_t lastTwaiCheckMs = 0;
+    static bool twaiReady = true;
+    if (gateBlock == DashLegacyWheel045Block::None &&
+        (lastTwaiCheckMs == 0 || now - lastTwaiCheckMs >= 100))
     {
-        if (dashDndVolume)
-            dashWheelDndCtrl.startVolume();
-        if (dashDndSpeed)
-            dashWheelDndCtrl.startSpeed();
-        g_wheelDndGateWasOpen = true;
+        lastTwaiCheckMs = now;
+        TWAIDriver *twai = static_cast<TWAIDriver *>(appDriver.get());
+        DashTwaiDiag twaiDiag = twai->snapshotDiag();
+        twaiReady = twaiDiag.state == DashTwaiState::Running;
     }
-    if (!dashWheelDndCtrl.isRunning())
+    if (gateBlock == DashLegacyWheel045Block::None && !twaiReady)
+        gateBlock = DashLegacyWheel045Block::TwaiUnavailable;
+#endif
+
+    const bool runtimeAllowed = gateBlock == DashLegacyWheel045Block::None;
+    dashLegacyWheel045DndCtrl.setRuntimeAllowed(runtimeAllowed, gateBlock);
+    if (!runtimeAllowed)
         return;
+
     uint8_t data[8];
-    if (dashWheelDndCtrl.tick((int)millis(), data))
+    if (dashLegacyWheel045DndCtrl.nextFrame(now, data))
     {
         CanFrame f = {};
-        f.id = 0x3C2;
+        f.id = DashLegacyWheel045Dnd::kCanId;
         f.dlc = 8;
         memcpy(f.data, data, 8);
-        f.bus = T2CAN_SECONDARY_BUS;
-        dashWheelDndCtrl.diag.tx.recordAttempt(f.id, f.bus, f.dlc, f.data, millis());
-        bool ok = t2canTxSecondaryCounted(f);
-        dashWheelDndCtrl.diag.tx.recordResult(ok);
-        dashWheelDndCtrl.diag.sequenceState = ok ? "sent" : "failed";
-#ifdef ESP32_DASHBOARD
-        dashRecordCanFrame(f, ok ? 'T' : 'E');
-#endif
+        f.bus = CAN_BUS_DEFAULT;
+        dashLegacyWheel045DndCtrl.diag.tx.recordAttempt(f.id, f.bus, f.dlc, f.data, now);
+        const bool ok = appDriver->send(f);
+        dashLegacyWheel045DndCtrl.diag.tx.recordResult(ok);
+        dashLegacyWheel045DndCtrl.recordTxResult(ok, now);
     }
 }
 #endif

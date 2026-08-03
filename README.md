@@ -41,6 +41,13 @@
 | Pin 9 | CAN High（总线 2） | MCP2515 CAN H |
 | Pin 10 | CAN Low（总线 2） | MCP2515 CAN L |
 
+> **2019 Model X 实车覆盖说明（2026.2.11）**：上述表格是项目原始
+> Model 3/Y 线束假设，不可直接套用到该 Model X。2026-07-26 的双路抓帧
+> 实测确认，需要将 T-2CAN **CAN1/TWAI 接 Pin 9/10**，将
+> **CAN2/MCP2515 接 Pin 13/14**。换线后 `0x3EE`、`0x370`、`0x399`、
+> `0x488` 均稳定出现在 CAN1，Legacy FSD 激活稳定。其他年份、车型和线束
+> 仍应先用只读抓帧确认，不能仅凭 CAN A/B 名称判断物理针脚。
+
 > **注意：** CAN 总线需要 120Ω 终端电阻。请确认车辆端已有终端电阻，否则需外接。
 
 ### Waveshare 单 CAN 独立版
@@ -53,7 +60,7 @@ Dashboard 同时暴露 AP Gate、延迟注入、AP 注入状态、官方 JSON �
 pio run -e waveshare_single_can_standalone
 ```
 
-AP Injection Gate 安全策略对齐 `ev-open-can-tools v3.0.2-beta.3`：Legacy `0x3EE mux0` 在 gate 开启时必须等待 AP active 连续 2 秒；unknown/invalid/SNA gear 默认 fail-closed。该策略降低 2026.8.3.6 相关误注入风险，但不承诺全车型直接兼容。
+AP Injection Gate 是可选的实验性安全策略：Legacy `0x3EE mux0` 在 gate 开启时必须先从 `0x399` 观察到 AP 状态 `3..6`，并连续保持面板设置的 `0/1000/2000/3000 ms` 后才能发送；不会以 `Parked` 或 `Summoning` 代替 AP 状态。关闭 gate 时保留连续激活路径。开启 gate 无法用 bit46 建立首个 AP 状态，属于 fail-closed 行为；unknown/invalid/SNA gear 默认禁止注入。该策略不承诺全车型直接兼容。
 
 ---
 
@@ -187,6 +194,15 @@ A web dashboard is served over the onboard WiFi hotspot — no app needed, just 
 | Pin 14 | CAN Low (Bus 1) | TWAI RX → GPIO 6 |
 | Pin 9 | CAN High (Bus 2) | MCP2515 CAN H |
 | Pin 10 | CAN Low (Bus 2) | MCP2515 CAN L |
+
+> **2019 Model X vehicle override (software 2026.2.11):** the table above is
+> the project's original Model 3/Y harness assumption and must not be applied
+> unchanged to this Model X. Vehicle captures from 2026-07-26 confirm that
+> T-2CAN **CAN1/TWAI must use pins 9/10**, while **CAN2/MCP2515 uses pins
+> 13/14**. With this swap, `0x3EE`, `0x370`, `0x399`, and `0x488` are stable on
+> CAN1 and Legacy FSD activation is reliable. Other model years and harnesses
+> still require receive-only identification; CAN A/B labels alone are not a
+> physical pinout guarantee.
 
 > **Note:** CAN buses require 120Ω termination resistors. Verify that the vehicle side already has termination; add external resistors if not.
 

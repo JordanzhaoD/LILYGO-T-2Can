@@ -10,6 +10,7 @@ UI_GEN = ROOT / "include" / "web" / "mcp2515_dashboard_ui.h"
 DASH = ROOT / "include" / "web" / "mcp2515_dashboard.h"
 HANDLERS = ROOT / "include" / "handlers.h"
 LEGACY_SPEED = ROOT / "include" / "dash_legacy_speed.h"
+LEGACY_SMART_SPEED = ROOT / "include" / "dash_legacy_smart_offset.h"
 MAIN = ROOT / "src" / "main.cpp"
 VERSION = ROOT / "VERSION"
 CHANGELOG = ROOT / "CHANGELOG.md"
@@ -17,6 +18,7 @@ README = ROOT / "README.md"
 TESTS_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 SIMULATOR = ROOT / "scripts" / "webui_simulator.py"
+CMAKE = ROOT / "CMakeLists.txt"
 
 
 class DashboardApiContractTests(unittest.TestCase):
@@ -27,6 +29,7 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.dash = DASH.read_text(encoding="utf-8")
         cls.handlers = HANDLERS.read_text(encoding="utf-8")
         cls.legacy_speed = LEGACY_SPEED.read_text(encoding="utf-8")
+        cls.legacy_smart_speed = LEGACY_SMART_SPEED.read_text(encoding="utf-8")
         cls.main = MAIN.read_text(encoding="utf-8")
         cls.version = VERSION.read_text(encoding="utf-8")
         cls.changelog = CHANGELOG.read_text(encoding="utf-8")
@@ -34,6 +37,7 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.tests_workflow = TESTS_WORKFLOW.read_text(encoding="utf-8")
         cls.release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         cls.simulator = SIMULATOR.read_text(encoding="utf-8")
+        cls.cmake = CMAKE.read_text(encoding="utf-8")
 
     def _standalone_visible_source(self) -> str:
         """Return the source UI surface visible after standalone product gating.
@@ -633,7 +637,7 @@ class DashboardApiContractTests(unittest.TestCase):
             '"wheelDndDiag"',
             '"native3c2Seen"',
             '"baseFrameMode"',
-            '"waiting_native"',
+            '"waiting_native_mux1"',
             't2canWheelDndRecordNative',
         ]:
             with self.subTest(token=token):
@@ -1086,15 +1090,18 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('offsetMode = dashSpeedStrategy;', body)
         self.assertIn('dashSyncLegacyShims();', body)
 
-    def test_legacy_can760_uses_simple_offset_helper_not_mpp(self) -> None:
-        """Legacy speed offset must use the verified CAN760 byte5 UI_userSpeedOffset path."""
+    def test_legacy_can760_is_read_only_and_3ee_is_output(self) -> None:
+        """Legacy 0x2F8 is telemetry only; the offset is written on native 0x3EE mux0."""
         can760 = re.search(r"if \(frame\.id == 760\).*?if \(frame\.id == 1080\)", self.handlers, re.S)
         self.assertIsNotNone(can760)
         body = can760.group(0)
-        self.assertIn('dashComputeLegacySimpleOffsetKph', body)
-        self.assertIn('frame.data[5]', body)
-        self.assertNotIn('dashComputeLegacyMppTargetKph', body)
-        self.assertNotIn('frame.data[6]', body)
+        self.assertIn('legacySpeedDiag.gpsUserOffsetRaw = frame.data[5] & 0x3F;', body)
+        self.assertIn('legacySpeedDiag.gpsMppLimitRaw = frame.data[6] & 0x1F;', body)
+        self.assertNotIn('driver.send(', body)
+        mux0 = re.search(r"if \(index == 0\).*?else if \(index == 1\)", self.handlers, re.S)
+        self.assertIsNotNone(mux0)
+        self.assertIn('dashWriteLegacyOffsetTo3eeMux0', mux0.group(0))
+        self.assertIn('legacySpeedBus.accept(frame, nowMs)', mux0.group(0))
 
     def test_legacy_handler_captures_fused_speed_limit_from_921(self) -> None:
         """Legacy/HW0 needs the same fused speed limit input as the 3-mode speed UI."""
@@ -1102,12 +1109,72 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(can921)
         body = can921.group(0)
         self.assertIn('fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);', body)
-        self.assertIn('APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));', body)
+        self.assertIn('APActive = legacyNagApContextActive(apState);', body)
 
-    def test_legacy_simple_offset_helper_reuses_three_mode_state(self) -> None:
-        """Legacy simple offset should reuse the speed page algorithm and clamp to byte5 wire range."""
-        self.assertIn('kLegacySimpleOffsetMaxKph = 33', self.legacy_speed)
-        self.assertIn('dashComputeLegacySimpleOffsetKph', self.legacy_speed)
+    def test_legacy_smart_offset_has_independent_four_mode_state(self) -> None:
+        """Legacy Off/Manual/Auto/Custom must not be overwritten by HW3/HW4 strategy."""
+        self.assertIn('static LegacySmartOffsetMode dashLegacySmartMode', self.dash)
+        self.assertIn('static uint8_t dashLegacyManualOffsetKph', self.dash)
+        self.assertIn('static uint8_t dashLegacyCustomPct[4]', self.dash)
+        apply = re.search(r"static void dashApplyLegacySmartSpeedState\(CarManagerBase \*handler\).*?^}", self.dash, re.S | re.M)
+        self.assertIsNotNone(apply)
+        self.assertIn('handler->legacySmartOffsetConfig.mode = dashLegacySmartMode;', apply.group(0))
+        self.assertIn('handler->legacySmartOffsetConfig.manualOffsetKph = dashLegacyManualOffsetKph;', apply.group(0))
+        self.assertNotIn('dashSpeedStrategy ==', apply.group(0))
+        self.assertIn('dashWriteLegacyOffsetTo3eeMux0', self.legacy_smart_speed)
+        self.assertIn('if (v > 33)', self.legacy_smart_speed)
+
+    def test_legacy_speed_config_contract_and_persistence(self) -> None:
+        """Legacy bus routing and smoothing use strict API and persisted keys."""
+        self.assertIn('server.on("/legacy_speed_config", HTTP_GET, handleLegacySpeedConfig);', self.dash)
+        self.assertIn('server.on("/legacy_speed_config", HTTP_POST, handleLegacySpeedConfig);', self.dash)
+        self.assertIn('prefs.putBool("lo_smooth", dashLegacySmoothDown);', self.dash)
+        self.assertIn('prefs.putUChar("lo_rate", dashLegacySmoothRateKphS);', self.dash)
+        self.assertIn('prefs.putUChar("lo_bus", static_cast<uint8_t>(dashLegacySpeedBusMode));', self.dash)
+        for key in ('"lo_mode"', '"lo_man"', '"lo_cp0"', '"lo_cp1"', '"lo_cp2"', '"lo_cp3"'):
+            self.assertIn(key, self.dash)
+        config = re.search(r"static void handleLegacySpeedConfig\(\).*?static String dashLightingConfigJson\(\)", self.dash, re.S)
+        self.assertIsNotNone(config)
+        self.assertIn('dashArgUIntInRange("smooth_rate_kph_s", 1, 20, rate)', config.group(0))
+        self.assertIn('mode must be off, manual, auto, or custom', config.group(0))
+        self.assertIn('dashArgUIntInRange("manual_offset_kph", 0, 33, value)', config.group(0))
+        self.assertIn('dashArgUIntInRange(key.c_str(), 0, 63, value)', config.group(0))
+        self.assertNotIn('.toInt()', config.group(0))
+        response = re.search(r"static String dashLegacySpeedConfigJson\(\).*?^}", self.dash, re.S | re.M)
+        self.assertIsNotNone(response)
+        self.assertIn('j += ",\\\"smooth_down\\\":";', response.group(0))
+        self.assertNotIn('j += "\\\",\\\"smooth_down\\\":";', response.group(0))
+
+    def test_legacy_speed_ui_exposes_four_mode_controls(self) -> None:
+        """Vehicle Legacy UI must expose its distinct four-mode API surface."""
+        for token in (
+            'id="legacy-speed-mode"',
+            "setLegacySpeedMode('off')",
+            "setLegacySpeedMode('manual')",
+            "setLegacySpeedMode('auto')",
+            "setLegacySpeedMode('custom')",
+            'id="legacy-speed-manual"',
+            'id="legacy-speed-cp1"',
+            'id="legacy-speed-cp4"',
+            'manual_offset_kph:String(legacySpeedVal',
+            'mode:legacySpeedModeState',
+            'applyLegacySpeedConfig(d)',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.ui)
+
+    def test_status_exposes_legacy_smart_speed_runtime(self) -> None:
+        """Status separates configured, runtime, source, bus, and failure state."""
+        for token in (
+            '"legacySmartSpeed"',
+            '"runtimeActive"',
+            '"limitSource"',
+            '"targetBus"',
+            '"busAmbiguous"',
+            '"blockedReason"',
+            '"offsetOnlyTxOk"',
+        ):
+            self.assertIn(token, self.dash)
         self.assertIn('fusedSpeedLimitRaw', self.legacy_speed)
         self.assertIn('dashComputeOffset(limitKph, 0.05f)', self.legacy_speed)
         self.assertIn('dashClampLegacySimpleOffsetKph', self.legacy_speed)
@@ -1148,7 +1215,7 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_speed_custom_rejects_invalid_values_before_saving(self) -> None:
         """POST /speed_custom must reject non-decimal or out-of-range values atomically."""
-        speed_custom = re.search(r"static void handleSpeedCustom\(\).*?static String dashLightingConfigJson\(\)", self.dash, re.S)
+        speed_custom = re.search(r"static void handleSpeedCustom\(\).*?static String dashLegacySpeedConfigJson\(\)", self.dash, re.S)
         self.assertIsNotNone(speed_custom)
         body = speed_custom.group(0)
         self.assertIn('server.send(400, "application/json", "{\\"ok\\":false,\\"error\\":\\"manualPct/cp1..cp4 must be decimal integers from 0 to 50\\"}");', body)
@@ -1311,41 +1378,50 @@ class DashboardApiContractTests(unittest.TestCase):
         # Sequence: 01→00→3F→00
         self.assertIn("0x01", dnd)
         self.assertIn("0x3F", dnd)
-        # 50ms step interval
-        self.assertIn("kStepIntervalMs{50}", dnd)
+        self.assertIn("kStepIntervalMs{100}", dnd)
+        self.assertIn("kNativeMaxAgeMs{1000}", dnd)
+        self.assertIn("kReactiveCooldownMs{2000}", dnd)
+        self.assertIn("kMaxActionsPerEpisode{3}", dnd)
 
-    def test_phase3_wheel_dnd_checksum(self) -> None:
-        """DND frames must include Tesla checksum calculation."""
+    def test_phase3_wheel_dnd_preserves_native_frame_fields(self) -> None:
+        """DND clones an idle native mux1 and changes only the selected wheel byte."""
         dnd = (ROOT / "include" / "dash_wheel_dnd.h").read_text(encoding="utf-8")
-        self.assertIn("0xC2u + 0x03u", dnd)  # CAN ID 0x3C2 bytes
-        self.assertIn("outData[7]", dnd)
+        self.assertIn("memcpy(outData, nativeData", dnd)
+        self.assertIn("outData[2] = kSteps", dnd)
+        self.assertIn("outData[3] = kSteps", dnd)
+        self.assertNotIn("clean_base", dnd)
 
     def test_phase3_wheel_dnd_is_runtime_wired(self) -> None:
-        """Wheel DND must be instantiated, started by API, and ticked from CAN task."""
-        self.assertIn('#include "dash_wheel_dnd.h"', self.dash)
-        self.assertIn("static DashWheelDND dashWheelDndCtrl;", self.dash)
-        defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
-        self.assertIsNotNone(defense)
-        body = defense.group(0)
-        self.assertIn("dashWheelDndCtrl.startVolume()", body)
-        self.assertIn("dashWheelDndCtrl.startSpeed()", body)
+        """Legacy Wheel DND must follow CAN1 0x045 and native 0x399."""
+        self.assertIn('#include "dash_legacy_wheel_045_dnd.h"', self.dash)
+        self.assertIn("static DashLegacyWheel045Dnd dashLegacyWheel045DndCtrl;", self.dash)
+        self.assertIn("dashLegacyWheel045DndCtrl.onDasStatus(apState, handsState", self.dash)
+        self.assertIn("dashLegacyWheel045DndCtrl.onCan1Frame", self.dash)
+        self.assertIn("dashLegacyWheel045DndCtrl.observeGatewayMirror", self.dash)
+        self.assertIn("f.id == 0x399", self.dash)
         self.assertIn("static void t2canWheelDndTick()", self.main)
-        self.assertIn("dashWheelDndCtrl.tick((int)millis(), data)", self.main)
-        self.assertIn("f.id = 0x3C2;", self.main)
-        self.assertIn("gateOpen = canActive && dashDefenseEnabled", self.main)
-        self.assertIn("g_wheelDndGateWasOpen", self.main)
-        self.assertIn("dashWheelDndCtrl.reset()", self.main)
+        self.assertIn("dashLegacyWheel045DndCtrl.configure(dashDndVolume)", self.main)
+        self.assertIn("dashLegacyWheel045DndCtrl.nextFrame(now, data)", self.main)
+        self.assertIn("f.id = DashLegacyWheel045Dnd::kCanId;", self.main)
+        self.assertIn("appDriver->send(f)", self.main)
+        self.assertIn("dashLegacyHandlerActive()", self.main)
+        self.assertIn("vehicleOtaActive", self.main)
+        self.assertIn("recordTxResult(ok, now)", self.main)
         can_task = re.search(r"static void app_can_task\(void \*\).*?appCanTaskLoops", self.main, re.S)
         self.assertIsNotNone(can_task)
         self.assertIn("t2canWheelDndTick();", can_task.group(0))
 
-    def test_phase3_wheel_dnd_only_starts_when_defense_enabled(self) -> None:
-        """DND switches should not inject frames unless the defense system is enabled."""
-        defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
-        self.assertIsNotNone(defense)
-        body = defense.group(0)
-        self.assertIn("dashDefenseEnabled && dashDndVolume && (!prevDefenseEnabled || !prevDndVolume)", body)
-        self.assertIn("dashDefenseEnabled && dashDndSpeed && (!prevDefenseEnabled || !prevDndSpeed)", body)
+    def test_phase3_wheel_dnd_has_independent_legacy_gate(self) -> None:
+        """Legacy 0x045 DND requires its own switch, Legacy, TWAI and no OTA."""
+        tick = re.search(r"static void t2canWheelDndTick\(\).*?\n}\n", self.main, re.S)
+        self.assertIsNotNone(tick)
+        body = tick.group(0)
+        self.assertIn("!canActive || !dashDndVolume", body)
+        self.assertNotIn("dashDefenseEnabled", body)
+        self.assertIn("!dashLegacyHandlerActive()", body)
+        self.assertIn("vehicleOtaActive", body)
+        self.assertIn("DashLegacyWheel045Block::TwaiUnavailable", body)
+        self.assertNotIn("appDriverSecondary", body)
 
     def test_phase3_naghandler_bionic_branch(self) -> None:
         """NagHandler must branch on bionicSteering with fallback."""
@@ -1388,14 +1464,24 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("dashApplyNvsRuntimeSwitches();\n    dashSwapHandler(hwMode);", self.dash)
 
     def test_phase3_defense_config_exposes_dnd_params(self) -> None:
-        """defense_config must accept and return dnd_volume and dnd_speed."""
+        """defense_config keeps Legacy DND and experimental safety controls wired."""
         defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
         self.assertIsNotNone(defense)
         body = defense.group(0)
         self.assertIn('server.hasArg("dnd_volume")', body)
+        self.assertIn('server.hasArg("legacy_scroll_dnd")', body)
         self.assertIn('server.hasArg("dnd_speed")', body)
         self.assertIn("dashDndVolume", body)
         self.assertIn("dashDndSpeed", body)
+        self.assertIn("prevDndSpeed", body)
+        self.assertIn('server.hasArg("abort_guard")', body)
+        self.assertIn('server.hasArg("minimal_inject")', body)
+        self.assertIn("dashAbortGuardEnabled", body)
+        self.assertIn("dashMinimalInjectEnabled", body)
+        self.assertIn('server.hasArg("instant_engage")', body)
+        self.assertIn('server.hasArg("soft_engage")', body)
+        self.assertIn("dashInstantEngageEnabled", body)
+        self.assertIn("dashSoftEngageEnabled", body)
 
     def test_phase3_defense_config_json_includes_bionic_status(self) -> None:
         """defense_config JSON must report bionic_disabled for UI warning."""
@@ -1404,50 +1490,67 @@ class DashboardApiContractTests(unittest.TestCase):
         body = json_fn.group(0)
         self.assertIn('\\"bionic_disabled\\"', body)
         self.assertIn('\\"dnd_volume\\"', body)
+        self.assertIn('\\"legacy_scroll_dnd\\"', body)
         self.assertIn('\\"dnd_speed\\"', body)
+        self.assertIn('\\"abort_guard\\"', body)
+        self.assertIn('\\"minimal_inject\\"', body)
+        self.assertIn('\\"instant_engage\\"', body)
+        self.assertIn('\\"soft_engage\\"', body)
+        self.assertIn("dashAppendLegacySafetyControlsJson", body)
         self.assertIn("bionicDisabled()", body)
         self.assertIn("dashBionicDisabled", body)
 
-    def test_phase3_defense_ui_has_7_toggles(self) -> None:
-        """Defense page must have all 7 toggle switches in pg-defense section.
-
-        (Was 8; the EPAS-nag toggle ``def-epnag-tgl`` was intentionally removed
-        in the nag-injection safety takedown — see ``test_no_epas_nag_contract``
-        for the guard that keeps it gone.)
+    def test_phase3_defense_ui_has_legacy_045_toggle(self) -> None:
+        """Defense page keeps active controls and removes Legacy 0x3C2 speed DND.
         """
         defense_page = re.search(r'id="pg-defense".*?id="pg-ota"', self.ui, re.S)
         self.assertIsNotNone(defense_page)
         body = defense_page.group(0)
         toggles = [
+            'id="def-master-tgl"',
             'id="hw3-slew-tgl"',
             'id="def-bionic-tgl"',
             'id="def-sound-tgl"',
             'id="def-dnd-vol-tgl"',
             'id="def-speed-nd-tgl"',
-            'id="def-dnd-spd-tgl"',
             'id="def-apeap-tgl"',
+            'id="def-abort-guard-tgl"',
+            'id="def-minimal-inject-tgl"',
         ]
-        self.assertEqual(len(toggles), 7)
+        self.assertEqual(len(toggles), 9)
         for tid in toggles:
             with self.subTest(toggle=tid):
                 self.assertIn(tid, body)
-        # Sanity: the removed nag toggle must NOT be present (guarded elsewhere too).
+        self.assertNotIn('id="def-dnd-spd-tgl"', body)
+        self.assertIn("CAN1 原生 0x045", body)
+        # Legacy NAG reuses the existing persisted bionic switch/API contract.
         self.assertNotIn('id="def-epnag-tgl"', body)
 
-    def test_phase3_defense_ui_bionic_warning_element(self) -> None:
-        """UI must have bionic-disabled warning element."""
-        self.assertIn('id="def-bionic-warn"', self.ui)
-        self.assertIn("bionic_disabled", self.ui)
+    def test_phase3_defense_ui_legacy_nag_runtime_status(self) -> None:
+        """UI must expose verified Legacy NAG runtime state without an experiment badge."""
+        self.assertIn("Legacy 0x370 NAG 主路径", self.ui)
+        for element_id in ["legacy-nag-mode", "legacy-nag-bus", "legacy-nag-rxtx",
+                           "legacy-nag-collision", "legacy-nag-state"]:
+            self.assertIn(f'id="{element_id}"', self.ui)
+        self.assertIn("updateLegacyNagStatus", self.ui)
 
-    def test_phase3_defense_js_saves_dnd_params(self) -> None:
-        """saveDefenseConfig JS must POST dnd_volume and dnd_speed."""
+    def test_legacy_scroll_dnd_diagnostics_are_exposed(self) -> None:
+        for token in [
+            '"nativeMux1IdleSeen"', '"handsState"', '"warningEpisodes"',
+            '"triggerCount"', '"actionsThisEpisode"', '"cooldownRemainingMs"',
+            '"positiveThisEpisode"', '"compensationPending"',
+            '"volumeNeutralEpisodes"', '"blockedReason"', '"autoDisarmed"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+    def test_phase3_defense_js_saves_legacy_045_dnd(self) -> None:
+        """saveDefenseConfig JS posts the active Legacy left-wheel switch."""
         save_fn = re.search(r"async function saveDefenseConfig\(\)\{.*?\}", self.ui, re.S)
         self.assertIsNotNone(save_fn)
         body = save_fn.group(0)
         self.assertIn("def-dnd-vol-tgl", body)
-        self.assertIn("def-dnd-spd-tgl", body)
         self.assertIn("dnd_volume", body)
-        self.assertIn("dnd_speed", body)
 
     def test_phase3_defense_js_loads_dnd_params(self) -> None:
         """loadDefenseConfig JS must read dnd_volume and dnd_speed."""
@@ -1457,7 +1560,6 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("d.dnd_volume", body)
         self.assertIn("d.dnd_speed", body)
         self.assertIn("def-dnd-vol-tgl", body)
-        self.assertIn("def-dnd-spd-tgl", body)
 
     def test_phase3_bionicsteering_in_car_manager_base(self) -> None:
         """bionicSteering must be in CarManagerBase for dashboard access."""
@@ -1470,19 +1572,99 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_phase3_defense_runtime_and_persistence_are_wired(self) -> None:
         """Defense config should drive Nag/Bionic runtime and persist DND switches."""
-        self.assertIn("nagKillerRuntime = canActive && dashDefenseEnabled", self.dash)
+        self.assertIn("nagKillerRuntime = canActive;", self.dash)
+        self.assertNotIn("nagKillerRuntime = canActive && dashDefenseEnabled", self.dash)
+        self.assertNotIn("hw3OffsetSlew = dashDefenseEnabled", self.dash)
         self.assertIn("dashHandler->resetBionic((uint32_t)millis())", self.dash)
         self.assertIn('prefs.putBool("def_dv", dashDndVolume);', self.dash)
         self.assertIn('prefs.putBool("def_ds", dashDndSpeed);', self.dash)
         self.assertIn('dashDndVolume = prefs.getBool("def_dv", false);', self.dash)
         self.assertIn('dashDndSpeed = prefs.getBool("def_ds", false);', self.dash)
+        self.assertIn("slew_rate_enabled", self.dash)
+        self.assertIn("defenseEnabled", self.dash)
+        self.assertIn("bionicSteering", self.dash)
+        self.assertIn("counterCollisionObserved", self.dash)
+        self.assertIn("expectedNativeFollowerObserved", self.dash)
+        self.assertIn("legacy-nag-collision", self.ui)
         status = re.search(r"static void handleStatus\(\).*?server\.send", self.dash, re.S)
         self.assertIsNotNone(status)
         self.assertIn("dashDndSpeed ? \"true\" : \"false\"", status.group(0))
+        wheel_diag = re.search(r"appendWheelDndDiagJson\(String &j, unsigned long now\).*?\n}", self.dash, re.S)
+        self.assertIsNotNone(wheel_diag)
+        self.assertIn("dndActionType", wheel_diag.group(0))
 
     def test_phase3_handlers_includes_bionic_header(self) -> None:
         """handlers.h must include dash_bionic_steer.h."""
         self.assertIn('#include "dash_bionic_steer.h"', self.handlers)
+
+    def test_legacy_continuous_nag_handler_and_status_contract(self) -> None:
+        """Legacy must own Continuous Absolute v4 with beta1 UI/NVS controls."""
+        legacy = re.search(r"struct LegacyHandler.*?^\};", self.handlers, re.S | re.M)
+        self.assertIsNotNone(legacy)
+        body = legacy.group(0)
+        for token in [
+            "DashLegacyNagV4 legacyNagV4",
+            "DashNagBusLock legacyNagBus",
+            "handleLegacyNag370",
+            "legacyNagRuntimeAllowed",
+            "legacyNagChecksum",
+            "driver.send(echo)",
+        ]:
+            self.assertIn(token, body)
+        for token in [
+            '"legacyNag"',
+            '"verified":false',
+            '"vehicleTest":"pending_beta16_vehicle_test"',
+            '"gearGateRequired":false',
+            '"apContextStatusMax":6',
+            '"strategy":"continuous_absolute"',
+            '"torqueModel":"modec_488_one_sided"',
+            '"directionSource":"0x488"',
+            '"blockedReason"',
+            '"tx370"',
+            '"coveragePct"',
+            '"txRetryOk"',
+            "dashLegacyNagBusName",
+        ]:
+            self.assertIn(token, self.dash)
+
+    def test_legacy_fsd_activation_honors_optional_strict_ap_gate(self) -> None:
+        """Legacy AP gate must use 0x399 APActive, never Parked/Summoning."""
+        fn = re.search(
+            r"static bool dashLegacyFsdActivationAllowed\(uint32_t nowMs\)\s*\{.*?^}",
+            self.dash,
+            re.S | re.M,
+        )
+        self.assertIsNotNone(fn)
+        body = fn.group(0)
+        self.assertIn("!canActive", body)
+        self.assertIn("!dashOtaGuardAllowInjection()", body)
+        self.assertIn("dashLegacyApInjectionAllowed()", body)
+        self.assertIn("legacyFsdApSettleTiming", body)
+        self.assertIn("legacyFsdRequiredStableMs", body)
+        self.assertIn("legacyFsdLastAllowed = true", body)
+        strict_gate = re.search(
+            r"static bool dashLegacyApInjectionAllowed\(\)\s*\{.*?^}",
+            self.dash,
+            re.S | re.M,
+        )
+        self.assertIsNotNone(strict_gate)
+        strict_gate_body = strict_gate.group(0)
+        self.assertIn("!apInjectionGate", strict_gate_body)
+        self.assertIn("dashHandler->APActive", strict_gate_body)
+        self.assertNotIn("injectionGateOpen", strict_gate_body)
+        self.assertNotIn("Parked", strict_gate_body)
+        self.assertNotIn("Summoning", strict_gate_body)
+        check_ad = re.search(r"static bool dashCheckADEnabled\(\)\s*\{.*?^}", self.dash, re.S | re.M)
+        self.assertIsNotNone(check_ad)
+        self.assertIn("dashLegacyFsdActivationAllowed(millis())", check_ad.group(0))
+        self.assertIn("activationGateMode", self.dash)
+        self.assertIn("explicit_trigger_can_ota", self.dash)
+        self.assertIn("legacy_ap_state_gate", self.dash)
+        self.assertIn("legacy_ap_state_delay_gate", self.dash)
+        self.assertIn("legacyIgnoresApGate", self.dash)
+        self.assertIn("dashLegacyHandlerActive()", self.dash)
+        self.assertIn("dashLegacyHandlerActive() ? dashLegacyApInjectionAllowed()", self.dash)
 
     # ── Phase 4: Light Stunt System ───────────────────────────
 
@@ -1972,12 +2154,18 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
-        self.assertEqual("4.1.0", self.version.strip())
+        self.assertEqual("4.3.0-beta.27", self.version.strip())
+        self.assertIn('file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" PROJECT_VER LIMIT_COUNT 1)', self.cmake)
         self.assertIn("## [4.0.2] - 2026-05-31", self.changelog)
         self.assertIn("lilygo_t2can_dual", self.tests_workflow)
         self.assertIn("lilygo_t2can_dual", self.release_workflow)
         self.assertIn("firmware-lilygo-t2can-dual", self.release_workflow)
         self.assertIn("release-assets/firmware-lilygo-t2can-dual.bin", self.release_workflow)
+
+    def test_dual_can_legacy_activation_follows_native_source_driver(self) -> None:
+        """Legacy 0x3EE must be handled on whichever controller received it."""
+        self.assertIn("the handler modifies and", self.main)
+        self.assertIn("appActiveHandler->handleMessage(f, *appDriverSecondary)", self.main)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@
 #include <esp_wifi.h>
 #include <esp_private/esp_clk.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 #include <freertos/task.h>
 #endif
 #ifndef ESP_PLATFORM
@@ -46,6 +47,7 @@
 #include "dash_power_mgmt.h"
 #include "dash_fog_light.h"
 #include "dash_wheel_dnd.h"
+#include "dash_legacy_wheel_045_dnd.h"
 #include "dash_tx_evidence.h"
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
@@ -158,21 +160,22 @@ static String dashPluginUploadBuffer;
 
 // AP Injection Gate — when false (default), 1021 mux0 bit46 注入与车辆状态解耦，
 // 复刻 2.5.2 真车固件默认行为（DASH_AP_GATE_DEFAULT=false）。
-// 当 true 时回到 3.0 早期行为：必须 Parked||APActive||Summoning 才允许注入。
+// 当 true 时，Legacy 只接受 0x399 确认的 AP active；HW3/HW4 仍使用其原有
+// Parked||APActive||Summoning 通用门控。
 static bool apInjectionGate = DASH_AP_GATE_DEFAULT;
 static bool apAutoRestore = false;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
 static volatile uint32_t lastInjectMs = 0;
-// Legacy FSD (0x3EE mux0) AP-settle activation gate — upstream beta3 parity.
-// Legacy injection must wait ~2 s after APActive first rises (and CAN must be
-// active, OTA not blocking, apInjectionGate open) before mux0 bit46 fires.
-// AP settle delay is configurable (0-3000 ms, default 2000) so the standalone
-// single-CAN build can expose it through /config and persist across reboots.
+// Legacy FSD diagnostics retain the historical settle fields for API
+// compatibility. When the optional AP gate is enabled, Legacy 0x3EE waits for
+// 0x399 AP active. This is intentionally fail-closed: a first activation cannot
+// bootstrap AP while this experimental gate is enabled.
 static constexpr uint32_t kLegacyFsdActivationSettleDefaultMs = 2000;
 static constexpr uint32_t kLegacyFsdActivationSettleMinMs = 0;
 static constexpr uint32_t kLegacyFsdActivationSettleMaxMs = 3000;
 static uint32_t legacyFsdApActiveSinceMs = 0;
+static bool legacyFsdApSettleTiming = false;
 static uint32_t legacyFsdRequiredStableMs = kLegacyFsdActivationSettleDefaultMs;
 static uint32_t legacyFsdLastBlockedMs = 0;
 static bool legacyFsdLastAllowed = false;
@@ -187,6 +190,7 @@ static uint8_t dashRearFogStrategy = 0;   // 0=off, 1=strobe, 2=continuous
 static DashFogLight dashFogCtrl;           // Phase 4 fog light controller instance
 static bool dashFogOffRequested = false;   // one-shot fail-off/stop command owned by CAN task
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
+static DashLegacyWheel045Dnd dashLegacyWheel045DndCtrl;
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
 static bool dashSpeedNoDisturb = false;
@@ -194,10 +198,24 @@ static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行
 static bool dashDndSpeed = false;       // 速度滚轮DND（Phase 3实现执行逻辑）
 static bool dashBionicDisabled = false; // bionic auto-disabled after 3 failures
 static bool dashApEapCompatible = true;
+// Experimental Legacy-only safety controls. Both default off so existing
+// continuous activation behavior remains unchanged until explicitly armed.
+static bool dashAbortGuardEnabled = false;
+static bool dashMinimalInjectEnabled = false;
+static bool dashInstantEngageEnabled = false; // #108 Instant Engage (ap_first_edge)
+// Soft Engage (#108 sibling, upstream v2.16-beta.10): once the settle/edge
+// verdict allows the frame, hold Legacy 0x3EE bit46 off until the wheel nears
+// centre. Default off (zero-regression); single-CAN defaults it on, dual-CAN
+// keeps it opt-in like the other experimental gates.
+static constexpr int SOFT_ENGAGE_ANGLE_THRESH_X10 = 50;  // ±5.0° (on-car tune)
+static constexpr uint32_t SOFT_ENGAGE_TIMEOUT_MS = 5000; // long-curve fallback
+static bool dashSoftEngageEnabled = false;
+static bool legacySoftEngageSent = false; // per-episode latch: first bit46 release
 static LegacyFsdPolicy dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
 static bool dashLegacyFsdMux1Enable = false;
 static bool dashLegacyFsdProfileWriteEnable = false;
 static bool dashLegacyFsdVisionLimitClearEnable = false;
+static bool dashLegacyHandlerActive();
 
 // HW3 slew limiter constants/state moved to include/dash_hw3_speed.h so
 // HW3Handler can call dashApplyHw3OffsetSlew directly.
@@ -217,6 +235,14 @@ static bool nvsBanShieldEnable = false;
 static int nvsLegacyOffset = 0;
 static bool nvsRemoveVisionSpeedLimit = true;
 static bool nvsOverrideSpeedLimit = false;
+// Legacy has an independent four-mode speed offset engine. Do not derive this
+// state from the shared HW3/HW4 three-mode speed strategy.
+static LegacySmartOffsetMode dashLegacySmartMode = LegacySmartOffsetMode::Off;
+static uint8_t dashLegacyManualOffsetKph = 0;
+static uint8_t dashLegacyCustomPct[4] = {50, 30, 20, 10};
+static bool dashLegacySmoothDown = true;
+static uint8_t dashLegacySmoothRateKphS = 5;
+static LegacySpeedBusMode dashLegacySpeedBusMode = LegacySpeedBusMode::Auto;
 
 #ifdef RGB_BRIGHTNESS
 static constexpr uint8_t kDashLedBrightnessDefault = RGB_BRIGHTNESS;
@@ -353,29 +379,98 @@ static void dashClearLegacyOptionPrefs();
 static void dashLog(const String &s);
 static const char *dashWifiStatusName(int status);
 
-// CAN recorder
-#ifndef REC_CAP
-// Real-car: 8000 frames (~560KB) written to a filling SPIFFS made /rec_stop
-// block until the browser fetch timed out ("cannot stop recording"). 2000
-// (~140KB) saves fast and slows SPIFFS accumulation.
-#define REC_CAP 2000
-#endif
-static constexpr unsigned long kRecMaxDurationMs = 60000UL;
-struct RecFrame
+// CAN recorder. Producers never write SPIFFS: they enqueue a compact record and
+// return immediately. A low-priority task drains the queue into /rec.bin.
+static constexpr unsigned long kRecDefaultDurationMs = 120000UL;
+static constexpr size_t kRecQueueDepth = 2048;
+static constexpr size_t kRecStorageReserveBytes = 128 * 1024;
+struct __attribute__((packed)) RecFrame
 {
-    unsigned long ts;
+    uint32_t ts;
     char dir;
     uint32_t id;
     uint8_t dlc;
     uint8_t bus;
     uint8_t data[8];
 };
-static RecFrame *recBuf = nullptr;
-static bool recBufInPsram = false;
+static_assert(sizeof(RecFrame) == 19, "Recorder binary format changed");
+static QueueHandle_t recQueue = nullptr;
+static StaticQueue_t recQueueControl;
+static uint8_t *recQueueStorage = nullptr;
+static bool recQueueStoragePsram = false;
+static TaskHandle_t recWriterTaskHandle = nullptr;
+static File recFile;
 static volatile bool recActive = false;
-static volatile int recCount = 0;
-static bool recSaved = false;
-static unsigned long recStartMs = 0;
+static volatile bool recFinalizing = false;
+static volatile bool recWriterOpen = false;
+static volatile bool recSaved = false;
+static volatile bool recStorageFull = false;
+static volatile uint32_t recCount = 0;
+static volatile uint32_t recQueued = 0;
+static volatile uint32_t recDropped = 0;
+static volatile uint32_t recFileBytes = 0;
+static volatile uint32_t recMaxFileBytes = 0;
+static volatile uint8_t recStopReason = 0;
+static volatile unsigned long recStartMs = 0;
+static volatile unsigned long recElapsedMs = 0;
+static volatile unsigned long recDurationMs = kRecDefaultDurationMs;
+
+// Recorder-side 0x3C2 evidence. Counts are incremented only after the compact
+// record enters the writer queue, so metadata describes frames present in the
+// downloadable CSV rather than all frames observed by the runtime.
+static volatile uint32_t recCan2Rx3c2 = 0;
+static volatile uint32_t recCan2Rx3c2Mux1 = 0;
+static volatile uint32_t recCan2Rx3c2Mux1Idle = 0;
+static volatile uint32_t recCan2Rx3c2VolumeUp = 0;
+static volatile uint32_t recCan2Rx3c2VolumeDown = 0;
+static volatile uint32_t recCan2Rx3c2SpeedNonZero = 0;
+static volatile uint32_t recCan2Tx3c2 = 0;
+static volatile uint32_t recCan2TxError3c2 = 0;
+static volatile uint32_t recCan1Rx3c2 = 0;
+static volatile uint32_t recCan1Tx3c2 = 0;
+static volatile uint32_t recCan1TxError3c2 = 0;
+static volatile uint32_t recCan1Rx399 = 0;
+
+// Legacy Model S/X steering-wheel evidence. STW_ACTN_RQ is gateway-remapped by
+// bus: 0x045 on CH/BFT, 0x238 on PT, and 0x292 on BDY. The Legacy left-wheel
+// DND sender uses CAN1 0x045 only; aliases remain receive-only diagnostics.
+static volatile uint32_t recCan1Rx045 = 0;
+static volatile uint32_t recCan1Tx045 = 0;
+static volatile uint32_t recCan1TxError045 = 0;
+static volatile uint32_t recCan2Rx045 = 0;
+static volatile uint32_t recCan2Tx045 = 0;
+static volatile uint32_t recCan2TxError045 = 0;
+static volatile uint32_t rec045LeverUp = 0;
+static volatile uint32_t rec045LeverDown = 0;
+static volatile uint32_t rec045LeverForward = 0;
+static volatile uint32_t rec045LeverBack = 0;
+static volatile uint32_t rec045CondUp = 0;
+static volatile uint32_t rec045CondDown = 0;
+static volatile uint32_t rec045SwitchActive = 0;
+static volatile uint8_t rec045LastBus = 0;
+static volatile uint8_t rec045LastCounter = 0;
+static volatile uint8_t rec045LastCrc = 0;
+static volatile uint8_t rec045LastLever = 0;
+static volatile uint8_t rec045LastCond = 0;
+static volatile uint16_t rec045LastSwitchMask = 0;
+
+struct DashRecNagSnapshot
+{
+    bool valid = false;
+    uint32_t atMs = 0;
+    DashLegacyNagDiag diag{};
+};
+static DashRecNagSnapshot recNagStart;
+static DashRecNagSnapshot recNagEnd;
+
+enum DashRecStopReason : uint8_t
+{
+    kRecStopNone = 0,
+    kRecStopManual,
+    kRecStopTimeLimit,
+    kRecStopStorageFull,
+    kRecStopWriteError,
+};
 
 // Optional capture filter: when recFilterCount > 0, only frames whose ID is in
 // recFilterIds are recorded. Empty (0) = record everything (default behaviour).
@@ -384,6 +479,127 @@ static unsigned long recStartMs = 0;
 static constexpr int kRecFilterMax = 16;
 static uint32_t recFilterIds[kRecFilterMax];
 static int recFilterCount = 0;
+
+static uint32_t dashRecCounter(const volatile uint32_t &counter)
+{
+    return __atomic_load_n(&counter, __ATOMIC_RELAXED);
+}
+
+static void dashResetRecWheelEvidence()
+{
+    __atomic_store_n(&recCan2Rx3c2, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan2Rx3c2Mux1, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan2Rx3c2Mux1Idle, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan2Rx3c2VolumeUp, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan2Rx3c2VolumeDown, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan2Rx3c2SpeedNonZero, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan2Tx3c2, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan2TxError3c2, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan1Rx3c2, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan1Tx3c2, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan1TxError3c2, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan1Rx399, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan1Rx045, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan1Tx045, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan1TxError045, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan2Rx045, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan2Tx045, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&recCan2TxError045, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045LeverUp, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045LeverDown, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045LeverForward, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045LeverBack, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045CondUp, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045CondDown, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045SwitchActive, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045LastBus, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045LastCounter, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045LastCrc, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045LastLever, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045LastCond, 0U, __ATOMIC_RELAXED);
+    __atomic_store_n(&rec045LastSwitchMask, 0U, __ATOMIC_RELAXED);
+}
+
+static void dashCountRecordedFrame(const RecFrame &record)
+{
+    const uint32_t sid = record.id & 0x1FFFFFFFUL;
+    const bool can2 = record.bus == CAN_BUS_PARTY;
+    if (sid == 0x399 && record.dir == 'R' && !can2)
+        __atomic_fetch_add(&recCan1Rx399, 1U, __ATOMIC_RELAXED);
+
+    if (sid == 0x045)
+    {
+        volatile uint32_t *rx = can2 ? &recCan2Rx045 : &recCan1Rx045;
+        volatile uint32_t *tx = can2 ? &recCan2Tx045 : &recCan1Tx045;
+        volatile uint32_t *txError = can2 ? &recCan2TxError045 : &recCan1TxError045;
+        if (record.dir == 'R')
+        {
+            __atomic_fetch_add(rx, 1U, __ATOMIC_RELAXED);
+            if (record.dlc >= 8)
+            {
+                const uint8_t lever = static_cast<uint8_t>(record.data[3] & 0x07U);
+                const uint8_t cond = static_cast<uint8_t>((record.data[3] >> 4) & 0x03U);
+                const uint16_t switches = static_cast<uint16_t>(record.data[4]) |
+                                          static_cast<uint16_t>(record.data[5]) << 8;
+                if (lever == 1) __atomic_fetch_add(&rec045LeverUp, 1U, __ATOMIC_RELAXED);
+                else if (lever == 2) __atomic_fetch_add(&rec045LeverDown, 1U, __ATOMIC_RELAXED);
+                else if (lever == 3) __atomic_fetch_add(&rec045LeverForward, 1U, __ATOMIC_RELAXED);
+                else if (lever == 4) __atomic_fetch_add(&rec045LeverBack, 1U, __ATOMIC_RELAXED);
+                if (cond == 1) __atomic_fetch_add(&rec045CondUp, 1U, __ATOMIC_RELAXED);
+                else if (cond == 2) __atomic_fetch_add(&rec045CondDown, 1U, __ATOMIC_RELAXED);
+                if (switches != 0) __atomic_fetch_add(&rec045SwitchActive, 1U, __ATOMIC_RELAXED);
+                __atomic_store_n(&rec045LastBus, record.bus, __ATOMIC_RELAXED);
+                __atomic_store_n(&rec045LastCounter, static_cast<uint8_t>((record.data[6] >> 4) & 0x0FU), __ATOMIC_RELAXED);
+                __atomic_store_n(&rec045LastCrc, record.data[7], __ATOMIC_RELAXED);
+                __atomic_store_n(&rec045LastLever, lever, __ATOMIC_RELAXED);
+                __atomic_store_n(&rec045LastCond, cond, __ATOMIC_RELAXED);
+                __atomic_store_n(&rec045LastSwitchMask, switches, __ATOMIC_RELAXED);
+            }
+        }
+        else if (record.dir == 'T')
+            __atomic_fetch_add(tx, 1U, __ATOMIC_RELAXED);
+        else if (record.dir == 'E')
+            __atomic_fetch_add(txError, 1U, __ATOMIC_RELAXED);
+    }
+    if (sid != 0x3C2)
+        return;
+
+    if (!can2)
+    {
+        if (record.dir == 'R')
+            __atomic_fetch_add(&recCan1Rx3c2, 1U, __ATOMIC_RELAXED);
+        else if (record.dir == 'T')
+            __atomic_fetch_add(&recCan1Tx3c2, 1U, __ATOMIC_RELAXED);
+        else if (record.dir == 'E')
+            __atomic_fetch_add(&recCan1TxError3c2, 1U, __ATOMIC_RELAXED);
+        return;
+    }
+    if (record.dir == 'T')
+    {
+        __atomic_fetch_add(&recCan2Tx3c2, 1U, __ATOMIC_RELAXED);
+        return;
+    }
+    if (record.dir == 'E')
+    {
+        __atomic_fetch_add(&recCan2TxError3c2, 1U, __ATOMIC_RELAXED);
+        return;
+    }
+    if (record.dir != 'R')
+        return;
+
+    __atomic_fetch_add(&recCan2Rx3c2, 1U, __ATOMIC_RELAXED);
+    if ((record.data[0] & 0x03U) != 0x01U)
+        return;
+    __atomic_fetch_add(&recCan2Rx3c2Mux1, 1U, __ATOMIC_RELAXED);
+    if (record.data[2] == 0 && record.data[3] == 0)
+        __atomic_fetch_add(&recCan2Rx3c2Mux1Idle, 1U, __ATOMIC_RELAXED);
+    if (record.data[2] == 0x01U)
+        __atomic_fetch_add(&recCan2Rx3c2VolumeUp, 1U, __ATOMIC_RELAXED);
+    else if (record.data[2] == 0x3FU)
+        __atomic_fetch_add(&recCan2Rx3c2VolumeDown, 1U, __ATOMIC_RELAXED);
+    if (record.data[3] != 0)
+        __atomic_fetch_add(&recCan2Rx3c2SpeedNonZero, 1U, __ATOMIC_RELAXED);
+}
 
 // CAN sniffer ring buffer
 #define SNIFFER_CAP 30
@@ -503,106 +719,146 @@ static void dashResetWriteProbe()
     dashWriteProbe.state = kDashWriteProbeIdle;
 }
 
-static bool dashEnsureRecBuffer()
+static const char *dashRecStopReasonName(uint8_t reason)
 {
-    if (recBuf)
-        return true;
-#if defined(CONFIG_SPIRAM) && CONFIG_SPIRAM
-    recBuf = static_cast<RecFrame *>(heap_caps_calloc(REC_CAP, sizeof(RecFrame), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (recBuf)
+    switch (reason)
     {
-        recBufInPsram = true;
-        Serial.println("[REC] Buffer allocated in PSRAM");
-        return true;
+    case kRecStopManual: return "manual";
+    case kRecStopTimeLimit: return "time_limit";
+    case kRecStopStorageFull: return "storage_full";
+    case kRecStopWriteError: return "write_error";
+    default: return "none";
     }
-#endif
-    recBuf = static_cast<RecFrame *>(heap_caps_calloc(REC_CAP, sizeof(RecFrame), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    recBufInPsram = false;
-    if (!recBuf)
-    {
-        Serial.println("[REC] Buffer allocation failed");
-        return false;
-    }
-    Serial.println("[REC] Buffer allocated in internal RAM");
-    return true;
 }
 
-static void dashReleaseRecBuffer()
+static void dashCaptureRecNagSnapshot(DashRecNagSnapshot &snapshot)
 {
-    if (!recBuf || recActive)
+    snapshot = {};
+    if (!dashHandler)
         return;
-    heap_caps_free(recBuf);
-    recBuf = nullptr;
-    recBufInPsram = false;
+    snapshot.atMs = millis();
+    snapshot.diag = dashHandler->legacyNagDiag(snapshot.atMs);
+    snapshot.valid = true;
 }
 
-static bool dashSaveRecordingToSpiffs(int n)
+static void dashRequestRecStop(DashRecStopReason reason)
 {
-    if (!recBuf)
-    {
-        dashLog("[REC] Save failed: buffer unavailable");
-        return false;
-    }
-    if (n < 0)
-        n = 0;
-    if (n > REC_CAP)
-        n = REC_CAP;
-
-    // SPIFFS is log-structured: explicit remove frees stale blocks from prior
-    // recordings (real-car SPIFFS had accumulated to 86% full, slowing saves).
-    SPIFFS.remove("/rec.csv");
-    File f = SPIFFS.open("/rec.csv", "w");
-    if (!f)
-    {
-        dashLog("[REC] SPIFFS write failed");
-        return false;
-    }
-
-    // bus: 2 = secondary MCP2515 (X197 9/10), 1 = primary TWAI (X197 13/14)
-    f.println("ts_ms,dir,bus,id,dlc,b0,b1,b2,b3,b4,b5,b6,b7");
-    char line[96];
-    for (int i = 0; i < n; i++)
-    {
-        int len = snprintf(line, sizeof(line),
-                           "%lu,%c,%u,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
-                           recBuf[i].ts,
-                           recBuf[i].dir ? recBuf[i].dir : 'R',
-                           static_cast<unsigned>(recBuf[i].bus == CAN_BUS_PARTY ? 2 : 1),
-                           static_cast<unsigned long>(recBuf[i].id),
-                           static_cast<unsigned>(recBuf[i].dlc),
-                           static_cast<unsigned>(recBuf[i].data[0]),
-                           static_cast<unsigned>(recBuf[i].data[1]),
-                           static_cast<unsigned>(recBuf[i].data[2]),
-                           static_cast<unsigned>(recBuf[i].data[3]),
-                           static_cast<unsigned>(recBuf[i].data[4]),
-                           static_cast<unsigned>(recBuf[i].data[5]),
-                           static_cast<unsigned>(recBuf[i].data[6]),
-                           static_cast<unsigned>(recBuf[i].data[7]));
-        if (len > 0)
-            f.write(reinterpret_cast<const uint8_t *>(line),
-                    static_cast<size_t>(len < static_cast<int>(sizeof(line)) ? len : sizeof(line) - 1));
-    }
-    f.close();
-    recSaved = true;
-    dashLog("[REC] Saved " + String(n) + " frames to SPIFFS");
-    return true;
-}
-
-static bool dashStopRecordingAndSave(const char *reason = nullptr)
-{
-    if (!recActive && recSaved)
-        return true;
+    if (!recActive)
+        return;
     recActive = false;
-    int n = recCount;
-    bool ok = dashSaveRecordingToSpiffs(n);
-    if (reason && *reason)
-        dashLog(String("[REC] Stopped: ") + reason);
-    return ok;
+    recElapsedMs = millis() - recStartMs;
+    recFinalizing = true;
+    recStopReason = reason;
+}
+
+static void dashRecorderWriterTask(void *)
+{
+    RecFrame batch[32];
+    for (;;)
+    {
+        size_t n = 0;
+        RecFrame item;
+        if (recQueue && xQueueReceive(recQueue, &item, pdMS_TO_TICKS(20)) == pdTRUE)
+        {
+            batch[n++] = item;
+            while (n < (sizeof(batch) / sizeof(batch[0])) && xQueueReceive(recQueue, &item, 0) == pdTRUE)
+                batch[n++] = item;
+        }
+
+        if (n && recWriterOpen)
+        {
+            size_t bytes = n * sizeof(RecFrame);
+            if (recFileBytes + bytes > recMaxFileBytes)
+            {
+                recStorageFull = true;
+                dashRequestRecStop(kRecStopStorageFull);
+                xQueueReset(recQueue);
+            }
+            else
+            {
+                size_t written = recFile.write(reinterpret_cast<const uint8_t *>(batch), bytes);
+                if (written != bytes)
+                {
+                    dashRequestRecStop(kRecStopWriteError);
+                    xQueueReset(recQueue);
+                }
+                else
+                {
+                    recFileBytes += static_cast<uint32_t>(written);
+                    recCount += static_cast<uint32_t>(n);
+                }
+            }
+        }
+
+        if (recFinalizing && recQueue && uxQueueMessagesWaiting(recQueue) == 0)
+        {
+            if (recWriterOpen)
+            {
+                recFile.flush();
+                recFile.close();
+                recWriterOpen = false;
+            }
+            recSaved = recStopReason != kRecStopWriteError;
+            dashCaptureRecNagSnapshot(recNagEnd);
+            recFinalizing = false;
+            dashLog(String("[REC] Stopped: ") + dashRecStopReasonName(recStopReason) +
+                    ", frames=" + recCount + ", dropped=" + recDropped);
+        }
+    }
+}
+
+static bool dashEnsureRecorder()
+{
+    if (!recQueue)
+    {
+        // Queue payload is a burst buffer, not the recording itself. Keep it
+        // out of the scarce internal heap so Wi-Fi/WebUI startup cannot make
+        // recorder initialization fail due to fragmentation.
+        const size_t queueBytes = kRecQueueDepth * sizeof(RecFrame);
+        recQueueStorage = static_cast<uint8_t *>(heap_caps_malloc(
+            queueBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (recQueueStorage)
+        {
+            recQueueStoragePsram = true;
+            recQueue = xQueueCreateStatic(kRecQueueDepth, sizeof(RecFrame),
+                                          recQueueStorage, &recQueueControl);
+        }
+        if (!recQueue)
+        {
+            if (recQueueStorage)
+            {
+                heap_caps_free(recQueueStorage);
+                recQueueStorage = nullptr;
+            }
+            recQueueStoragePsram = false;
+            recQueueStorage = static_cast<uint8_t *>(heap_caps_malloc(
+                queueBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+            if (recQueueStorage)
+                recQueue = xQueueCreateStatic(kRecQueueDepth, sizeof(RecFrame),
+                                              recQueueStorage, &recQueueControl);
+        }
+    }
+    if (!recQueue)
+        return false;
+    if (!recWriterTaskHandle)
+    {
+#if CONFIG_FREERTOS_UNICORE
+        BaseType_t ok = xTaskCreate(dashRecorderWriterTask, "can_rec", 4096, nullptr, 1, &recWriterTaskHandle);
+#else
+        BaseType_t ok = xTaskCreatePinnedToCore(dashRecorderWriterTask, "can_rec", 4096, nullptr, 1, &recWriterTaskHandle, 1);
+#endif
+        if (ok != pdPASS)
+        {
+            recWriterTaskHandle = nullptr;
+            return false;
+        }
+    }
+    return true;
 }
 
 static void dashRecordCanFrame(const CanFrame &f, char dir)
 {
-    if (!recActive || !recBuf)
+    if (!recActive || !recQueue)
         return;
     if (recFilterCount > 0)
     {
@@ -619,20 +875,21 @@ static void dashRecordCanFrame(const CanFrame &f, char dir)
         if (!match)
             return;
     }
-    int idx = recCount;
-    if (idx >= REC_CAP)
-        return;
+    RecFrame record = {};
     uint8_t dlc = (f.dlc <= 8) ? f.dlc : 8;
-    recBuf[idx].ts = millis();
-    recBuf[idx].dir = dir;
-    recBuf[idx].id = f.id;
-    recBuf[idx].dlc = dlc;
-    recBuf[idx].bus = f.bus;
-    memset(recBuf[idx].data, 0, sizeof(recBuf[idx].data));
-    memcpy(recBuf[idx].data, f.data, dlc);
-    recCount = idx + 1;
-    if (recCount >= REC_CAP)
-        dashStopRecordingAndSave("frame limit");
+    record.ts = static_cast<uint32_t>(millis() - recStartMs);
+    record.dir = dir;
+    record.id = f.id;
+    record.dlc = dlc;
+    record.bus = f.bus;
+    memcpy(record.data, f.data, dlc);
+    if (xQueueSend(recQueue, &record, 0) == pdTRUE)
+    {
+        __atomic_fetch_add(&recQueued, 1U, __ATOMIC_RELAXED);
+        dashCountRecordedFrame(record);
+    }
+    else
+        __atomic_fetch_add(&recDropped, 1U, __ATOMIC_RELAXED);
 }
 
 static void dashRecordApRestoreFrame(const CanFrame &frame, unsigned long now)
@@ -810,6 +1067,20 @@ static void mcpDashOnFrame(const CanFrame &f)
         followDist = (f.data[5] & 0xE0) >> 5;
     dashRecordApRestoreFrame(f, now);
     dashRecordCanFrame(f, 'R');
+    if (f.id == DashLegacyWheel045Dnd::kCanId && f.dlc >= 8 &&
+        (f.bus == CAN_BUS_CH || f.bus == CAN_BUS_VEH))
+        dashLegacyWheel045DndCtrl.onCan1Frame(f.data, f.dlc, static_cast<uint32_t>(now));
+    else if (f.id == DashLegacyWheel045Dnd::kGatewayMirrorId && f.dlc >= 8 &&
+             f.bus == CAN_BUS_PARTY)
+        dashLegacyWheel045DndCtrl.observeGatewayMirror(f.data, f.dlc,
+                                                       static_cast<uint32_t>(now));
+    if (f.id == 0x399 && f.dlc >= 6 && dashLegacyHandlerActive())
+    {
+        const uint8_t apState = static_cast<uint8_t>(f.data[0] & 0x0F);
+        const uint8_t handsState = static_cast<uint8_t>((f.data[5] >> 2) & 0x0F);
+        dashLegacyWheel045DndCtrl.onDasStatus(apState, handsState, f.bus,
+                                              static_cast<uint32_t>(now));
+    }
     // Phase 1: OTA guard 检测 0x318 帧
     dashOtaGuardProcessFrame(f);
     // Phase 1: 功耗管理 — 记录 CAN 活动
@@ -883,11 +1154,17 @@ static String jsonEscape(const String &s)
 }
 
 static bool dashApInjectionAllowed();
+static bool dashLegacyApInjectionAllowed();
+static bool dashLegacyFsdActivationAllowed(uint32_t nowMs);
 static FsdGateBlockReason dashCurrentGateBlockReason();
+static void dashAppendLegacySafetyControlsJson(String &j);
 
 static bool dashCheckADEnabled()
 {
-    return canActive && dashOtaGuardAllowInjection() && dashApInjectionAllowed();
+    if (!canActive || !dashOtaGuardAllowInjection())
+        return false;
+    return dashLegacyHandlerActive() ? dashLegacyFsdActivationAllowed(millis())
+                                     : dashApInjectionAllowed();
 }
 
 static bool dashApInjectionAllowed()
@@ -896,19 +1173,24 @@ static bool dashApInjectionAllowed()
     return !apInjectionGate || (dashHandler && dashHandler->injectionGateOpen());
 }
 
-// Legacy FSD (0x3EE mux0) activation gate with a ~2 s AP-settle hold-off.
-// Mirrors upstream ev-open-can-tools v3.0.2-beta.3 safety parity: once AP
-// becomes active (and CAN/OTA/gate all allow), hold off legacy mux0 bit46
-// injection until APActive has been continuously asserted for
-// legacyFsdRequiredStableMs. Any loss of CAN / OTA / gate / APActive
-// resets the settle timer. nowMs is the same monotonically-increasing
-// millisecond counter the handler path uses (millis() in firmware,
-// dashDiagNowMs() in native tests) so the hold-off interval is consistent.
+// Legacy must not reuse injectionGateOpen(): Parked defaults true until a
+// vehicle-state frame arrives, which made the optional AP gate ineffective.
+// LegacyHandler derives APActive exclusively from 0x399 state 3..6.
+static bool dashLegacyApInjectionAllowed()
+{
+    return !apInjectionGate ||
+           (dashHandler && dashLegacyHandlerActive() && (bool)dashHandler->APActive);
+}
+
+// Legacy FSD (0x3EE mux0) activation gate. With AP gate disabled this preserves
+// the verified continuous path. With it enabled, an active 0x399 AP state must
+// remain present for the configured delay before any Legacy write is admitted.
 static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
 {
     if (!canActive)
     {
         legacyFsdApActiveSinceMs = 0;
+        legacyFsdApSettleTiming = false;
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
@@ -916,30 +1198,66 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
     if (!dashOtaGuardAllowInjection())
     {
         legacyFsdApActiveSinceMs = 0;
+        legacyFsdApSettleTiming = false;
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
     if (!apInjectionGate)
     {
+        legacyFsdApActiveSinceMs = 0;
+        legacyFsdApSettleTiming = false;
         legacyFsdLastAllowed = true;
         return true;
     }
-    bool apActive = dashHandler && (bool)dashHandler->APActive;
-    if (!apActive)
+    if (!dashLegacyApInjectionAllowed())
     {
         legacyFsdApActiveSinceMs = 0;
+        legacyFsdApSettleTiming = false;
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
-    if (legacyFsdApActiveSinceMs == 0)
+    // Steer-jerk defense (#108): the settle/instant/minimal verdict is owned by
+    // DashLegacySteerDefense::decide(), fed once per primary 921 frame by
+    // observe(). With both Instant and Minimal off, decide() reduces to the
+    // same debounce/settle (debounceMs mirrors legacyFsdRequiredStableMs). Keep
+    // the legacy settle-timer state in sync for the UI stable-ms display.
+    if (!legacyFsdApSettleTiming)
+    {
         legacyFsdApActiveSinceMs = nowMs;
-    bool stable = (nowMs - legacyFsdApActiveSinceMs) >= legacyFsdRequiredStableMs;
-    legacyFsdLastAllowed = stable;
-    if (!stable)
+        legacyFsdApSettleTiming = true;
+        legacySoftEngageSent = false; // new settle period -> re-arm Soft Engage
+    }
+    const bool allowed = (dashHandler)
+                             ? dashHandler->legacySteerDefense.decide(nowMs).allowed
+                             : ((nowMs - legacyFsdApActiveSinceMs) >= legacyFsdRequiredStableMs);
+    if (!allowed)
+    {
+        legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
-    return stable;
+        return false;
+    }
+    // Soft Engage (#108 sibling): the settle/edge verdict already allows the
+    // frame; now hold bit46 off until the wheel nears centre (or the timeout
+    // elapses, so a long curve never strands the driver). Once released this
+    // episode, stop gating (legacySoftEngageSent).
+    const bool timeout = (nowMs - legacyFsdApActiveSinceMs) >=
+                         (legacyFsdRequiredStableMs + SOFT_ENGAGE_TIMEOUT_MS);
+    const bool release = dashSoftEngageRelease(dashSoftEngageEnabled, legacySoftEngageSent,
+                                               apRestoreState.steerSeen,
+                                               apRestoreState.steerValidity,
+                                               apRestoreState.steerAngleX10,
+                                               true, timeout, SOFT_ENGAGE_ANGLE_THRESH_X10);
+    if (!release)
+    {
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
+    }
+    legacySoftEngageSent = true;
+    legacyFsdLastAllowed = true;
+    return true;
 }
 
 static FsdGateBlockReason dashCurrentGateBlockReason()
@@ -948,6 +1266,10 @@ static FsdGateBlockReason dashCurrentGateBlockReason()
         return FsdGateBlockReason::CanActive;
     if (!dashOtaGuardAllowInjection())
         return FsdGateBlockReason::Ota;
+    if (dashLegacyHandlerActive() && !dashLegacyApInjectionAllowed())
+        return FsdGateBlockReason::ApGate;
+    if (dashLegacyHandlerActive() && !dashLegacyFsdActivationAllowed(millis()))
+        return FsdGateBlockReason::LegacyFsdSettle;
     if (!dashApInjectionAllowed())
         return FsdGateBlockReason::ApGate;
     if (!enhancedAutopilotInjectionAllowed(dashHandler && dashHandler->injectionGateOpen()))
@@ -959,26 +1281,26 @@ static bool dashInjectionActive()
 {
     // Phase 1: OTA保护 — 车辆OTA进行中时暂停注入
     if (!dashOtaGuardAllowInjection()) return false;
+    if (dashLegacyHandlerActive()) return dashLegacyFsdActivationAllowed(millis());
     return canActive && dashApInjectionAllowed();
 }
 
 #if defined(DASH_PLUGIN_ENGINE)
 // Builds the runtime context handed to DashPluginEngine.applyToFrame() /
-// tickPeriodic(). Mirrors the dashboard injection gates (CAN active + OTA guard
-// + AP gate + legacy FSD settle) so plugins only act when injection is allowed.
+// tickPeriodic(). Legacy activation plugins use the same explicit CAN+OTA gate
+// as the built-in 0x3EE path; HW3/HW4 plugins retain the generic AP gate.
 //
 // IMPORTANT: this is called every CAN frame in appLoop, so it must be free of
-// side effects. We do NOT call dashLegacyFsdActivationAllowed() here (it resets
-// the settle timer / writes legacyFsdLastAllowed) — instead we read
-// legacyFsdLastAllowed, the latched result of the last handler-path gate check.
-// dashLegacyFsdActivationAllowed() is still invoked by the real handler gate
-// path (via legacyFsdActivationAllowed callback) and updates the latch.
+// side effects. We do not call dashLegacyFsdActivationAllowed() here because
+// plugin evaluation runs for every CAN frame.
 static DashPluginContext dashPluginContext()
 {
     DashPluginContext ctx{};
     ctx.canActive = canActive;
     ctx.otaAllowed = dashOtaGuardAllowInjection();
-    ctx.apGateAllowed = dashApInjectionAllowed() && legacyFsdLastAllowed;
+    ctx.apGateAllowed = dashLegacyHandlerActive()
+                            ? (canActive && dashOtaGuardAllowInjection() && legacyFsdLastAllowed)
+                            : (dashApInjectionAllowed() && legacyFsdLastAllowed);
     ctx.fsdMasterEnabled = canActive;
     ctx.defaultBus = CAN_BUS_DEFAULT;
     return ctx;
@@ -1275,6 +1597,30 @@ static void dashApplySpeedProfileState()
         dashHandler->speedProfile = dashClampSpeedProfileForHw(hwMode, dashManualSpeedProfile);
 }
 
+static LegacySmartOffsetMode dashLegacySmartModeFromSharedStrategy()
+{
+    if (dashSpeedStrategy == 1)
+        return LegacySmartOffsetMode::Auto;
+    if (dashSpeedStrategy == 2)
+        return LegacySmartOffsetMode::Custom;
+    return manualOffsetPct > 0 ? LegacySmartOffsetMode::Custom : LegacySmartOffsetMode::Off;
+}
+
+static void dashApplyLegacySmartSpeedState(CarManagerBase *handler)
+{
+    if (!handler)
+        return;
+    handler->legacySmartOffsetConfig.mode = dashLegacySmartMode;
+    handler->legacySmartOffsetConfig.manualOffsetKph = dashLegacyManualOffsetKph;
+    handler->legacySmartOffsetConfig.smoothDownEnabled = dashLegacySmoothDown;
+    handler->legacySmartOffsetConfig.smoothDownRateKphS = dashClampLegacySmartRate(dashLegacySmoothRateKphS);
+    handler->legacySmartOffsetConfig.customPctLow = dashLegacyCustomPct[0];
+    handler->legacySmartOffsetConfig.customPctMid = dashLegacyCustomPct[1];
+    handler->legacySmartOffsetConfig.customPctHigh = dashLegacyCustomPct[2];
+    handler->legacySmartOffsetConfig.customPctVeryHigh = dashLegacyCustomPct[3];
+    handler->legacySpeedBus.setMode(dashLegacySpeedBusMode);
+}
+
 // HW3 mux-2 codec + slew limiter live in include/dash_hw3_speed.h so they
 // can be shared between HW3Handler (in handlers.h, parsed first) and the
 // dashboard HW3 send path below.
@@ -1285,7 +1631,12 @@ static void dashApplyRuntimeState()
     emergencyVehicleDetectionRuntime = false;
     isaSpeedChimeSuppressRuntime = false;
     enhancedAutopilotRuntime = false;
-    nagKillerRuntime = canActive && dashDefenseEnabled;
+    // The Legacy 0x370 NAG switch owns its feature state. The defense master
+    // and HW3 speed slew limiter are separate persisted controls.
+    nagKillerRuntime = canActive;
+
+    if (!nagKillerRuntime && dashHandler)
+        dashHandler->resetBionic((uint32_t)millis());
 
     if (dashHandler)
     {
@@ -1295,6 +1646,15 @@ static void dashApplyRuntimeState()
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
+        dashHandler->abortGuard.setEnabled(dashAbortGuardEnabled);
+        dashHandler->minimalInject.setEnabled(dashMinimalInjectEnabled);
+        // #108 steer-jerk defense: debounce mirrors the Legacy settle window so
+        // that with Instant/Minimal off, decide() == the verified settle path.
+        // def_mininj now drives the steer defense edge burst; the base
+        // DashMinimalInject is retained but no longer gates Legacy mux0.
+        dashHandler->legacySteerDefense.setDebounceMs(legacyFsdRequiredStableMs);
+        dashHandler->legacySteerDefense.setInstantEnabled(dashInstantEngageEnabled);
+        dashHandler->legacySteerDefense.setMinimalEnabled(dashMinimalInjectEnabled);
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->isaOverride = nvsIsaOverride;
         dashHandler->banShieldEnable = nvsBanShieldEnable;
@@ -1309,6 +1669,7 @@ static void dashApplyRuntimeState()
         dashHandler->legacyFsdDiag.mux1Enable = dashLegacyFsdMux1Enable;
         dashHandler->legacyFsdDiag.profileWriteEnable = dashLegacyFsdProfileWriteEnable;
         dashHandler->legacyFsdDiag.visionLimitClearEnable = dashLegacyFsdVisionLimitClearEnable;
+        dashApplyLegacySmartSpeedState(dashHandler);
         dashApplySpeedProfileState();
         if (!canActive)
         {
@@ -1344,6 +1705,15 @@ static void dashSavePrefs()
     prefs.putUChar("cp1", customPct[1]);             // Zone ≤70 km/h  (HTTP: cp2)
     prefs.putUChar("cp2", customPct[2]);             // Zone ≤100 km/h (HTTP: cp3)
     prefs.putUChar("cp3", customPct[3]);             // Zone >100 km/h (HTTP: cp4)
+    prefs.putUChar("lo_mode", static_cast<uint8_t>(dashLegacySmartMode));
+    prefs.putUChar("lo_man", dashLegacyManualOffsetKph);
+    prefs.putUChar("lo_cp0", dashLegacyCustomPct[0]);
+    prefs.putUChar("lo_cp1", dashLegacyCustomPct[1]);
+    prefs.putUChar("lo_cp2", dashLegacyCustomPct[2]);
+    prefs.putUChar("lo_cp3", dashLegacyCustomPct[3]);
+    prefs.putBool("lo_smooth", dashLegacySmoothDown);
+    prefs.putUChar("lo_rate", dashLegacySmoothRateKphS);
+    prefs.putUChar("lo_bus", static_cast<uint8_t>(dashLegacySpeedBusMode));
     prefs.putBool("lt_en", dashLightingEnabled);
     prefs.putUChar("lt_cnt", dashLightingCount);
     prefs.putUChar("lt_freq", dashLightingFrequency);
@@ -1354,6 +1724,10 @@ static void dashSavePrefs()
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
     prefs.putBool("def_apeap", dashApEapCompatible);
+    prefs.putBool("def_abort", dashAbortGuardEnabled);
+    prefs.putBool("def_mininj", dashMinimalInjectEnabled);
+    prefs.putBool("def_instant", dashInstantEngageEnabled);
+    prefs.putBool("def_se", dashSoftEngageEnabled);
     prefs.putUChar("lfsd_pol", dashLegacyFsdPolicy == LegacyFsdPolicy::TeslaParity ? 2 : (dashLegacyFsdPolicy == LegacyFsdPolicy::Experimental ? 1 : 0));
     prefs.putBool("lfsd_m1", dashLegacyFsdMux1Enable);
     prefs.putBool("lfsd_prof", dashLegacyFsdProfileWriteEnable);
@@ -1540,6 +1914,26 @@ static void dashLoadPrefs()
     customPct[1] = dashClampSpeedCustomPct(prefs.getUChar("cp1", customPct[1])); // Zone ≤70  (HTTP: cp2)
     customPct[2] = dashClampSpeedCustomPct(prefs.getUChar("cp2", customPct[2])); // Zone ≤100 (HTTP: cp3)
     customPct[3] = dashClampSpeedCustomPct(prefs.getUChar("cp3", customPct[3])); // Zone >100 (HTTP: cp4)
+    dashLegacySmoothDown = prefs.getBool("lo_smooth", true);
+    dashLegacySmoothRateKphS = dashClampLegacySmartRate(prefs.getUChar("lo_rate", 5));
+    dashLegacySpeedBusMode = dashClampLegacySpeedBusMode(prefs.getUChar("lo_bus", 0));
+    if (prefs.isKey("lo_mode"))
+    {
+        dashLegacySmartMode = dashClampLegacySmartMode(prefs.getUChar("lo_mode", 0));
+        dashLegacyManualOffsetKph = dashClampLegacySmartOffsetKph(prefs.getUChar("lo_man", 0));
+        dashLegacyCustomPct[0] = dashClampLegacySmartPct(prefs.getUChar("lo_cp0", 50));
+        dashLegacyCustomPct[1] = dashClampLegacySmartPct(prefs.getUChar("lo_cp1", 30));
+        dashLegacyCustomPct[2] = dashClampLegacySmartPct(prefs.getUChar("lo_cp2", 20));
+        dashLegacyCustomPct[3] = dashClampLegacySmartPct(prefs.getUChar("lo_cp3", 10));
+    }
+    else if (prefs.isKey("spd_str") || prefs.isKey("offsetMode"))
+    {
+        // One-time migration for beta.23 and older shared speed settings.
+        dashLegacySmartMode = dashLegacySmartModeFromSharedStrategy();
+        dashLegacyManualOffsetKph = 0;
+        for (uint8_t i = 0; i < 4; ++i)
+            dashLegacyCustomPct[i] = dashClampLegacySmartPct(customPct[i]);
+    }
     dashSyncLegacyShims();
     dashLightingEnabled = prefs.getBool("lt_en", false);
     dashLightingCount = prefs.getUChar("lt_cnt", 3);
@@ -1557,6 +1951,10 @@ static void dashLoadPrefs()
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
     dashApEapCompatible = prefs.getBool("def_apeap", true);
+    dashAbortGuardEnabled = prefs.getBool("def_abort", false);
+    dashMinimalInjectEnabled = prefs.getBool("def_mininj", false);
+    dashInstantEngageEnabled = prefs.getBool("def_instant", false);
+    dashSoftEngageEnabled = prefs.getBool("def_se", false);
     {
         uint8_t lfsdPolicy = prefs.getUChar("lfsd_pol", 0);
         dashLegacyFsdPolicy = lfsdPolicy == 2 ? LegacyFsdPolicy::TeslaParity : (lfsdPolicy == 1 ? LegacyFsdPolicy::Experimental : LegacyFsdPolicy::Stable);
@@ -1860,6 +2258,8 @@ uint32_t t2canBus2RxCount(void);
 uint32_t t2canBus2TxCount(void);
 uint32_t t2canBus2TxErrCount(void);
 uint8_t t2canBus2Eflg(void);
+uint32_t t2canBus2RecoveryCount(void);
+uint8_t t2canBus2ConsecutiveTxFailures(void);
 const DashTxEvidence &t2canServiceTxEvidence(void);
 uint8_t t2canServiceLastCommand(void);
 uint8_t t2canServiceBurstRemaining(void);
@@ -2014,22 +2414,328 @@ static void serviceDiagJson(String &j, unsigned long now)
 
 static void appendWheelDndDiagJson(String &j, unsigned long now)
 {
+    const DashLegacyWheel045Diag &d = dashLegacyWheel045DndCtrl.diag;
     j += R"JSON(,"wheelDndDiag":{"enabled":)JSON";
-    j += dashDefenseEnabled ? "true" : "false";
+    j += d.configured ? "true" : "false";
+    j += R"JSON(,"armed":)JSON";
+    j += d.runtimeArmed ? "true" : "false";
+    j += R"JSON(,"autoDisarmed":)JSON";
+    j += d.autoDisarmed ? "true" : "false";
     j += R"JSON(,"volume":)JSON";
     j += dashDndVolume ? "true" : "false";
     j += R"JSON(,"speed":)JSON";
-    j += dashDndSpeed ? "true" : "false";
-    j += R"JSON(,"native3c2Seen":)JSON";
-    j += dashWheelDndCtrl.diag.native3c2Seen ? "true" : "false";
-    j += R"JSON(,"native3c2AgeMs":)JSON";
-    j += dashWheelDndCtrl.diag.native3c2Ms ? String(now - dashWheelDndCtrl.diag.native3c2Ms) : String(-1);
-    j += R"JSON(,"baseFrameMode":")JSON";
-    j += dashWheelDndCtrl.diag.baseFrameMode;
-    j += R"JSON(","sequenceState":")JSON";
-    j += dashWheelDndCtrl.diag.sequenceState;
+    j += "false";
+    j += R"JSON(,"protocol":"legacy_0x045_left_scroll")JSON";
+    j += R"JSON(,"dndActionType":"left_045_conditional_balance")JSON";
+    j += R"JSON(,"native045Seen":)JSON";
+    j += d.nativeSeen ? "true" : "false";
+    j += R"JSON(,"native045Fresh":)JSON";
+    j += d.nativeFresh ? "true" : "false";
+    j += R"JSON(,"native045AgeMs":)JSON";
+    j += d.nativeMs ? String(now - d.nativeMs) : String(-1);
+    j += R"JSON(,"native045Rx":)JSON";
+    j += d.nativeRx;
+    j += R"JSON(,"native045IdleRx":)JSON";
+    j += d.nativeIdleRx;
+    j += R"JSON(,"nativeCounter":)JSON";
+    j += d.nativeCounter;
+    j += R"JSON(,"generatedCounter":)JSON";
+    j += d.generatedCounter;
+    j += R"JSON(,"generatedCrc":)JSON";
+    j += d.generatedCrc;
+    // Compatibility keys remain explicit and false; Legacy no longer maps to 0x3C2.
+    j += R"JSON(,"native3c2Seen":false,"nativeMux1IdleSeen":false,"native3c2AgeMs":-1)JSON";
+    j += R"JSON(,"nativeRejected":)JSON";
+    j += d.nativeInvalid;
+    j += R"JSON(,"apActive":)JSON";
+    j += d.apActive ? "true" : "false";
+    j += R"JSON(,"apState":)JSON";
+    j += d.apState;
+    j += R"JSON(,"dasStatusSeen":)JSON";
+    j += d.dasStatusMs ? "true" : "false";
+    j += R"JSON(,"dasStatusAgeMs":)JSON";
+    j += d.dasStatusMs ? String(now - d.dasStatusMs) : String(-1);
+    j += R"JSON(,"dasStatusBus":)JSON";
+    j += d.dasStatusBus;
+    j += R"JSON(,"dasStatusDriver":")JSON";
+    j += d.dasStatusBus == CAN_BUS_PARTY ? "mcp2515" :
+         (d.dasStatusBus == CAN_BUS_ANY ? "unknown" : "twai");
+    j += "\"";
+    j += R"JSON(,"handsState":)JSON";
+    j += d.handsState;
+    j += R"JSON(,"warningActive":)JSON";
+    j += d.warningActive ? "true" : "false";
+    j += R"JSON(,"warningEpisodes":)JSON";
+    j += d.warningEpisodes;
+    j += R"JSON(,"triggerCount":)JSON";
+    j += d.positiveTx;
+    j += R"JSON(,"actionsThisEpisode":)JSON";
+    j += d.pairsThisEpisode;
+    j += R"JSON(,"positiveThisEpisode":)JSON";
+    j += d.positiveThisEpisode;
+    j += R"JSON(,"compensationPending":)JSON";
+    j += d.compensationPending;
+    j += R"JSON(,"positiveTx":)JSON";
+    j += d.positiveTx;
+    j += R"JSON(,"negativeTx":)JSON";
+    j += d.negativeTx;
+    j += R"JSON(,"balancedPairs":)JSON";
+    j += d.balancedPairs;
+    j += R"JSON(,"volumeNeutralEpisodes":)JSON";
+    j += d.volumeNeutralEpisodes;
+    j += R"JSON(,"retryCount":)JSON";
+    j += d.retryCount;
+    j += R"JSON(,"consecutiveTxFailures":)JSON";
+    j += d.consecutiveTxFailures;
+    j += R"JSON(,"expectedCounterDuplicates":)JSON";
+    j += d.expectedCounterDuplicates;
+    j += R"JSON(,"counterConflicts":)JSON";
+    j += d.counterConflicts;
+    j += R"JSON(,"ownEchoRx":)JSON";
+    j += d.ownEchoRx;
+    j += R"JSON(,"gatewayMirrorRx":)JSON";
+    j += d.gatewayMirrorRx;
+    j += R"JSON(,"physicalInputRx":)JSON";
+    j += d.physicalInputRx;
+    j += R"JSON(,"warningClearLatencyMs":)JSON";
+    j += d.warningClearLatencyMs;
+    j += R"JSON(,"cooldownRemainingMs":)JSON";
+    j += now < d.retryAtMs
+             ? String(d.retryAtMs - now)
+             : String(0);
+    j += R"JSON(,"baseFrameMode":"native_can1_0x045")JSON";
+    j += R"JSON(,"sequenceState":")JSON";
+    j += dashLegacyWheel045StateName(d.state);
+    j += "\"";
+    j += R"JSON(,"blockedReason":")JSON";
+    j += dashLegacyWheel045BlockName(d.blocked);
     j += R"JSON(","tx":)JSON";
-    appendTxEvidenceJson(j, dashWheelDndCtrl.diag.tx, now);
+    appendTxEvidenceJson(j, d.tx, now);
+    j += "}";
+}
+
+static const char *dashLegacyNagBusName(uint8_t bus)
+{
+    if (bus == CAN_BUS_VEH || bus == CAN_BUS_CH)
+        return "CAN1";
+    if (bus == CAN_BUS_PARTY)
+        return "CAN2";
+    return "AUTO";
+}
+
+static const char *dashLegacyNagModeName(NagMode mode)
+{
+    if (mode == NagMode::Proactive)
+        return "proactive";
+    if (mode == NagMode::Reactive)
+        return "reactive";
+    return "idle";
+}
+
+static void appendLegacyNagDiagJson(String &j, unsigned long now)
+{
+    DashLegacyNagDiag diag{};
+    if (dashHandler)
+        diag = dashHandler->legacyNagDiag(now);
+    uint8_t effectiveHw = hwMode == 3 ? DASH_DEFAULT_HW : hwMode;
+    bool configured = dashBionicSteering;
+    j += R"JSON(,"legacyNag":{"verified":false,"vehicleTest":"pending_beta16_vehicle_test","strategy":"continuous_absolute","torqueModel":"modec_488_one_sided","directionSource":"0x488","configured":)JSON";
+    j += configured ? "true" : "false";
+    j += R"JSON(,"legacyHandler":)JSON";
+    j += effectiveHw == 0 ? "true" : "false";
+    j += R"JSON(,"runtime":)JSON";
+    j += diag.runtimeActive ? "true" : "false";
+    j += R"JSON(,"mode":"continuous_absolute","state":")JSON";
+    j += dashLegacyNagV4StateName(diag.state);
+    j += R"JSON(","bus":")JSON";
+    j += dashLegacyNagBusName(diag.selectedBus);
+    j += R"JSON(","apState":)JSON";
+    j += diag.apState;
+    j += R"JSON(,"gear":)JSON";
+    j += diag.gear;
+    j += R"JSON(,"gearGateRequired":false,"apContextStatusMin":3,"apContextStatusMax":6)JSON";
+    j += R"JSON(,"handsOnState":)JSON";
+    j += diag.dasHandsState;
+    j += R"JSON(,"nativeHandsOnLevel":)JSON";
+    j += diag.nativeHandsOnLevel;
+    j += R"JSON(,"injecting":)JSON";
+    j += diag.runtimeActive ? "true" : "false";
+    j += R"JSON(,"rx370":)JSON";
+    j += diag.rx370;
+    j += R"JSON(,"tx370":)JSON";
+    j += diag.tx370;
+    j += R"JSON(,"txFail":)JSON";
+    j += diag.txFail;
+    j += R"JSON(,"eligible370":)JSON";
+    j += diag.eligible370;
+    j += R"JSON(,"coveragePct":)JSON";
+    j += diag.eligible370 ? String((100.0f * static_cast<float>(diag.tx370)) /
+                                   static_cast<float>(diag.eligible370), 1) : String("0.0");
+    j += R"JSON(,"txAttempts":)JSON";
+    j += diag.txAttempts;
+    j += R"JSON(,"txRetryAttempts":)JSON";
+    j += diag.txRetryAttempts;
+    j += R"JSON(,"txRetryOk":)JSON";
+    j += diag.txRetryOk;
+    j += R"JSON(,"degraded":)JSON";
+    j += diag.degraded ? "true" : "false";
+    j += R"JSON(,"autoDisarmed":)JSON";
+    j += diag.autoDisarmed ? "true" : "false";
+    j += R"JSON(,"consecutiveTxFailures":)JSON";
+    j += diag.consecutiveTxFailures;
+    j += R"JSON(,"consecutiveCounterCollisions":)JSON";
+    j += diag.consecutiveCounterCollisions;
+    j += R"JSON(,"requestedTorqueCentiNm":)JSON";
+    j += diag.requestedTorqueCentiNm;
+    j += R"JSON(,"requestedTorqueRaw":)JSON";
+    j += diag.requestedTorqueRaw;
+    j += R"JSON(,"maxSilentMs":)JSON";
+    j += diag.maxSilentMs;
+    j += R"JSON(,"currentSilentMs":)JSON";
+    j += diag.currentSilentMs;
+    j += R"JSON(,"targetHandsBlocked":)JSON";
+    j += diag.targetHandsBlocked;
+    j += R"JSON(,"duplicateCounterObserved":)JSON";
+    j += diag.duplicateCounterObserved;
+    j += R"JSON(,"expectedNativeFollowerObserved":)JSON";
+    j += diag.expectedNativeFollowerObserved;
+    j += R"JSON(,"counterCollisionObserved":)JSON";
+    j += diag.counterCollisionObserved;
+    j += R"JSON(,"lastNativeFollowerDelayMs":)JSON";
+    j += diag.lastNativeFollowerDelayMs;
+    j += R"JSON(,"state1EnterCount":)JSON";
+    j += diag.state1EnterCount;
+    j += R"JSON(,"state1HoldCount":)JSON";
+    j += diag.state1HoldCount;
+    j += R"JSON(,"state1FallbackCount":)JSON";
+    j += diag.state1FallbackCount;
+    j += R"JSON(,"randomWalkSteps":)JSON";
+    j += diag.faithfulWalkSteps;
+    j += R"JSON(,"rx488":)JSON";
+    j += diag.rx488;
+    j += R"JSON(,"steeringSeen":)JSON";
+    j += diag.steeringSeen ? "true" : "false";
+    j += R"JSON(,"steeringControlType":)JSON";
+    j += diag.steeringControlType;
+    j += R"JSON(,"steeringAngleDeg":)JSON";
+    j += String(static_cast<float>(diag.steeringAngleX10) / 10.0f, 1);
+    j += R"JSON(,"steeringBus":")JSON";
+    j += dashLegacyNagBusName(diag.steeringBus);
+    j += R"JSON(","steeringAgeMs":)JSON";
+    j += diag.steeringSeen ? String(diag.steeringAgeMs) : String(-1);
+    j += R"JSON(,"episodeDirection":)JSON";
+    j += String(static_cast<int>(diag.episodeDirection));
+    j += R"JSON(,"directionChangeCount":)JSON";
+    j += diag.directionChangeCount;
+    j += R"JSON(,"targetTorqueCentiNm":)JSON";
+    j += diag.targetTorqueCentiNm;
+    j += R"JSON(,"blockedReason":")JSON";
+    j += legacyNagBlockReasonName(diag.blocked);
+    j += R"JSON(","lastContextAgeMs":)JSON";
+    j += diag.lastContextMs ? String(now - diag.lastContextMs) : String(-1);
+    j += R"JSON(,"lastRxAgeMs":)JSON";
+    j += diag.lastRxMs ? String(now - diag.lastRxMs) : String(-1);
+    j += R"JSON(,"lastTxAgeMs":)JSON";
+    j += diag.lastTxMs ? String(now - diag.lastTxMs) : String(-1);
+    j += "}";
+}
+
+static const char *dashLegacySpeedModeName(LegacySmartOffsetMode mode)
+{
+    if (mode == LegacySmartOffsetMode::Manual)
+        return "manual";
+    if (mode == LegacySmartOffsetMode::Auto)
+        return "auto";
+    if (mode == LegacySmartOffsetMode::Custom)
+        return "custom";
+    return "off";
+}
+
+static const char *dashLegacySpeedLimitSourceName(LegacySpeedLimitSource source)
+{
+    if (source == LegacySpeedLimitSource::Gps2F8)
+        return "0x2F8";
+    if (source == LegacySpeedLimitSource::Fused399)
+        return "0x399";
+    return "none";
+}
+
+static const char *dashLegacySpeedBusModeName(LegacySpeedBusMode mode)
+{
+    if (mode == LegacySpeedBusMode::Can1)
+        return "CAN1";
+    if (mode == LegacySpeedBusMode::Can2)
+        return "CAN2";
+    return "Auto";
+}
+
+static void appendLegacySmartSpeedJson(String &j, unsigned long now)
+{
+    LegacySpeedRuntimeDiag diag{};
+    DashLegacySpeedBusLock route{};
+    LegacySmartOffsetConfig config{};
+    if (dashHandler)
+    {
+        diag = dashHandler->legacySpeedDiag;
+        route = dashHandler->legacySpeedBus;
+        config = dashHandler->legacySmartOffsetConfig;
+    }
+    uint8_t effectiveHw = hwMode == 3 ? DASH_DEFAULT_HW : hwMode;
+    bool configured = dashLegacySmartMode != LegacySmartOffsetMode::Off;
+    j += R"JSON(,"legacySmartSpeed":{"configured":)JSON";
+    j += configured ? "true" : "false";
+    j += R"JSON(,"legacyHandler":)JSON";
+    j += effectiveHw == 0 ? "true" : "false";
+    j += R"JSON(,"runtimeActive":)JSON";
+    j += diag.runtimeActive ? "true" : "false";
+    j += R"JSON(,"mode":")JSON";
+    j += dashLegacySpeedModeName(config.mode);
+    j += R"JSON(","strategy":")JSON";
+    j += dashLegacySpeedModeName(config.mode);
+    j += R"JSON(","limitSource":")JSON";
+    j += dashLegacySpeedLimitSourceName(diag.limitSource);
+    j += R"JSON(","limitRaw":)JSON";
+    j += diag.result.speedLimitRaw;
+    j += R"JSON(,"limitKph":)JSON";
+    j += diag.result.speedLimitKph;
+    j += R"JSON(,"rawTargetKph":)JSON";
+    j += diag.result.rawTargetKph;
+    j += R"JSON(,"smoothedTargetKph":)JSON";
+    j += diag.result.smoothedTargetKph;
+    j += R"JSON(,"offsetKph":)JSON";
+    j += diag.result.outputOffsetKph;
+    j += R"JSON(,"offsetPct":)JSON";
+    j += diag.outputOffsetPct;
+    j += R"JSON(,"smoothing":)JSON";
+    j += diag.result.smoothingActive ? "true" : "false";
+    j += R"JSON(,"smoothDown":)JSON";
+    j += dashLegacySmoothDown ? "true" : "false";
+    j += R"JSON(,"smoothRateKphS":)JSON";
+    j += dashLegacySmoothRateKphS;
+    j += R"JSON(,"busMode":")JSON";
+    j += dashLegacySpeedBusModeName(dashLegacySpeedBusMode);
+    j += R"JSON(","targetBus":")JSON";
+    j += dashLegacyNagBusName(route.selectedBus);
+    j += R"JSON(","busAmbiguous":)JSON";
+    j += route.ambiguous ? "true" : "false";
+    j += R"JSON(,"ambiguityCount":)JSON";
+    j += route.ambiguityCount;
+    j += R"JSON(,"rx2F8":)JSON";
+    j += diag.gpsSpeedCount;
+    j += R"JSON(,"rx3EE":)JSON";
+    j += diag.mux0Count;
+    j += R"JSON(,"txOk":)JSON";
+    j += diag.txOk;
+    j += R"JSON(,"txFail":)JSON";
+    j += diag.txFail;
+    j += R"JSON(,"offsetOnlyTxOk":)JSON";
+    j += diag.offsetOnlyTxOk;
+    j += R"JSON(,"blockedReason":")JSON";
+    j += diag.blockedReason ? diag.blockedReason : "unknown";
+    j += R"JSON(","last2F8AgeMs":)JSON";
+    j += diag.gpsSpeedLastMs ? String(now - diag.gpsSpeedLastMs) : String(-1);
+    j += R"JSON(,"lastFusedAgeMs":)JSON";
+    j += diag.fusedLimitLastMs ? String(now - diag.fusedLimitLastMs) : String(-1);
     j += "}";
 }
 
@@ -2049,6 +2755,8 @@ static void appendCapabilitiesJson(String &j, uint8_t selectedHw, uint8_t effect
     j += dashCapabilityBionicSteering(effectiveHw);
     j += "\",\"banShield\":\"";
     j += dashCapabilityBanShield(effectiveHw);
+    j += "\",\"legacySmartSpeed\":\"";
+    j += effectiveHw == 0 ? "supported" : "inactive_non_legacy";
     j += "\",\"legacyMppCustom\":\"";
     j += dashCapabilityLegacyMppCustom(effectiveHw);
     j += "\",\"gearAssist\":\"not_implemented\"}";
@@ -2083,15 +2791,21 @@ static void appendFsdMuxDiagJson(String &j, const char *name, const FsdMuxDiag &
     j += "}";
 }
 
-// Human-readable summary of the legacy FSD injection state machine for /status.
-// Mirrors the gate order in dashLegacyFsdActivationAllowed() so the dashboard UI
-// can render the same 等待 AP / 稳定计时中 / 正在注入 / 已阻断 bucket the firmware uses.
+// Human-readable summary of the active FSD injection state machine.
 static const char *dashApInjectionStateName()
 {
     if (!canActive)
         return "blocked";
     if (!dashOtaGuardAllowInjection())
         return "blocked";
+    if (dashLegacyHandlerActive() && apInjectionGate && !dashLegacyApInjectionAllowed())
+        return "waiting_ap";
+    if (dashLegacyHandlerActive() && apInjectionGate && !legacyFsdLastAllowed)
+        return "settling";
+    if (dashLegacyHandlerActive())
+        return legacyFsdLastAllowed || (lastInjectMs && millis() - lastInjectMs < 1000)
+                   ? "injecting"
+                   : "armed";
     if (apInjectionGate && !(dashHandler && (bool)dashHandler->APActive))
         return "waiting_ap";
     if (apInjectionGate && !legacyFsdLastAllowed)
@@ -2144,22 +2858,32 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     j += ",\"apGateEnabled\":";
     j += apInjectionGate ? "true" : "false";
     j += ",\"apGateOpen\":";
-    j += dashApInjectionAllowed() ? "true" : "false";
+    j += (dashLegacyHandlerActive() ? dashLegacyApInjectionAllowed() : dashApInjectionAllowed()) ? "true" : "false";
     j += ",\"parked\":";
     j += parked ? "true" : "false";
     j += ",\"apActive\":";
     j += apActive ? "true" : "false";
     j += ",\"apStableMs\":";
-    j += (apActive && legacyFsdApActiveSinceMs > 0) ? String(now - legacyFsdApActiveSinceMs) : String(0);
+    j += (apActive && legacyFsdApSettleTiming) ? String(now - legacyFsdApActiveSinceMs) : String(0);
     j += ",\"requiredStableMs\":";
     j += legacyFsdRequiredStableMs;
+    j += ",\"activationGateMode\":\"";
+    j += dashLegacyHandlerActive()
+             ? (apInjectionGate
+                    ? (legacyFsdRequiredStableMs ? "legacy_ap_state_delay_gate" : "legacy_ap_state_gate")
+                    : "explicit_trigger_can_ota")
+             : "ap_gate";
+    j += "\"";
+    j += ",\"legacyIgnoresApGate\":";
+    j += "false";
     j += ",\"legacyFsdAllowed\":";
     j += legacyFsdLastAllowed ? "true" : "false";
     j += ",\"blockedFrame\":\"0x3EE mux0\"";
     j += ",\"summoning\":";
     j += summoning ? "true" : "false";
     j += R"JSON(,"finalAllowed":)JSON";
-    j += (canActive && dashOtaGuardAllowInjection() && dashApInjectionAllowed()) ? "true" : "false";
+    j += (canActive && dashOtaGuardAllowInjection() &&
+          (dashLegacyHandlerActive() ? legacyFsdLastAllowed : dashApInjectionAllowed())) ? "true" : "false";
     j += R"JSON(,"lastBlockedBy":")JSON";
     j += fsdGateBlockReasonName(diag.lastBlockedBy);
     j += R"JSON(","gateReason":")JSON";
@@ -2189,7 +2913,8 @@ static void handleStatus()
     int soff = dashHandler ? (int)dashHandler->speedOffset : 0;
     int gtwAp = dashHandler ? (int)dashHandler->gatewayAutopilot : -1;
     bool ep = dashHandler ? (bool)dashHandler->enablePrint : true;
-    bool apGateOpen = dashApInjectionAllowed();
+    bool apGateOpen = dashLegacyHandlerActive() ? dashLegacyApInjectionAllowed()
+                                                 : dashApInjectionAllowed();
     uint8_t effectiveHw = (hwMode == 3) ? DASH_DEFAULT_HW : hwMode;
     const char *hwName = "LEGACY";
     if (effectiveHw == 1)
@@ -2264,6 +2989,10 @@ static void handleStatus()
     j += (uint32_t)lastInjectMs;
     j += ",\"hw3OffsetSlew\":";
     j += hw3OffsetSlew ? "true" : "false";
+    j += ",\"defenseEnabled\":";
+    j += dashDefenseEnabled ? "true" : "false";
+    j += ",\"bionicSteering\":";
+    j += dashBionicSteering ? "true" : "false";
     j += ",\"hw3SlewRate\":";
     j += hw3SlewRate;
     j += ",\"hw3OffsetTarget\":";
@@ -2390,6 +3119,12 @@ static void handleStatus()
     j += txCount;
     j += ",\"txerr\":";
     j += txErrCount;
+#ifdef DRIVER_T2CAN_DUAL
+    j += ",\"can2Recovery\":";
+    j += t2canBus2RecoveryCount();
+    j += ",\"can2ConsecutiveTxFailures\":";
+    j += t2canBus2ConsecutiveTxFailures();
+#endif
     j += ",\"fd\":";
     j += followDist;
     j += ",\"fps\":";
@@ -2458,6 +3193,9 @@ static void handleStatus()
 #endif
     appendServiceDiagJson(j, now);
     appendWheelDndDiagJson(j, now);
+    appendLegacyNagDiagJson(j, now);
+    appendLegacySmartSpeedJson(j, now);
+    dashAppendLegacySafetyControlsJson(j);
     // ── Phase 1 新增状态字段 ──────────────────────────────────────────
     j += ",\"vehicleOta\":";
     j += vehicleOtaActive ? "true" : "false";
@@ -2848,6 +3586,14 @@ static String dashSpeedStrategyJson()
     j += hw3CustomSpeed ? "true" : "false";
     j += ",\"legacy_custom_speed\":";
     j += legacyMppCustomEnable ? "true" : "false";
+    j += ",\"legacy_smart_mode\":\"";
+    j += dashLegacySpeedModeName(dashLegacySmartMode);
+    j += "\",\"legacy_bus\":\"";
+    j += dashLegacySpeedBusModeName(dashLegacySpeedBusMode);
+    j += "\",\"legacy_smooth_down\":";
+    j += dashLegacySmoothDown ? "true" : "false";
+    j += ",\"legacy_smooth_rate_kph_s\":";
+    j += dashLegacySmoothRateKphS;
     j += ",\"options\":[\"fixed\",\"auto\",\"custom\"]}";
     return j;
 }
@@ -2873,6 +3619,8 @@ static void handleSpeedStrategy()
             dashSpeedProfileAuto = true;
         else
             dashSpeedProfileAuto = false;
+        if (dashHandler)
+            dashHandler->legacySmartOffsetEngine.resetSmoothing();
         dashApplyRuntimeState();
         dashSavePrefs();
         dashLog(String("[CFG] /speed_strategy ") + dashSpeedStrategyName(dashSpeedStrategy));
@@ -2966,10 +3714,153 @@ static void handleSpeedCustom()
         customPct[1] = nextCustomPct[1];
         customPct[2] = nextCustomPct[2];
         customPct[3] = nextCustomPct[3];
+        if (dashHandler)
+            dashHandler->legacySmartOffsetEngine.resetSmoothing();
+        dashApplyRuntimeState();
         dashSavePrefs();
         dashLog("[CFG] /speed_custom saved");
     }
     server.send(200, "application/json", dashSpeedCustomJson());
+}
+
+static String dashLegacySpeedConfigJson()
+{
+    String j = "{\"ok\":true,\"bus\":\"";
+    j += dashLegacySpeedBusModeName(dashLegacySpeedBusMode);
+    j += "\",\"mode\":\"";
+    j += dashLegacySpeedModeName(dashLegacySmartMode);
+    j += "\",\"mode_value\":";
+    j += static_cast<uint8_t>(dashLegacySmartMode);
+    j += ",\"manual_offset_kph\":";
+    j += dashLegacyManualOffsetKph;
+    j += ",\"custom_pct\":[";
+    for (uint8_t i = 0; i < 4; ++i)
+    {
+        if (i)
+            j += ",";
+        j += dashLegacyCustomPct[i];
+    }
+    j += "]";
+    j += ",\"smooth_down\":";
+    j += dashLegacySmoothDown ? "true" : "false";
+    j += ",\"smooth_rate_kph_s\":";
+    j += dashLegacySmoothRateKphS;
+    j += ",\"source_priority\":[\"0x2F8\",\"0x399\"],\"gps_fresh_ms\":";
+    j += kLegacyGpsLimitFreshMs;
+    j += ",\"fused_fresh_ms\":";
+    j += kLegacyFusedLimitFreshMs;
+    j += "}";
+    return j;
+}
+
+static void handleLegacySpeedConfig()
+{
+    bool changed = false;
+    LegacySpeedBusMode nextBus = dashLegacySpeedBusMode;
+    LegacySmartOffsetMode nextMode = dashLegacySmartMode;
+    uint8_t nextManualKph = dashLegacyManualOffsetKph;
+    uint8_t nextCustomPct[4] = {
+        dashLegacyCustomPct[0], dashLegacyCustomPct[1],
+        dashLegacyCustomPct[2], dashLegacyCustomPct[3]
+    };
+    bool nextSmooth = dashLegacySmoothDown;
+    uint8_t nextRate = dashLegacySmoothRateKphS;
+    if (server.hasArg("mode"))
+    {
+        String mode = server.arg("mode");
+        mode.toLowerCase();
+        if (mode == "off" || mode == "0")
+            nextMode = LegacySmartOffsetMode::Off;
+        else if (mode == "manual" || mode == "1")
+            nextMode = LegacySmartOffsetMode::Manual;
+        else if (mode == "auto" || mode == "2")
+            nextMode = LegacySmartOffsetMode::Auto;
+        else if (mode == "custom" || mode == "3")
+            nextMode = LegacySmartOffsetMode::Custom;
+        else
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"mode must be off, manual, auto, or custom\"}");
+            return;
+        }
+        changed = true;
+    }
+    if (server.hasArg("manual_offset_kph"))
+    {
+        uint8_t value = nextManualKph;
+        if (!dashArgUIntInRange("manual_offset_kph", 0, 33, value))
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"manual_offset_kph must be 0..33\"}");
+            return;
+        }
+        nextManualKph = value;
+        changed = true;
+    }
+    for (uint8_t i = 0; i < 4; ++i)
+    {
+        String key = String("cp") + String(i + 1);
+        if (!server.hasArg(key.c_str()))
+            continue;
+        uint8_t value = nextCustomPct[i];
+        if (!dashArgUIntInRange(key.c_str(), 0, 63, value))
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"cp1..cp4 must be 0..63\"}");
+            return;
+        }
+        nextCustomPct[i] = value;
+        changed = true;
+    }
+    if (server.hasArg("bus"))
+    {
+        String bus = server.arg("bus");
+        bus.toLowerCase();
+        if (bus == "auto" || bus == "0")
+            nextBus = LegacySpeedBusMode::Auto;
+        else if (bus == "can1" || bus == "1")
+            nextBus = LegacySpeedBusMode::Can1;
+        else if (bus == "can2" || bus == "2")
+            nextBus = LegacySpeedBusMode::Can2;
+        else
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"bus must be Auto, CAN1, or CAN2\"}");
+            return;
+        }
+        changed = true;
+    }
+    if (server.hasArg("smooth_down"))
+    {
+        nextSmooth = dashArgTruthy(server.arg("smooth_down"));
+        changed = true;
+    }
+    if (server.hasArg("smooth_rate_kph_s"))
+    {
+        uint8_t rate = nextRate;
+        if (!dashArgUIntInRange("smooth_rate_kph_s", 1, 20, rate))
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"smooth_rate_kph_s must be 1..20\"}");
+            return;
+        }
+        nextRate = rate;
+        changed = true;
+    }
+    if (changed)
+    {
+        dashLegacySpeedBusMode = nextBus;
+        dashLegacySmartMode = nextMode;
+        dashLegacyManualOffsetKph = nextManualKph;
+        for (uint8_t i = 0; i < 4; ++i)
+            dashLegacyCustomPct[i] = nextCustomPct[i];
+        dashLegacySmoothDown = nextSmooth;
+        dashLegacySmoothRateKphS = nextRate;
+        if (dashHandler)
+        {
+            dashHandler->legacySmartOffsetEngine.resetSmoothing();
+            dashHandler->legacySpeedBus.reset();
+        }
+        dashApplyRuntimeState();
+        dashSavePrefs();
+        dashLog("[CFG] /legacy_speed_config saved");
+    }
+    server.send(200, "application/json", dashLegacySpeedConfigJson());
 }
 
 static String dashLightingConfigJson()
@@ -3042,12 +3933,85 @@ static void handleLightingConfig()
     server.send(200, "application/json", dashLightingConfigJson());
 }
 
+static void dashAppendLegacySafetyControlsJson(String &j)
+{
+    const DashAbortGuardDiag abort = dashHandler ? dashHandler->abortGuard.diag()
+                                                  : DashAbortGuardDiag{};
+    const DashMinimalInjectDiag minimal = dashHandler ? dashHandler->minimalInject.diag()
+                                                       : DashMinimalInjectDiag{};
+    j += R"JSON(,"legacyInjectionSafety":{"abortGuard":{"enabled":)JSON";
+    j += dashHandler ? (abort.enabled ? "true" : "false") : (dashAbortGuardEnabled ? "true" : "false");
+    j += R"JSON(,"latched":)JSON";
+    j += abort.latched ? "true" : "false";
+    j += R"JSON(,"lastApState":)JSON";
+    j += abort.lastApState;
+    j += R"JSON(,"lastAbortState":)JSON";
+    j += abort.lastAbortState;
+    j += R"JSON(,"latchedAtMs":)JSON";
+    j += abort.latchedAtMs;
+    j += R"JSON(,"lastClearReason":")JSON";
+    j += abort.lastClearReason;
+    j += R"JSON(","blocks":)JSON";
+    j += abort.blocks;
+    j += R"JSON(,"lastBlockedPath":")JSON";
+    j += abort.lastBlockedPath;
+    j += R"JSON("},"minimalInject":{"enabled":)JSON";
+    j += dashHandler ? (minimal.enabled ? "true" : "false") : (dashMinimalInjectEnabled ? "true" : "false");
+    j += R"JSON(,"apEngaged":)JSON";
+    j += minimal.apEngaged ? "true" : "false";
+    j += R"JSON(,"lastApState":)JSON";
+    j += minimal.lastApState;
+    j += R"JSON(,"successfulMux0":)JSON";
+    j += minimal.successfulMux0;
+    j += R"JSON(,"quota":)JSON";
+    j += minimal.quota;
+    j += R"JSON(,"engagementCount":)JSON";
+    j += minimal.engagementCount;
+    j += R"JSON(,"blocked":)JSON";
+    j += minimal.blocked;
+    j += R"JSON(,"lastBlockReason":")JSON";
+    j += minimal.lastBlockReason;
+    // #108 steer-jerk defense diagnostics (engagement edges, Instant fires,
+    // Minimal burst budget). Mirrors DashLegacySteerDiag.
+    const DashLegacySteerDiag steer = dashHandler ? dashHandler->legacySteerDefense.diag((uint32_t)millis())
+                                                   : DashLegacySteerDiag{};
+    j += R"JSON("},"steerDefense":{"instantEnabled":)JSON";
+    j += steer.instantEnabled ? "true" : "false";
+    j += R"JSON(,"minimalEnabled":)JSON";
+    j += steer.minimalEnabled ? "true" : "false";
+    j += R"JSON(,"apEngaged":)JSON";
+    j += steer.apEngaged ? "true" : "false";
+    j += R"JSON(,"edgePending":)JSON";
+    j += steer.edgePending ? "true" : "false";
+    j += R"JSON(,"apEdgeCount":)JSON";
+    j += steer.apEdgeCount;
+    j += R"JSON(,"instantBypassCount":)JSON";
+    j += steer.instantBypassCount;
+    j += R"JSON(,"instantBypassLast":)JSON";
+    j += steer.instantBypassLast ? "true" : "false";
+    j += R"JSON(,"minimalBudget":)JSON";
+    j += steer.minimalBudget;
+    j += R"JSON(,"minimalUsed":)JSON";
+    j += steer.minimalUsed;
+    j += R"JSON(,"minimalBlocks":)JSON";
+    j += steer.minimalBlocks;
+    j += R"JSON(,"lastMinimalBlockPath":")JSON";
+    j += steer.lastMinimalBlockPath;
+    j += R"JSON(","lastResetReason":")JSON";
+    j += steer.lastResetReason;
+    j += R"JSON("}})JSON";
+}
+
 static String dashDefenseConfigJson()
 {
     String j = "{\"ok\":true,\"enabled\":";
     j += dashDefenseEnabled ? "true" : "false";
     j += ",\"bionic_steering\":";
     j += dashBionicSteering ? "true" : "false";
+    j += ",\"legacy_nag_enabled\":";
+    j += dashBionicSteering ? "true" : "false";
+    j += ",\"legacy_nag_strategy\":\"continuous_absolute\"";
+    j += ",\"legacy_nag_torque_limit_nm\":1.8";
     // Bionic disabled warning (3 consecutive failures)
     bool bionicDisabled = dashHandler ? dashHandler->bionicDisabled() : dashBionicDisabled;
     j += ",\"bionic_disabled\":";
@@ -3058,16 +4022,28 @@ static String dashDefenseConfigJson()
     j += dashHandler ? ((bool)dashHandler->isaOverride ? "true" : "false") : (nvsIsaOverride ? "true" : "false");
     j += ",\"dnd_volume\":";
     j += dashDndVolume ? "true" : "false";
+    j += ",\"legacy_scroll_dnd\":";
+    j += dashDndVolume ? "true" : "false";
     j += ",\"speed_no_disturb\":";
     j += dashSpeedNoDisturb ? "true" : "false";
     j += ",\"dnd_speed\":";
     j += dashDndSpeed ? "true" : "false";
     j += ",\"ap_eap_compatible\":";
     j += dashApEapCompatible ? "true" : "false";
+    j += ",\"abort_guard\":";
+    j += dashAbortGuardEnabled ? "true" : "false";
+    j += ",\"minimal_inject\":";
+    j += dashMinimalInjectEnabled ? "true" : "false";
+    j += ",\"instant_engage\":";
+    j += dashInstantEngageEnabled ? "true" : "false";
+    j += ",\"soft_engage\":";
+    j += dashSoftEngageEnabled ? "true" : "false";
     j += ",\"slew_rate_enabled\":";
     j += hw3OffsetSlew ? "true" : "false";
     j += ",\"ban_shield\":";
     j += dashHandler ? ((bool)dashHandler->banShieldEnable ? "true" : "false") : (nvsBanShieldEnable ? "true" : "false");
+    appendLegacyNagDiagJson(j, millis());
+    dashAppendLegacySafetyControlsJson(j);
     j += "}";
     return j;
 }
@@ -3077,9 +4053,11 @@ static void handleDefenseConfig()
     if (server.hasArg("enabled") || server.hasArg("bionic_steering") ||
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
-        server.hasArg("dnd_speed") || server.hasArg("isa_override"))
+        server.hasArg("legacy_scroll_dnd") ||
+        server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
+        server.hasArg("abort_guard") || server.hasArg("minimal_inject") ||
+        server.hasArg("instant_engage") || server.hasArg("soft_engage"))
     {
-        bool prevDefenseEnabled = dashDefenseEnabled;
         bool prevDndVolume = dashDndVolume;
         bool prevDndSpeed = dashDndSpeed;
         if (server.hasArg("enabled"))
@@ -3088,14 +4066,12 @@ static void handleDefenseConfig()
         {
             bool v = dashArgTruthy(server.arg("bionic_steering"));
             dashBionicSteering = v;
-            // Reset bionic disabled state when user re-enables
+            // Reset runtime and bus affinity whenever the user changes the switch.
             if (v) dashBionicDisabled = false;
-            // Sync to NagHandler if available
             if (dashHandler)
             {
                 dashHandler->bionicSteering = v;
-                if (v)
-                    dashHandler->resetBionic((uint32_t)millis());
+                dashHandler->resetBionic((uint32_t)millis());
             }
         }
         if (server.hasArg("sound_warning_suppression"))
@@ -3112,21 +4088,29 @@ static void handleDefenseConfig()
             if (dashHandler)
                 dashHandler->isaOverride = v;
         }
-        if (server.hasArg("dnd_volume"))
+        if (server.hasArg("legacy_scroll_dnd"))
+            dashDndVolume = dashArgTruthy(server.arg("legacy_scroll_dnd"));
+        else if (server.hasArg("dnd_volume"))
             dashDndVolume = dashArgTruthy(server.arg("dnd_volume"));
         if (server.hasArg("speed_no_disturb"))
             dashSpeedNoDisturb = dashArgTruthy(server.arg("speed_no_disturb"));
         if (server.hasArg("dnd_speed"))
             dashDndSpeed = dashArgTruthy(server.arg("dnd_speed"));
-        if (!dashDefenseEnabled)
-            dashWheelDndCtrl.reset();
-        if (dashDefenseEnabled && dashDndVolume && (!prevDefenseEnabled || !prevDndVolume))
-            dashWheelDndCtrl.startVolume();
-        if (dashDefenseEnabled && dashDndSpeed && (!prevDefenseEnabled || !prevDndSpeed))
-            dashWheelDndCtrl.startSpeed();
+        if (dashDndVolume && !prevDndVolume)
+            dashLegacyWheel045DndCtrl.resetRuntime();
+        dashLegacyWheel045DndCtrl.configure(dashDndVolume);
+        if (dashDndSpeed && !prevDndSpeed)
+            dashWheelDndCtrl.clearAutoDisarm();
         if (server.hasArg("ap_eap_compatible"))
             dashApEapCompatible = dashArgTruthy(server.arg("ap_eap_compatible"));
-        hw3OffsetSlew = dashDefenseEnabled;
+        if (server.hasArg("abort_guard"))
+            dashAbortGuardEnabled = dashArgTruthy(server.arg("abort_guard"));
+        if (server.hasArg("minimal_inject"))
+            dashMinimalInjectEnabled = dashArgTruthy(server.arg("minimal_inject"));
+        if (server.hasArg("instant_engage"))
+            dashInstantEngageEnabled = dashArgTruthy(server.arg("instant_engage"));
+        if (server.hasArg("soft_engage"))
+            dashSoftEngageEnabled = dashArgTruthy(server.arg("soft_engage"));
         nvsBanShieldEnable = dashDefenseEnabled;
         if (dashHandler)
             dashHandler->banShieldEnable = dashDefenseEnabled;
@@ -3499,65 +4483,201 @@ static void handleResetStats()
 
 static void handleRecStart()
 {
-    if (!dashEnsureRecBuffer())
+    if (recActive || recFinalizing || recWriterOpen)
     {
-        server.send(500, "application/json", "{\"ok\":false,\"error\":\"recorder buffer allocation failed\"}");
+        server.send(409, "application/json", "{\"ok\":false,\"error\":\"recorder busy\"}");
         return;
     }
-    // Optional ID filter: /rec/start?ids=249,3E9,3F5 (hex, comma-separated).
-    // Records only those IDs (on any bus) so the busy primary bus does not flood
-    // the buffer while you capture lighting/stalk frames for checksum analysis.
+    if (!dashEnsureRecorder())
+    {
+        String error = "{\"ok\":false,\"error\":\"recorder queue allocation failed\"";
+        error += ",\"queue_bytes\":" + String(kRecQueueDepth * sizeof(RecFrame));
+        error += ",\"internal_free\":" + String(heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        error += ",\"internal_largest\":" + String(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        error += ",\"psram_free\":" + String(heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        error += "}";
+        server.send(507, "application/json", error);
+        return;
+    }
+
+    unsigned long durationSeconds = 120;
+    if (server.hasArg("duration_s"))
+    {
+        long requested = server.arg("duration_s").toInt();
+        if (requested != 60 && requested != 90 && requested != 120)
+        {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"duration_s must be 60, 90, or 120\"}");
+            return;
+        }
+        durationSeconds = static_cast<unsigned long>(requested);
+    }
+
+    // Hex IDs, comma-separated. A missing parameter selects the NAG diagnostic
+    // set; ids= (present but empty) explicitly records all traffic.
     recFilterCount = 0;
     if (server.hasArg("ids"))
     {
         String s = server.arg("ids");
         const char *p = s.c_str();
-        while (*p && recFilterCount < kRecFilterMax)
+        while (*p)
         {
             while (*p == ',' || *p == ' ')
                 p++;
             if (!*p)
                 break;
+            if (recFilterCount >= kRecFilterMax)
+            {
+                server.send(400, "application/json", "{\"ok\":false,\"error\":\"at most 16 filter IDs are allowed\"}");
+                return;
+            }
             char *end = nullptr;
-            uint32_t v = static_cast<uint32_t>(strtoul(p, &end, 16));
-            if (end == p)
-                break; // no progress: avoid infinite loop on junk input
-            recFilterIds[recFilterCount++] = v;
+            unsigned long parsed = strtoul(p, &end, 16);
+            if (end == p || parsed > 0x1FFFFFFFUL)
+            {
+                server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid hexadecimal CAN ID filter\"}");
+                return;
+            }
+            while (*end == ' ')
+                end++;
+            if (*end && *end != ',')
+            {
+                server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid hexadecimal CAN ID filter\"}");
+                return;
+            }
+            recFilterIds[recFilterCount++] = static_cast<uint32_t>(parsed);
             p = end;
         }
     }
+    else
+    {
+        static const uint32_t kDefaultNagIds[] = {
+            0x045, 0x118, 0x129, 0x186, 0x238, 0x292, 0x370, 0x389,
+            0x399, 0x3C2, 0x3EE, 0x3FD, 0x47D, 0x47F, 0x488, 0x5D9};
+        recFilterCount = sizeof(kDefaultNagIds) / sizeof(kDefaultNagIds[0]);
+        memcpy(recFilterIds, kDefaultNagIds, sizeof(kDefaultNagIds));
+    }
+
+    xQueueReset(recQueue);
+    SPIFFS.remove("/rec.csv");
+    SPIFFS.remove("/rec.bin");
+    recFile = SPIFFS.open("/rec.bin", "w");
+    if (!recFile)
+    {
+        server.send(500, "application/json", "{\"ok\":false,\"error\":\"recording file open failed\"}");
+        return;
+    }
+
+    size_t total = SPIFFS.totalBytes();
+    size_t used = SPIFFS.usedBytes();
+    size_t available = total > used ? total - used : 0;
+    if (available <= kRecStorageReserveBytes)
+    {
+        recFile.close();
+        SPIFFS.remove("/rec.bin");
+        server.send(507, "application/json", "{\"ok\":false,\"error\":\"insufficient recorder storage\"}");
+        return;
+    }
+
     recCount = 0;
+    recQueued = 0;
+    recDropped = 0;
+    recFileBytes = 0;
+    dashResetRecWheelEvidence();
+    recMaxFileBytes = static_cast<uint32_t>(available - kRecStorageReserveBytes);
+    recDurationMs = durationSeconds * 1000UL;
+    recStopReason = kRecStopNone;
+    recStorageFull = false;
     recSaved = false;
+    dashCaptureRecNagSnapshot(recNagStart);
+    recNagEnd = {};
     recStartMs = millis();
+    recElapsedMs = 0;
+    recWriterOpen = true;
+    recFinalizing = false;
     recActive = true;
     dashLog(recFilterCount > 0
-                ? String("[REC] Recording started (filter ") + recFilterCount + " ids)"
-                : String("[REC] Recording started"));
-    server.send(200, "application/json", "{\"ok\":true}");
+                ? String("[REC] Streaming ") + durationSeconds + "s (filter " + recFilterCount + " ids)"
+                : String("[REC] Streaming ") + durationSeconds + "s (all traffic)");
+    server.send(200, "application/json", "{\"ok\":true,\"duration_s\":" + String(durationSeconds) + "}");
 }
 
 static void handleRecStop()
 {
-    bool ok = dashStopRecordingAndSave("manual");
-    server.send(ok ? 200 : 500, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
+    if (recActive)
+        dashRequestRecStop(kRecStopManual);
+    String j = "{\"ok\":true,\"finalizing\":";
+    j += recFinalizing ? "true" : "false";
+    j += "}";
+    server.send(200, "application/json", j);
 }
 
 static void handleRecStatus()
 {
-    if (recActive && (millis() - recStartMs >= kRecMaxDurationMs))
-        dashStopRecordingAndSave("time limit");
+    unsigned long elapsed = (recActive || recFinalizing) && recStartMs ? millis() - recStartMs : recElapsedMs;
+    if (recActive && elapsed >= recDurationMs)
+        dashRequestRecStop(kRecStopTimeLimit);
     String j = "{\"active\":";
     j += recActive ? "true" : "false";
+    j += ",\"finalizing\":";
+    j += recFinalizing ? "true" : "false";
     j += ",\"count\":";
     j += recCount;
-    j += ",\"cap\":";
-    j += REC_CAP;
+    j += ",\"queued\":";
+    j += recQueued;
+    j += ",\"dropped\":";
+    j += recDropped;
+    j += ",\"file_bytes\":";
+    j += recFileBytes;
+    j += ",\"max_file_bytes\":";
+    j += recMaxFileBytes;
+    j += ",\"elapsed_ms\":";
+    j += elapsed;
+    j += ",\"duration_ms\":";
+    j += recDurationMs;
     j += ",\"saved\":";
     j += recSaved ? "true" : "false";
-    j += ",\"psram\":";
-    j += recBufInPsram ? "true" : "false";
+    j += ",\"storage_full\":";
+    j += recStorageFull ? "true" : "false";
+    j += ",\"stop_reason\":\"";
+    j += dashRecStopReasonName(recStopReason);
+    j += "\"";
     j += ",\"filter\":";
     j += recFilterCount;
+    j += ",\"queue_depth\":";
+    j += kRecQueueDepth;
+    j += ",\"queue_psram\":";
+    j += recQueueStoragePsram ? "true" : "false";
+    j += ",\"can2_rx_3c2\":" + String(dashRecCounter(recCan2Rx3c2));
+    j += ",\"can2_rx_3c2_mux1\":" + String(dashRecCounter(recCan2Rx3c2Mux1));
+    j += ",\"can2_rx_3c2_mux1_idle\":" + String(dashRecCounter(recCan2Rx3c2Mux1Idle));
+    j += ",\"can2_rx_3c2_volume_up\":" + String(dashRecCounter(recCan2Rx3c2VolumeUp));
+    j += ",\"can2_rx_3c2_volume_down\":" + String(dashRecCounter(recCan2Rx3c2VolumeDown));
+    j += ",\"can2_rx_3c2_speed_nonzero\":" + String(dashRecCounter(recCan2Rx3c2SpeedNonZero));
+    j += ",\"can2_tx_3c2\":" + String(dashRecCounter(recCan2Tx3c2));
+    j += ",\"can2_tx_error_3c2\":" + String(dashRecCounter(recCan2TxError3c2));
+    j += ",\"can1_rx_3c2\":" + String(dashRecCounter(recCan1Rx3c2));
+    j += ",\"can1_tx_3c2\":" + String(dashRecCounter(recCan1Tx3c2));
+    j += ",\"can1_tx_error_3c2\":" + String(dashRecCounter(recCan1TxError3c2));
+    j += ",\"can1_rx_399\":" + String(dashRecCounter(recCan1Rx399));
+    j += ",\"can1_rx_045\":" + String(dashRecCounter(recCan1Rx045));
+    j += ",\"can1_tx_045\":" + String(dashRecCounter(recCan1Tx045));
+    j += ",\"can1_tx_error_045\":" + String(dashRecCounter(recCan1TxError045));
+    j += ",\"can2_rx_045\":" + String(dashRecCounter(recCan2Rx045));
+    j += ",\"can2_tx_045\":" + String(dashRecCounter(recCan2Tx045));
+    j += ",\"can2_tx_error_045\":" + String(dashRecCounter(recCan2TxError045));
+    j += ",\"wheel_045_lever_up\":" + String(dashRecCounter(rec045LeverUp));
+    j += ",\"wheel_045_lever_down\":" + String(dashRecCounter(rec045LeverDown));
+    j += ",\"wheel_045_lever_forward\":" + String(dashRecCounter(rec045LeverForward));
+    j += ",\"wheel_045_lever_back\":" + String(dashRecCounter(rec045LeverBack));
+    j += ",\"wheel_045_cond_up\":" + String(dashRecCounter(rec045CondUp));
+    j += ",\"wheel_045_cond_down\":" + String(dashRecCounter(rec045CondDown));
+    j += ",\"wheel_045_switch_active\":" + String(dashRecCounter(rec045SwitchActive));
+    j += ",\"wheel_045_last_bus\":" + String(__atomic_load_n(&rec045LastBus, __ATOMIC_RELAXED));
+    j += ",\"wheel_045_last_counter\":" + String(__atomic_load_n(&rec045LastCounter, __ATOMIC_RELAXED));
+    j += ",\"wheel_045_last_crc\":" + String(__atomic_load_n(&rec045LastCrc, __ATOMIC_RELAXED));
+    j += ",\"wheel_045_last_lever\":" + String(__atomic_load_n(&rec045LastLever, __ATOMIC_RELAXED));
+    j += ",\"wheel_045_last_cond\":" + String(__atomic_load_n(&rec045LastCond, __ATOMIC_RELAXED));
+    j += ",\"wheel_045_last_switch_mask\":" + String(__atomic_load_n(&rec045LastSwitchMask, __ATOMIC_RELAXED));
     j += "}";
     server.send(200, "application/json", j);
 }
@@ -3736,15 +4856,159 @@ static void handleBus2Ids()
 
 static void handleRecDownload()
 {
-    if (!SPIFFS.exists("/rec.csv"))
+    if (recActive || recFinalizing || recWriterOpen)
+    {
+        server.send(409, "text/plain", "Recording is still active or finalizing");
+        return;
+    }
+    if (!SPIFFS.exists("/rec.bin"))
     {
         server.send(404, "text/plain", "No recording saved yet");
         return;
     }
-    File f = SPIFFS.open("/rec.csv", "r");
+    File f = SPIFFS.open("/rec.bin", "r");
+    if (!f)
+    {
+        server.send(500, "text/plain", "Recording file open failed");
+        return;
+    }
     server.sendHeader("Content-Disposition", "attachment; filename=\"can_recording.csv\"");
-    server.streamFile(f, "text/csv");
+    if (!server.beginChunkedResponse(200, "text/csv"))
+    {
+        f.close();
+        return;
+    }
+    static const char kHeader[] = "ts_ms,dir,bus,id,dlc,b0,b1,b2,b3,b4,b5,b6,b7\n";
+    if (!server.sendChunk(kHeader, sizeof(kHeader) - 1))
+    {
+        f.close();
+        return;
+    }
+
+    RecFrame record;
+    char line[112];
+    uint32_t rows = 0;
+    while (f.read(reinterpret_cast<uint8_t *>(&record), sizeof(record)) == sizeof(record))
+    {
+        int len = snprintf(line, sizeof(line),
+                           "%lu,%c,%u,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+                           static_cast<unsigned long>(record.ts),
+                           record.dir ? record.dir : 'R',
+                           static_cast<unsigned>(record.bus == CAN_BUS_PARTY ? 2 : 1),
+                           static_cast<unsigned long>(record.id),
+                           static_cast<unsigned>(record.dlc),
+                           static_cast<unsigned>(record.data[0]),
+                           static_cast<unsigned>(record.data[1]),
+                           static_cast<unsigned>(record.data[2]),
+                           static_cast<unsigned>(record.data[3]),
+                           static_cast<unsigned>(record.data[4]),
+                           static_cast<unsigned>(record.data[5]),
+                           static_cast<unsigned>(record.data[6]),
+                           static_cast<unsigned>(record.data[7]));
+        if (len <= 0 || !server.sendChunk(line, static_cast<size_t>(len)))
+            break;
+        if ((++rows & 0xFFU) == 0)
+            vTaskDelay(1);
+    }
     f.close();
+    server.endChunkedResponse();
+}
+
+static void dashAppendRecNagSnapshotJson(String &j, const DashRecNagSnapshot &snapshot)
+{
+    j += "{\"valid\":";
+    j += snapshot.valid ? "true" : "false";
+    if (snapshot.valid)
+    {
+        const DashLegacyNagDiag &d = snapshot.diag;
+        j += ",\"at_ms\":" + String(snapshot.atMs);
+        j += ",\"state\":\"" + String(dashLegacyNagV4StateName(d.state)) + "\"";
+        j += ",\"blocked_reason\":\"" + String(legacyNagBlockReasonName(d.blocked)) + "\"";
+        j += ",\"ap_state\":" + String(d.apState);
+        j += ",\"gear\":" + String(d.gear);
+        j += ",\"hands_on_state\":" + String(d.dasHandsState);
+        j += ",\"native_hands_level\":" + String(d.nativeHandsOnLevel);
+        j += ",\"rx370\":" + String(d.rx370);
+        j += ",\"eligible370\":" + String(d.eligible370);
+        j += ",\"tx370\":" + String(d.tx370);
+        j += ",\"tx_fail\":" + String(d.txFail);
+        j += ",\"tx_attempts\":" + String(d.txAttempts);
+        j += ",\"auto_disarmed\":";
+        j += d.autoDisarmed ? "true" : "false";
+    }
+    j += "}";
+}
+
+static void handleRecMetaDownload()
+{
+    String j = "{\"version\":\"" FIRMWARE_VERSION "\",\"duration_ms\":" + String(recDurationMs);
+    j += ",\"elapsed_ms\":" + String(recElapsedMs);
+    j += ",\"frames\":" + String(recCount);
+    j += ",\"dropped\":" + String(recDropped);
+    j += ",\"file_bytes\":" + String(recFileBytes);
+    j += ",\"stop_reason\":\"" + String(dashRecStopReasonName(recStopReason)) + "\"";
+    j += ",\"filter_ids\":[";
+    for (int i = 0; i < recFilterCount; i++)
+    {
+        if (i)
+            j += ",";
+        char idHex[12];
+        snprintf(idHex, sizeof(idHex), "\"%lX\"", static_cast<unsigned long>(recFilterIds[i]));
+        j += idHex;
+    }
+    j += "]";
+    j += ",\"gear_gate_required\":false,\"ap_context_status_min\":3,\"ap_context_status_max\":6";
+    const uint32_t can2Rx3c2 = dashRecCounter(recCan2Rx3c2);
+    const uint32_t can2Mux1 = dashRecCounter(recCan2Rx3c2Mux1);
+    const uint32_t can2Mux1Idle = dashRecCounter(recCan2Rx3c2Mux1Idle);
+    j += ",\"wheel_3c2\":{\"can2_native_visible\":";
+    j += can2Rx3c2 > 0 ? "true" : "false";
+    j += ",\"can2_mux1_visible\":";
+    j += can2Mux1 > 0 ? "true" : "false";
+    j += ",\"can2_mux1_idle_visible\":";
+    j += can2Mux1Idle > 0 ? "true" : "false";
+    j += ",\"can2_rx\":" + String(can2Rx3c2);
+    j += ",\"can2_mux1\":" + String(can2Mux1);
+    j += ",\"can2_mux1_idle\":" + String(can2Mux1Idle);
+    j += ",\"volume_up\":" + String(dashRecCounter(recCan2Rx3c2VolumeUp));
+    j += ",\"volume_down\":" + String(dashRecCounter(recCan2Rx3c2VolumeDown));
+    j += ",\"speed_nonzero\":" + String(dashRecCounter(recCan2Rx3c2SpeedNonZero));
+    j += ",\"tx_ok\":" + String(dashRecCounter(recCan2Tx3c2));
+    j += ",\"tx_error\":" + String(dashRecCounter(recCan2TxError3c2));
+    j += ",\"can1_rx\":" + String(dashRecCounter(recCan1Rx3c2));
+    j += ",\"can1_tx_ok\":" + String(dashRecCounter(recCan1Tx3c2));
+    j += ",\"can1_tx_error\":" + String(dashRecCounter(recCan1TxError3c2));
+    j += ",\"can1_399_rx\":" + String(dashRecCounter(recCan1Rx399));
+    j += "}";
+    j += ",\"wheel_045\":{\"receive_only\":false";
+    j += ",\"protocol\":\"legacy_0x045_left_scroll\",\"tx_bus\":1";
+    j += ",\"can1_rx\":" + String(dashRecCounter(recCan1Rx045));
+    j += ",\"can2_rx\":" + String(dashRecCounter(recCan2Rx045));
+    j += ",\"can1_tx\":" + String(dashRecCounter(recCan1Tx045));
+    j += ",\"can2_tx\":" + String(dashRecCounter(recCan2Tx045));
+    j += ",\"can1_tx_error\":" + String(dashRecCounter(recCan1TxError045));
+    j += ",\"can2_tx_error\":" + String(dashRecCounter(recCan2TxError045));
+    j += ",\"lever_up\":" + String(dashRecCounter(rec045LeverUp));
+    j += ",\"lever_down\":" + String(dashRecCounter(rec045LeverDown));
+    j += ",\"lever_forward\":" + String(dashRecCounter(rec045LeverForward));
+    j += ",\"lever_back\":" + String(dashRecCounter(rec045LeverBack));
+    j += ",\"cond_up\":" + String(dashRecCounter(rec045CondUp));
+    j += ",\"cond_down\":" + String(dashRecCounter(rec045CondDown));
+    j += ",\"switch_active\":" + String(dashRecCounter(rec045SwitchActive));
+    j += ",\"last_bus\":" + String(__atomic_load_n(&rec045LastBus, __ATOMIC_RELAXED));
+    j += ",\"last_counter\":" + String(__atomic_load_n(&rec045LastCounter, __ATOMIC_RELAXED));
+    j += ",\"last_crc\":" + String(__atomic_load_n(&rec045LastCrc, __ATOMIC_RELAXED));
+    j += ",\"last_lever\":" + String(__atomic_load_n(&rec045LastLever, __ATOMIC_RELAXED));
+    j += ",\"last_cond\":" + String(__atomic_load_n(&rec045LastCond, __ATOMIC_RELAXED));
+    j += ",\"last_switch_mask\":" + String(__atomic_load_n(&rec045LastSwitchMask, __ATOMIC_RELAXED));
+    j += "}";
+    j += ",\"nag_start\":";
+    dashAppendRecNagSnapshotJson(j, recNagStart);
+    j += ",\"nag_end\":";
+    dashAppendRecNagSnapshotJson(j, recNagEnd);
+    j += "}";
+    server.sendHeader("Content-Disposition", "attachment; filename=\"can_recording_meta.json\"");
+    server.send(200, "application/json", j);
 }
 
 static void handleDisable()
@@ -6609,6 +7873,11 @@ static void dashInitHandlers()
     }
 }
 
+static bool dashLegacyHandlerActive()
+{
+    return handlerPool[0] != nullptr && dashHandler == handlerPool[0];
+}
+
 static void dashSwapHandler(uint8_t mode)
 {
     // mode=3 (AUTO): use DASH_DEFAULT_HW until CAN 920 detection kicks in.
@@ -6616,11 +7885,15 @@ static void dashSwapHandler(uint8_t mode)
     if (effective > 2 || !handlerPool[effective])
         return;
     CarManagerBase *next = handlerPool[effective];
+    if (dashHandler && dashHandler != next)
+        dashHandler->resetBionic((uint32_t)millis());
     if (dashHandler)
         next->enablePrint = (bool)dashHandler->enablePrint;
     appActiveHandler = next;
     dashHandler = next;
     dashApplyRuntimeState();
+    if (effective == 0 && dashBionicSteering)
+        next->resetBionic((uint32_t)millis());
     // Update driver acceptance filters for the new handler.
     // For MCP2515 (ext) dashApplyFilters() will also fine-tune the hardware
     // filter registers. For TWAI and old MCP2515 this abstract call is enough.
@@ -6652,6 +7925,8 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->hw4OffsetRaw = nvsHw4OffsetRaw;
         handlerPool[i]->banShieldEnable = nvsBanShieldEnable;
         handlerPool[i]->bionicSteering = dashBionicSteering;
+        handlerPool[i]->abortGuard.setEnabled(dashAbortGuardEnabled);
+        handlerPool[i]->minimalInject.setEnabled(dashMinimalInjectEnabled);
         handlerPool[i]->legacyOffset = nvsLegacyOffset;
         handlerPool[i]->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         handlerPool[i]->overrideSpeedLimit = nvsOverrideSpeedLimit;
@@ -6732,6 +8007,8 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/speed_strategy", HTTP_POST, handleSpeedStrategy);
     server.on("/speed_custom", HTTP_GET, handleSpeedCustomGet);
     server.on("/speed_custom", HTTP_POST, handleSpeedCustom);
+    server.on("/legacy_speed_config", HTTP_GET, handleLegacySpeedConfig);
+    server.on("/legacy_speed_config", HTTP_POST, handleLegacySpeedConfig);
 #if !defined(DASH_SINGLE_CAN_STANDALONE)
     server.on("/lighting_config", HTTP_GET, handleLightingConfig);
     server.on("/lighting_config", HTTP_POST, handleLightingConfig);
@@ -6772,6 +8049,7 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/bus2_ids", HTTP_GET, handleBus2Ids);
 #endif
     server.on("/rec_download", HTTP_GET, handleRecDownload);
+    server.on("/rec_meta", HTTP_GET, handleRecMetaDownload);
     server.on("/disable", HTTP_POST, handleDisable);
     server.on("/reboot", HTTP_GET, handleReboot);
     server.on("/reboot", HTTP_POST, handleReboot);
@@ -6836,8 +8114,8 @@ static void mcpDashboardLoop()
     if (Update.isRunning())
         return;
     dashSerialDiagnosticsPoll();
-    if (recActive && (millis() - recStartMs >= kRecMaxDurationMs))
-        dashStopRecordingAndSave("time limit");
+    if (recActive && (millis() - recStartMs >= recDurationMs))
+        dashRequestRecStop(kRecStopTimeLimit);
     dashCheckBusHealth();
     if (canOnline && millis() - lastFrameMs > 10000)
     {

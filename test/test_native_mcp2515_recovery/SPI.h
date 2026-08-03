@@ -6,6 +6,7 @@
 #define FALLING 0x2
 #define CAN_500KBPS 500
 #define MCP_16MHZ 16
+#define MCP_8MHZ 8
 
 extern uint32_t fakeMillis;
 extern uint32_t fakeDelayMs;

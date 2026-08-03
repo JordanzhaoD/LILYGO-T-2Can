@@ -389,6 +389,7 @@ public:
 
     explicit operator bool() const { return fp_ || dir_; }
     void close();
+    void flush();
     size_t write(const uint8_t *buf, size_t len);
     size_t read(uint8_t *buf, size_t len);
     String readString();
@@ -419,6 +420,8 @@ public:
     File open(const String &path, const char *mode = "r");
     bool exists(const String &path);
     bool remove(const String &path);
+    size_t totalBytes();
+    size_t usedBytes();
 };
 
 extern SPIFFSClass SPIFFS;
@@ -555,6 +558,9 @@ public:
     void sendRaw(int code, const char *type, const char *body, size_t len);
     void sendHeader(const char *name, const char *value);
     void streamFile(File &file, const char *type);
+    bool beginChunkedResponse(int code, const char *type);
+    bool sendChunk(const char *data, size_t len);
+    void endChunkedResponse();
     bool authenticate(const char *user, const char *pass);
     void requestAuthentication();
     HTTPUpload &upload() { return upload_; }

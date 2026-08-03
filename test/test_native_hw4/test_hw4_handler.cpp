@@ -142,7 +142,7 @@ void test_hw4_no_send_when_AD_disabled_mux0()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
-void test_hw4_checkAD_blocks_mux0_and_mux2_send()
+void test_hw4_checkAD_blocks_sends_but_preserves_request_state()
 {
     handler.checkAD = denyInjection;
 
@@ -150,7 +150,8 @@ void test_hw4_checkAD_blocks_mux0_and_mux2_send()
     f0.data[0] = 0x00;
     f0.data[4] = 0x40;
     handler.handleMessage(f0, mock);
-    TEST_ASSERT_FALSE(handler.ADEnabled);
+    TEST_ASSERT_TRUE(handler.ADEnabled);
+    TEST_ASSERT_TRUE(handler.fsdTriggered);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 
     mock.reset();
@@ -442,7 +443,7 @@ void test_hw4_gear_drive_clears_parked()
 
 void test_hw4_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(10, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(11, handler.filterIdCount());
 }
 
 void test_hw4_filter_ids_values()
@@ -454,10 +455,11 @@ void test_hw4_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(920, ids[3]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[4]);
     TEST_ASSERT_EQUAL_UINT32(923, ids[5]);   // 0x39B DAS_status Highland/HW4
-    TEST_ASSERT_EQUAL_UINT32(1016, ids[6]);
-    TEST_ASSERT_EQUAL_UINT32(1021, ids[7]);
-    TEST_ASSERT_EQUAL_UINT32(2047, ids[8]);
-    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[9]);
+    TEST_ASSERT_EQUAL_UINT32(962, ids[6]);   // 0x3C2 dual-input recorder evidence
+    TEST_ASSERT_EQUAL_UINT32(1016, ids[7]);
+    TEST_ASSERT_EQUAL_UINT32(1021, ids[8]);
+    TEST_ASSERT_EQUAL_UINT32(2047, ids[9]);
+    TEST_ASSERT_EQUAL_UINT32(CAN_ID_OTA_STATUS, ids[10]);
 }
 
 // --- ISA override rewrite speed limit, HW4 (CAN ID 923 / 0x39B) — spec Task 3 ---
@@ -547,7 +549,7 @@ int main()
     RUN_TEST(test_hw4_AD_mux0_sets_emergency_bit59);
     RUN_TEST(test_hw4_AD_mux0_skips_emergency_bit59_when_disabled);
     RUN_TEST(test_hw4_no_send_when_AD_disabled_mux0);
-    RUN_TEST(test_hw4_checkAD_blocks_mux0_and_mux2_send);
+    RUN_TEST(test_hw4_checkAD_blocks_sends_but_preserves_request_state);
     RUN_TEST(test_hw4_tlsscBypass_sets_bit38_on_mux0);
 
     RUN_TEST(test_hw4_nag_suppression_clears_bit19_sets_bit47);

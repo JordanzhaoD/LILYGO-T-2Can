@@ -1,1 +1,2 @@
-v4.0.2_20260602-0135/SHA256SUMS.txt
+9aef91c55901d19be5a3080586f9d446e881abb7f32306bb051777a08966424c  firmware-assets/LILYGO-T-2CAN_latest_full_merged.bin
+6a9a4b3eeff6d6d7659aa7601d6533bd79c357d03723697ebd98249086b65032  firmware-assets/LILYGO-T-2CAN_latest_ota_app.bin

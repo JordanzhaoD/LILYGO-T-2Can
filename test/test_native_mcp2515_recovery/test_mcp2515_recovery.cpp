@@ -1,6 +1,7 @@
 #include <unity.h>
 
 #include "drivers/mcp2515_driver.h"
+#include "drivers/esp32_mcp2515_driver.h"
 
 uint32_t fakeMillis = 0;
 uint32_t fakeDelayMs = 0;
@@ -8,6 +9,7 @@ uint32_t fakeDelayMs = 0;
 int MCP2515::resetCount = 0;
 int MCP2515::bitrateCount = 0;
 int MCP2515::normalModeCount = 0;
+int MCP2515::receiveAllModeCount = 0;
 int MCP2515::errorFlagsReadCount = 0;
 int MCP2515::lastSpeed = 0;
 int MCP2515::lastClock = 0;
@@ -66,10 +68,46 @@ void test_recovers_when_error_flags_report_bus_off()
     TEST_ASSERT_EQUAL(2, MCP2515::normalModeCount);
 }
 
+void test_secondary_driver_recovers_and_restores_receive_all_mode()
+{
+    ESP32_MCP2515Driver driver(10);
+    TEST_ASSERT_TRUE(driver.init());
+    driver.setReceiveAllMode();
+    TEST_ASSERT_EQUAL(1, MCP2515::receiveAllModeCount);
+
+    MCP2515::sendResult = MCP2515::ERROR_FAILTX;
+    CanFrame frame = {};
+    for (int i = 0; i < 4; i++)
+        TEST_ASSERT_FALSE(driver.send(frame));
+    TEST_ASSERT_EQUAL_UINT32(0, driver.recoveryCount());
+
+    TEST_ASSERT_FALSE(driver.send(frame));
+    TEST_ASSERT_EQUAL_UINT32(1, driver.recoveryCount());
+    TEST_ASSERT_EQUAL_UINT8(0, driver.consecutiveTxFailures());
+    TEST_ASSERT_EQUAL(2, MCP2515::receiveAllModeCount);
+    TEST_ASSERT_EQUAL(MCP_8MHZ, MCP2515::lastClock);
+}
+
+void test_secondary_driver_recovers_from_bus_off()
+{
+    ESP32_MCP2515Driver driver(10);
+    TEST_ASSERT_TRUE(driver.init());
+    driver.setReceiveAllMode();
+    MCP2515::errorFlags = MCP2515::EFLG_TXBO;
+    fakeMillis = 1000;
+
+    CanFrame frame = {};
+    TEST_ASSERT_FALSE(driver.read(frame));
+    TEST_ASSERT_EQUAL_UINT32(1, driver.recoveryCount());
+    TEST_ASSERT_EQUAL(2, MCP2515::receiveAllModeCount);
+}
+
 int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_recovers_after_consecutive_send_failures);
     RUN_TEST(test_recovers_when_error_flags_report_bus_off);
+    RUN_TEST(test_secondary_driver_recovers_and_restores_receive_all_mode);
+    RUN_TEST(test_secondary_driver_recovers_from_bus_off);
     return UNITY_END();
 }

@@ -53,6 +53,9 @@ class SimState:
         self.wifi_auto_off = False
         self.speed_strategy = "auto"
         self.speed_custom = {"manualPct": 0, "autoMinPct": -5, "autoMaxPct": 15, "cp1": 0, "cp2": 0, "cp3": 0, "cp4": 0}
+        self.legacy_speed_bus = "Auto"
+        self.legacy_speed_smooth = True
+        self.legacy_speed_rate = 5
         self.light_enabled = False
         self.light_count = 3
         self.light_frequency = "medium"
@@ -66,6 +69,8 @@ class SimState:
         self.dnd_volume = True
         self.dnd_speed = True
         self.ap_eap_compatible = False
+        self.abort_guard = False
+        self.minimal_inject = False
         self.legacy_fsd_policy = "legacy_stable"
         self.legacy_fsd_mux1 = False
         self.legacy_fsd_profile = False
@@ -95,6 +100,11 @@ class SimState:
         self.rec_active = False
         self.rec_count = 0
         self.rec_saved = False
+        self.rec_started = 0.0
+        self.rec_duration_s = 120
+        self.rec_filter = "045,118,129,186,238,292,370,389,399,3C2,3EE,3FD,47D,47F,488,5D9"
+        self.rec_dropped = 0
+        self.rec_elapsed_s = 0.0
         self.gateway_enabled = True
         self.gateway_nat = True
         self.gateway_mode = 1
@@ -184,6 +194,28 @@ class SimState:
             "strobeCont": False,
             "dndVolume": self.dnd_volume,
             "dndSpeed": self.dnd_speed,
+            "wheelDndDiag": {
+                "enabled": self.dnd_volume,
+                "armed": self.dnd_volume and self.defense_enabled and self.hw == 0,
+                "autoDisarmed": False,
+                "native3c2Seen": True,
+                "nativeMux1IdleSeen": True,
+                "native3c2AgeMs": 38,
+                "nativeRejected": 0,
+                "apActive": self.ad,
+                "handsState": 2,
+                "warningActive": False,
+                "warningEpisodes": 0,
+                "escalatedObservations": 0,
+                "triggerCount": 0,
+                "actionsThisEpisode": 0,
+                "consecutiveTxFailures": 0,
+                "cooldownRemainingMs": 0,
+                "baseFrameMode": "native_mux1_idle",
+                "sequenceState": "idle",
+                "sequenceStep": 0,
+                "blockedReason": "warning_clear" if self.dnd_volume else "disabled",
+            },
             "AD": self.ad,
             "eprn": self.enable_print,
             "ia": self.injection,
@@ -220,6 +252,35 @@ class SimState:
                 {"rx": self.rx // 4, "tx": self.tx // 4, "err": 0},
                 {"rx": self.rx // 5, "tx": self.tx // 5, "err": 0},
             ],
+            "legacySmartSpeed": {
+                "configured": True,
+                "legacyHandler": True,
+                "runtimeActive": True,
+                "mode": self.speed_strategy,
+                "strategy": self.speed_strategy,
+                "limitSource": "0x2F8",
+                "limitRaw": 16,
+                "limitKph": 80,
+                "rawTargetKph": 104,
+                "smoothedTargetKph": 101,
+                "offsetKph": 21,
+                "offsetPct": 30,
+                "smoothing": self.legacy_speed_smooth,
+                "smoothDown": self.legacy_speed_smooth,
+                "smoothRateKphS": self.legacy_speed_rate,
+                "busMode": self.legacy_speed_bus,
+                "targetBus": "CAN2" if self.legacy_speed_bus == "Auto" else self.legacy_speed_bus,
+                "busAmbiguous": False,
+                "ambiguityCount": 0,
+                "rx2F8": self.rx // 4,
+                "rx3EE": self.rx // 5,
+                "txOk": self.tx,
+                "txFail": self.txerr,
+                "offsetOnlyTxOk": self.tx,
+                "blockedReason": "none",
+                "last2F8AgeMs": 42,
+                "lastFusedAgeMs": 81,
+            },
         }
 
     def frames(self) -> dict[str, Any]:
@@ -388,6 +449,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_text("", "image/x-icon")
         elif path == "/status":
             self.send_obj(STATE.status())
+        elif path == "/config":
+            self.send_obj({"fsdRuntime": {"legacyOffset": 0, "overrideSpeedLimit": False}})
+        elif path == "/plugins/status":
+            self.send_obj({"installed": [], "replayCount": 1})
         elif path == "/frames":
             self.send_obj(STATE.frames())
         elif path == "/legacy_fsd_config":
@@ -410,6 +475,18 @@ class Handler(BaseHTTPRequestHandler):
             )
         elif path == "/speed_custom":
             self.send_obj({"ok": True, **STATE.speed_custom})
+        elif path == "/legacy_speed_config":
+            self.send_obj(
+                {
+                    "ok": True,
+                    "bus": STATE.legacy_speed_bus,
+                    "smooth_down": STATE.legacy_speed_smooth,
+                    "smooth_rate_kph_s": STATE.legacy_speed_rate,
+                    "source_priority": ["0x2F8", "0x399"],
+                    "gps_fresh_ms": 3000,
+                    "fused_fresh_ms": 1000,
+                }
+            )
         elif path == "/power_mgmt":
             self.send_obj({"autoShutdown": STATE.auto_shutdown, "wifiAutoOff": STATE.wifi_auto_off})
         elif path == "/dns_rules":
@@ -467,8 +544,26 @@ class Handler(BaseHTTPRequestHandler):
                     "enabled": STATE.defense_enabled,
                     "bionic_steering": STATE.bionic_steering,
                     "dnd_volume": STATE.dnd_volume,
+                    "legacy_scroll_dnd": STATE.dnd_volume,
                     "dnd_speed": STATE.dnd_speed,
                     "ap_eap_compatible": STATE.ap_eap_compatible,
+                    "abort_guard": STATE.abort_guard,
+                    "minimal_inject": STATE.minimal_inject,
+                    "legacyInjectionSafety": {
+                        "abortGuard": {
+                            "enabled": STATE.abort_guard,
+                            "latched": False,
+                            "lastApState": 0,
+                            "lastAbortState": 0,
+                            "blocks": 0,
+                        },
+                        "minimalInject": {
+                            "enabled": STATE.minimal_inject,
+                            "apEngaged": False,
+                            "successfulMux0": 0,
+                            "quota": 5,
+                        },
+                    },
                 }
             )
         elif path == "/fog_light":
@@ -497,9 +592,100 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/log":
             self.send_obj({"seq": STATE.log_seq, "lines": STATE.log_lines[-20:]})
         elif path == "/rec_status":
-            self.send_obj({"active": STATE.rec_active, "count": STATE.rec_count, "cap": 512, "saved": STATE.rec_saved})
+            elapsed = max(0.0, time.monotonic() - STATE.rec_started) if STATE.rec_active and STATE.rec_started else STATE.rec_elapsed_s
+            if STATE.rec_active:
+                STATE.rec_count = int(elapsed * 42)
+                if elapsed >= STATE.rec_duration_s:
+                    STATE.rec_active = False
+                    STATE.rec_saved = True
+                    STATE.rec_elapsed_s = float(STATE.rec_duration_s)
+                    elapsed = STATE.rec_elapsed_s
+            self.send_obj({
+                "active": STATE.rec_active,
+                "finalizing": False,
+                "count": STATE.rec_count,
+                "queued": STATE.rec_count,
+                "dropped": STATE.rec_dropped,
+                "file_bytes": STATE.rec_count * 19,
+                "max_file_bytes": 7_000_000,
+                "elapsed_ms": int(elapsed * 1000),
+                "duration_ms": STATE.rec_duration_s * 1000,
+                "saved": STATE.rec_saved,
+                "storage_full": False,
+                "stop_reason": "time_limit" if STATE.rec_saved and elapsed >= STATE.rec_duration_s else ("manual" if STATE.rec_saved else "none"),
+                "filter": len([x for x in STATE.rec_filter.split(",") if x.strip()]),
+                "can2_rx_3c2": STATE.rec_count // 20,
+                "can2_rx_3c2_mux1": STATE.rec_count // 24,
+                "can2_rx_3c2_mux1_idle": STATE.rec_count // 30,
+                "can2_rx_3c2_volume_up": 1 if STATE.rec_count else 0,
+                "can2_rx_3c2_volume_down": 1 if STATE.rec_count else 0,
+                "can2_rx_3c2_speed_nonzero": 0,
+                "can2_tx_3c2": 0,
+                "can2_tx_error_3c2": 0,
+                "can1_rx_3c2": 0,
+                "can1_tx_3c2": 0,
+                "can1_tx_error_3c2": 0,
+                "can1_rx_399": STATE.rec_count // 10,
+                "can1_rx_045": STATE.rec_count // 18,
+                "can1_tx_045": 0,
+                "can1_tx_error_045": 0,
+                "can2_rx_045": STATE.rec_count // 22,
+                "can2_tx_045": 0,
+                "can2_tx_error_045": 0,
+                "wheel_045_lever_up": 1 if STATE.rec_count else 0,
+                "wheel_045_lever_down": 1 if STATE.rec_count else 0,
+                "wheel_045_lever_forward": 0,
+                "wheel_045_lever_back": 0,
+                "wheel_045_cond_up": 0,
+                "wheel_045_cond_down": 0,
+                "wheel_045_switch_active": 0,
+                "wheel_045_last_bus": 1,
+                "wheel_045_last_counter": 3,
+                "wheel_045_last_crc": 0xA5,
+            })
         elif path == "/rec_download":
             self.send_text("ts,id,dlc,data\n0,1021,8,00 00 00 3c 20 00 00 00\n", "text/csv")
+        elif path == "/rec_meta":
+            self.send_obj({
+                "version": VERSION,
+                "duration_ms": STATE.rec_duration_s * 1000,
+                "elapsed_ms": int(STATE.rec_elapsed_s * 1000),
+                "frames": STATE.rec_count,
+                "dropped": STATE.rec_dropped,
+                "gear_gate_required": False,
+                "ap_context_status_min": 3,
+                "ap_context_status_max": 6,
+                "filter_ids": [x for x in STATE.rec_filter.split(",") if x],
+                "wheel_3c2": {
+                    "can2_native_visible": STATE.rec_count > 0,
+                    "can2_mux1_visible": STATE.rec_count > 0,
+                    "can2_mux1_idle_visible": STATE.rec_count > 0,
+                    "can2_rx": STATE.rec_count // 20,
+                    "can2_mux1": STATE.rec_count // 24,
+                    "can2_mux1_idle": STATE.rec_count // 30,
+                    "volume_up": 1 if STATE.rec_count else 0,
+                    "volume_down": 1 if STATE.rec_count else 0,
+                    "speed_nonzero": 0,
+                    "tx_ok": 0,
+                    "tx_error": 0,
+                    "can1_rx": 0,
+                    "can1_399_rx": STATE.rec_count // 10,
+                },
+                "wheel_045": {
+                    "receive_only": True,
+                    "can1_rx": STATE.rec_count // 18,
+                    "can2_rx": STATE.rec_count // 22,
+                    "can1_tx": 0,
+                    "can2_tx": 0,
+                    "lever_up": 1 if STATE.rec_count else 0,
+                    "lever_down": 1 if STATE.rec_count else 0,
+                    "last_bus": 1,
+                    "last_counter": 3,
+                    "last_crc": 0xA5,
+                },
+                "nag_start": {"valid": True, "state": "armed", "ap_state": 6, "tx370": 0},
+                "nag_end": {"valid": STATE.rec_saved, "state": "support", "ap_state": 6, "tx370": 42},
+            })
         elif path == "/ap_status":
             self.send_obj(
                 {
@@ -733,6 +919,21 @@ class Handler(BaseHTTPRequestHandler):
                 if key in form:
                     STATE.speed_custom[key] = int(form[key] or 0)
             self.send_obj({"ok": True, **STATE.speed_custom})
+        elif path == "/legacy_speed_config":
+            if "bus" in form and str(form["bus"]) in ("Auto", "CAN1", "CAN2"):
+                STATE.legacy_speed_bus = str(form["bus"])
+            if "smooth_down" in form:
+                STATE.legacy_speed_smooth = self.form_bool(form["smooth_down"])
+            if "smooth_rate_kph_s" in form:
+                STATE.legacy_speed_rate = max(1, min(20, int(form["smooth_rate_kph_s"] or 5)))
+            self.send_obj(
+                {
+                    "ok": True,
+                    "bus": STATE.legacy_speed_bus,
+                    "smooth_down": STATE.legacy_speed_smooth,
+                    "smooth_rate_kph_s": STATE.legacy_speed_rate,
+                }
+            )
         elif path == "/power_mgmt":
             if "autoShutdown" in form:
                 STATE.auto_shutdown = self.form_bool(form["autoShutdown"])
@@ -785,10 +986,16 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.bionic_steering = self.form_bool(form["bionic_steering"])
             if "dnd_volume" in form:
                 STATE.dnd_volume = self.form_bool(form["dnd_volume"])
+            if "legacy_scroll_dnd" in form:
+                STATE.dnd_volume = self.form_bool(form["legacy_scroll_dnd"])
             if "dnd_speed" in form:
                 STATE.dnd_speed = self.form_bool(form["dnd_speed"])
             if "ap_eap_compatible" in form:
                 STATE.ap_eap_compatible = self.form_bool(form["ap_eap_compatible"])
+            if "abort_guard" in form:
+                STATE.abort_guard = self.form_bool(form["abort_guard"])
+            if "minimal_inject" in form:
+                STATE.minimal_inject = self.form_bool(form["minimal_inject"])
             self.send_obj({"ok": True})
         elif path == "/fog_light":
             if "fogStrategy" in form:
@@ -815,12 +1022,24 @@ class Handler(BaseHTTPRequestHandler):
             STATE.rec_active = True
             STATE.rec_saved = False
             STATE.rec_count = 0
-            self.send_obj({"ok": True})
+            STATE.rec_dropped = 0
+            STATE.rec_started = time.monotonic()
+            STATE.rec_elapsed_s = 0.0
+            STATE.rec_duration_s = int(form.get("duration_s", "120"))
+            STATE.rec_filter = form.get("ids", "045,118,129,186,238,292,370,389,399,3C2,3EE,3FD,47D,47F,488,5D9")
+            if STATE.rec_duration_s not in (60, 90, 120):
+                STATE.rec_active = False
+                self.send_obj({"ok": False, "error": "duration_s must be 60, 90, or 120"}, 400)
+                return
+            self.send_obj({"ok": True, "duration_s": STATE.rec_duration_s})
         elif path == "/rec_stop":
-            STATE.rec_active = False
-            STATE.rec_saved = True
-            STATE.rec_count = 24
-            self.send_obj({"ok": True})
+            if STATE.rec_active:
+                elapsed = max(0.0, time.monotonic() - STATE.rec_started)
+                STATE.rec_elapsed_s = min(elapsed, float(STATE.rec_duration_s))
+                STATE.rec_count = max(STATE.rec_count, int(STATE.rec_elapsed_s * 42))
+                STATE.rec_active = False
+                STATE.rec_saved = True
+            self.send_obj({"ok": True, "finalizing": False})
         elif path == "/ap_config":
             if form.get("ssid"):
                 STATE.ap_ssid = form["ssid"][:32]

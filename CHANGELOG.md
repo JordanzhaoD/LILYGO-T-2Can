@@ -1,21 +1,502 @@
 # Changelog
 
+## [4.3.0-beta.27] - 2026-08-04
+
+### Added
+
+- Ported **Soft Engage** (upstream flipper-tesla-fsd v2.16-beta.10, #108
+  sibling) to the Legacy `0x3EE mux0` activation gate. With the settle/edge
+  verdict already allowing the frame, it holds `bit46` off until the steering
+  wheel nears centre (`|angle| <= ±5.0°` and `steerValidity == 0`), or a 5 s
+  long-curve timeout elapses so the driver is never stranded. Once released per
+  engagement episode it stops gating. Implemented as the pure, native-tested
+  `dashSoftEngageRelease()` helper (in `can_helpers.h`) wired into
+  `dashLegacyFsdActivationAllowed()` after the steer-jerk defense verdict, using
+  the existing `apRestoreState` steering parse. Disabled by default
+  (zero-regression); the single-CAN firmware defaults it on, dual-CAN keeps it
+  opt-in like the other experimental gates. Exposed via the `soft_engage`
+  toggle (NVS `def_se`, `/defense_config`, dashboard switch) with 7 new
+  `dashSoftEngageRelease` unit tests.
+
+## [4.3.0-beta.26] - 2026-08-04
+
+### Added
+
+- Ported the `DashLegacySteerDefense` deep module from the single-CAN firmware,
+  aligning Legacy `0x3EE mux0` activation with upstream flipper-tesla-fsd #108
+  (v2.16-beta.16/.17/.19 parity; the core Abort Guard mechanism is unchanged
+  through beta.24, whose later releases only touched adjacent HW detection and
+  diagnostics). One module now owns engagement-edge detection, Instant Engage,
+  the Minimal Inject burst, and the settle fallback on the Legacy mux0 path. It
+  replaces the prior level-triggered `DashMinimalInject` quota on mux0; the base
+  module is retained but no longer gates Legacy mux0. All controls default off,
+  so continuous activation behavior is unchanged until explicitly armed.
+- Added Legacy-only experimental **Instant Engage** (`ap_first_edge`), disabled
+  by default: injects at the real AP engagement edge (state `2→3`), bypassing
+  the settle wait so activation lands away from the later `6→8/9` abort edge.
+- The **Minimal Inject** toggle now drives the steer defense edge burst: at
+  each engagement edge it admits only five `0x3EE mux0` activation frames, then
+  hard-stops until the next disengage→re-engage. Toggling it on mid-episode does
+  not open the burst window (beta.17 edge semantics).
+- Exposed `steerDefense` runtime diagnostics (engagement edges, Instant fires,
+  Minimal burst budget/used/blocks) under `/defense_config` and a dashboard
+  "Steer Defense" status tile. Ported the `test_native_legacy_steer_defense`
+  unit suite (15 cases) covering edge detection, Instant one-shot, the 5-frame
+  hard stop, mid-episode toggle, and uint32 wrap.
+
+### Changed
+
+- Abort Guard latch release threshold aligned to upstream `DAS_APSTATE_ENGAGED`
+  (beta.15 parity): the latch now clears when AP drops below state `3`
+  (disengaged `0/1` or available `2`), matching the engagement threshold used by
+  AP-First and the steer defense. Previously it cleared only below state `2`.
+
+## [4.3.0-beta.25] - 2026-07-30
+
+### Added
+
+- Added Legacy-only experimental `Abort Guard`, disabled by default. AP state
+  `8/9` latches all Legacy writes (`0x3EE mux0/mux1`, `0x438`, `0x370`, and
+  left-wheel DND) until a clean AP exit reports state `<2`.
+- Added Legacy-only experimental `Minimal Inject`, disabled by default. Each
+  `0x399` AP engagement permits exactly five successful `0x3EE mux0`
+  activation writes, then blocks only further activation writes for that
+  engagement. Source observation and speed-only output remain available.
+- Added persisted `/defense_config` controls, dashboard toggles, and runtime
+  diagnostics for latch state, AP state, blocked paths, quota, successful TX,
+  and engagement count.
+
+## [4.3.0-beta.24] - 2026-07-30
+
+### Fixed
+
+- Decoupled Legacy smart speed offset from the shared HW3/HW4 three-mode
+  strategy. Legacy now persists and applies its native four modes: `off`,
+  `manual`, `auto`, and `custom`.
+- Added independent Legacy manual offset (`0..33 km/h`) and four custom bands
+  (`0..63%`). The values drive only the verified `0x3EE mux0` offset path;
+  `0x2F8` remains read-only limit telemetry and `Auto` still falls back to
+  fresh `0x399` fused limit data.
+
+## [4.3.0-beta.23] - 2026-07-29
+
+### Fixed
+
+- Restored the persisted Legacy AP settle delay. With AP gate enabled, Legacy
+  now waits for `0x399` AP state `3..6` to remain continuous for the configured
+  `0/1000/2000/3000 ms` before `0x3EE mux0` activation or speed writes proceed.
+- AP exit, CAN disable, OTA guard, or gate disable clears the timer. `/status`
+  now reports `settling`, the elapsed `apStableMs`, configured `requiredStableMs`,
+  and `legacy_ap_state_delay_gate` while the delay is in effect.
+
+## [4.3.0-beta.22] - 2026-07-29
+
+### Fixed
+
+- Fixed the Legacy AP injection gate. With the gate enabled, `0x3EE mux0`
+  injection now waits for Legacy `0x399` AP state `3..6`; it no longer treats
+  the generic `Parked` or `Summoning` state as a Legacy AP admission.
+- Unified the Legacy activation callback, injection/runtime status, plugin
+  context, and diagnostics around that same strict AP decision. `/status`
+  reports `waiting_ap`, `legacy_ap_state_gate`, and `ApGate` while blocked.
+
+### Compatibility
+
+- With AP gate disabled, the established Legacy continuous activation path is
+  unchanged. Enabling the experimental gate is fail-closed: it cannot bootstrap
+  an initial AP state by sending bit46 before `0x399` reports AP active.
+
+## [4.3.0-beta.21] - 2026-07-27
+
+### Fixed
+
+- Corrected the beta.20 Legacy Scroll DND volume-up side effect. Vehicle
+  captures show that a warning normally needs two positive `0x045` actions:
+  the first changes media volume and the second clears the warning.
+- Added result-gated balancing. If the warning is still active when the next
+  native idle arrives, beta.21 sends one inverse action to neutralize that
+  unsuccessful positive attempt before retrying. If `0x399` clears first, the
+  inverse is cancelled because the positive action was consumed by the prompt.
+- Every inverse action follows a fresh native CAN1 `0x045` rolling counter and
+  recalculates CRC-8/J1850. Driver input or any existing safety gate aborts it.
+
+### Diagnostics
+
+- Added per-episode positive count, pending compensation count, and completed
+  volume-neutral episode count to the existing Scroll DND diagnostics.
+
+### Preserved
+
+- Legacy `0x3EE` activation, smart speed offset, `0x370`, recorder, network,
+  NVS, and mobile navigation paths are unchanged.
+
+## [4.3.0-beta.20] - 2026-07-27
+
+### Fixed
+
+- Removed the inverse `-1` left-wheel action after a successful Legacy NAG
+  dismissal. Vehicle capture proved the `+1` action cleared `0x399` hands-on
+  state before the inverse action, so the inverse was applied to audio as one
+  volume-down step.
+- Changed the `0x045` runtime to send one positive action, wait for a native
+  idle/counter release and the warning result, then stop immediately when the
+  warning clears. A still-active warning may retry after 800 ms, up to three
+  positive attempts per episode.
+
+### Preserved
+
+- Retained the `legacy_scroll_dnd` NVS/API contract and deprecated diagnostic
+  keys `negativeTx` and `balancedPairs`; they remain readable but no longer
+  increase.
+- Legacy `0x3EE` activation, smart speed offset, `0x370`, recorder, network,
+  NVS, and mobile navigation paths are unchanged.
+
+## [4.3.0-beta.19] - 2026-07-27
+
+### Added
+
+- Added a dedicated Legacy Model X left-scroll DND engine using CAN1 `0x045`
+  and the vehicle-confirmed `0x399` hands-on warning trigger.
+- Added native-frame-derived `+1 -> native idle -> -1 -> native idle` balancing,
+  CRC-8/J1850 generation, rolling-counter following, expected-duplicate
+  classification, Own-Echo rejection, and CAN2 `0x292` mirror diagnostics.
+- Added runtime diagnostics for source freshness, generated counter/CRC,
+  positive/negative TX, balanced pairs, retries, physical input, warning-clear
+  latency, counter conflicts, TX failures, and runtime auto-disarm.
+
+### Changed
+
+- Legacy Scroll DND now transmits only CAN1 `0x045`; CAN2 `0x292` and `0x238`
+  remain observation-only and the newer `0x3C2` implementation is isolated.
+- Removed the Legacy Scroll DND dependency on the defense aggregate switch,
+  slew-rate setting, D gear, and CAN2 online state. The persisted
+  `legacy_scroll_dnd` switch is the independent feature control.
+- Removed the obsolete Legacy speed-scroll `0x3C2` UI control while retaining
+  its stored API field for backward compatibility.
+
+### Safety
+
+- Generated frames preserve all native fields except the left tick nibble,
+  rolling counter, and CRC. Physical wheel input, OTA, AP exit, stale source,
+  counter conflict, TWAI failure, or mode change aborts the active sequence.
+- At most three balanced pairs are emitted in one uninterrupted warning
+  episode; two consecutive TX failures auto-disarm runtime transmission.
+- Existing Legacy activation, smart speed offset, and `0x370` paths are not
+  modified by this release.
+
+## [4.3.0-beta.18] - 2026-07-27
+
+### Added
+
+- Added receive-only Legacy Model S/X steering-wheel observation for
+  `STW_ACTN_RQ`, prioritizing chassis/BFT ID `0x045` and also recording the
+  gateway aliases `0x238` (powertrain) and `0x292` (body).
+- Added per-bus `0x045` RX/TX/error counters and decoded observation counters
+  for `StW_Lvr_Stat`, `StW_Cond_Psd`, switch activity, rolling counter, and CRC.
+- Added a read-only CSV analyzer and an on-car capture procedure for mapping the
+  2019 Model X volume wheel before any transmit implementation is considered.
+
+### Safety
+
+- This release does not transmit `0x045`, `0x238`, or `0x292`. Existing
+  `0x3C2` Scroll DND remains fail-closed and is not remapped to a Legacy ID.
+
+## [4.3.0-beta.17] - 2026-07-26
+
+### Fixed
+
+- Removed the circular Legacy activation dependency that required `APActive`
+  and a settle delay before allowing `0x3EE mux0` bit46 injection. Bit46 is
+  itself required to establish the AP/FSD state, which caused intermittent
+  activation failures until stale vehicle state or a module restart changed
+  the gate result.
+- Aligned Legacy activation with `tesla-fsd-controller`: after the explicit
+  force/UI trigger, only the CAN master, OTA safety guard, and existing plugin
+  ownership check gate the built-in `0x3EE` send path.
+- Kept the AP injection gate behavior for HW3/HW4 and auxiliary paths.
+
+### Diagnostics
+
+- Added `activationGateMode=explicit_trigger_can_ota` and
+  `legacyIgnoresApGate=true`; Legacy now reports `armed` instead of incorrectly
+  displaying `waiting_ap` before the first native `0x3EE mux0` source frame.
+
+## [4.3.0-beta.16] - 2026-07-26
+
+### Changed
+
+- Replaced the directionless beta.7 random walk with a one-sided Mode-C model driven by receive-only `0x488 DAS_steeringControl`.
+- Applies torque opposite the valid type-1 steering request, retains the last direction through the center deadband, and fails closed when `0x488` is missing, invalid, or older than 250 ms.
+- Delays state-2 support for 2 seconds, delays states 3-5 escalation for 1 second, then uses bounded 0.8-1.8 Nm support or a 2.1 Nm ramp with 0.2 Nm/frame output slew.
+
+### Preserved
+
+- Keeps raw 2050 as zero, preserves native `0x370` byte 4, derives counter+1 and additive checksum from each native frame, and retains Own-Echo, counter-collision, and TX-failure protection.
+- Does not inject `0x488`, write `0x399`, depend on unavailable `0x129`, or change Legacy FSD activation and smart speed-offset paths.
+
+### Diagnostics
+
+- Added `0x488` RX count, control type, decoded steering angle, source bus, age, selected episode direction, direction changes, and target torque to the Legacy NAG API.
+- Vehicle effectiveness remains unverified pending beta.16 real-vehicle testing.
+
+## [4.3.0-beta.15] - 2026-07-26
+
+### Changed
+
+- Replaced the Legacy `0x370` deterministic alternating waveform with the upstream `v2.16-beta.7` EPAS-faithful mean-reverting random walk.
+- Uses raw 2050 as zero, a per-native-frame xorshift step of +/-40 raw units, 1/16 mean reversion, and the upstream asymmetric raw clamps 1780-2500 (-2.7 to +4.5 Nm).
+- Removed steering-angle direction dependency; the random walk has no fixed polarity and does not require `0x129`.
+- Stops output for DAS hands states 0 and 8 and skips native `handsOnLevel=1`, matching the upstream beta.7 admission behavior.
+
+### Preserved
+
+- Preserves the complete native `0x370` byte 4, including `handsOnLevel`.
+- Continues to derive output from the native frame with counter+1, Tesla additive checksum, learned same-source bus, Own-Echo fingerprinting, collision degradation, and TX-failure auto-disarm.
+- Existing Legacy FSD activation, smart speed offset, Scroll DND, UI, API, and NVS contracts are unchanged.
+
+### Diagnostics
+
+- Added `torqueModel=beta7_mean_reverting_random_walk`, `directionSource=none`, and `randomWalkSteps` to Legacy NAG diagnostics.
+
+## [4.3.0-beta.14] - 2026-07-25
+
+### Fixed
+
+- Fixed `recorder queue allocation failed` on ESP32-S3 after Wi-Fi/WebUI startup.
+- Allocated the 2,048-record queue payload from PSRAM first, with internal-heap fallback, and kept the FreeRTOS queue control block static.
+- Added `queue_psram`, `queue_depth`, and heap diagnostics to `/rec_status` and allocation errors.
+
+### Validation
+
+- Recording remains queue-backed and non-blocking for CAN producers; the queue is initialized once and is not reallocated on every recording session.
+
+## [4.3.0-beta.13] - 2026-07-25
+
+### Fixed
+
+- Aligned Legacy Continuous Absolute with upstream v2.16-beta.10 EPAS-faithful evidence by preserving native `0x370` byte 4, including `handsOnLevel`, instead of forcing level 1.
+- Retained the vehicle-established 2050 raw zero point, existing +/-1.8 Nm limit, follower scheduling, checksum, and rolling-counter behavior.
+
+### Diagnostics
+
+- Added `0x129` steering angle and `0x5D9` hands-on-reason candidate traffic to the default 120-second recorder profile for direction and warning-cause correlation.
+
+## [4.3.0-beta.12] - 2026-07-25
+
+### Fixed
+
+- Classified valid same-counter native `0x370` frames arriving 20-100 ms after TX as expected vehicle followers instead of Own-Echo or immediate collisions.
+- Allowed expected native followers to drive the next rolling-counter overlay, restoring continuous Legacy torque output instead of degrading after 3-13 frames.
+- Retained exact full-payload Own-Echo suppression and three-strike degradation for immediate same-counter conflicts or invalid-checksum followers.
+
+## [4.3.0-beta.11] - 2026-07-25
+
+### Added
+
+- Admitted receive-only `0x3C2` evidence through the CAN1 TWAI filter in Legacy, HW3, and HW4 modes while retaining CAN2 MCP2515 receive-all monitoring.
+- Added independent CAN1/CAN2 `0x3C2` RX, TX, and TX-error recorder counters to the API and dashboard.
+
+## [4.3.0-beta.10] - 2026-07-25
+
+### Fixed
+
+- Decoupled the FSD defense master, Legacy 0x370 NAG, and HW3 slew limiter persisted controls.
+- Replaced counter-only 0x370 own-echo detection with bus, DLC, counter, and full-payload fingerprints.
+- Added explicit same-counter/different-payload collision diagnostics and automatic degradation after three collisions.
+- Simplified the Legacy 0x370 runtime gates to CAN, Legacy handler, AP context, native frame, bus lock, and TX health.
+
+## [4.3.0-beta.9] - 2026-07-25
+
+- Aligned Legacy wheel DND with the reference firmware's `right_scroll` action model: `0x399` warning transitions now select the configured wheel action instead of starting speed DND on the UI switch edge.
+- Added the native `0x3C2 mux1` reactive right-scroll sequence `01 -> 00 -> 3F -> 00` at 100 ms intervals; when both wheel actions are enabled, right-scroll is selected explicitly and reported in diagnostics.
+- Added `dndActionType` to `wheelDndDiag` and kept the fail-closed native-frame, CAN2, OTA, cooldown, TX-failure, and auto-disarm gates. No synthetic `0x3C2` template or fixed-frame fallback was added.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-- Added EPAS-faithful unified steering nag suppression (experimental, **default OFF**). Echoes CAN 0x370 (EPAS3P_sysStatus, ~100 Hz) with counter+1 and a mean-reverting ~0 Nm torque so the car infers hands-on rather than reading a forced flag. One 0x370 path covers legacy/HW3/HW4; the per-generation DAS hands-on gate (0x399 legacy/HW3, 0x39B Highland/HW3/HW4) only decides WHEN to inject. Enable via `/defense_config?epas_nag=1`; state reflected at `/status.epasNag`; persisted to NVS key `def_epnag`. The default-on `bit19` nag baseline is preserved — this engine takes over only when `epasNag` is enabled (D7).
-  - ⚠️ **Head real-car validation item:** the counter+1 echo must outrun the genuine frame — on the bench first confirm the board can stably receive/transmit `0x370` and that the echo lands before the real frame.
-  - **First vehicle connection:** keep `epasNag` OFF; confirm `/status` is healthy and the board receives `0x370` before manually enabling the faithful path.
-  - Known limitation: HW4 Juniper (Bus6) is partially supported.
+## [4.3.0-beta.8] - 2026-07-25
+
+### Fixed
+
+- Process Legacy Scroll DND `0x399` context from its native source controller instead of excluding the MCP2515/PARTY channel. Vehicle captures 77-79 contain all `0x399` traffic on that logical channel, so the previous gate left diagnostics at `ap_inactive` despite AP state 6 and hands-warning states 3/4 being present.
+- Added `0x399` source, age, raw AP state and hands state to `wheelDndDiag` and the dashboard.
+
+### Safety
+
+- Captures 77-79 contain no native `0x3C2` on either recorded logical bus across 360 seconds. Synthetic `0x3C2` fallback remains disabled; Scroll DND fails closed with `no_native_mux1` until the second channel exposes a verified native mux-1 frame.
+
+## [4.3.0-beta.7] - 2026-07-25
+
+### Fixed
+
+- Restored source-driver-following for Legacy `0x3EE`: whichever controller receives the native frame handles and retransmits it through that same controller, matching `tesla-fsd-controller` and the last vehicle-working beta baseline.
+- Removed the beta.6 static TWAI/CAN1 rejection that caused native `0x3EE` RX to increase while all Legacy activation TX remained zero on harnesses where physical CAN1 reaches the MCP2515 controller.
+- Preserved secondary RX recorder single-write behavior through the handler `onFrame` callback.
+
+### Reliability
+
+- Retained bounded MCP2515 recovery after five consecutive TX failures or bus-off, including restoration of bitrate, Normal mode, filters or receive-all mode.
+- Legacy payload, mux handling, activation bit 46, profile writes, AP gate and speed-offset calculations are unchanged.
+
+## [4.3.0-beta.6] - 2026-07-24
+
+### Added
+
+- Added CAN2 native `0x3C2` capture diagnostics for total RX, mux-1, mux-1 idle, manual volume up/down, unexpected speed-wheel activity, injected TX, failed TX, and CAN1 sightings.
+- Added the active recorder filter and a `wheel_3c2` evidence object to the recorder metadata export.
+- Added live `0x3C2` evidence counters to the CAN recorder dashboard.
+- Added CAN2 MCP2515 recovery diagnostics for recovery count, consecutive TX failures, and rejected mirrored `0x3EE` frames.
+
+### Changed
+
+- Expanded the default 120-second Legacy DND capture profile to `118,186,370,389,399,3C2,3EE,3FD,47D,47F,488` so native wheel traffic, warning context, camera-warning matrices, and steering-control context are retained together.
+- Bound Legacy `0x3EE` to the internal TWAI channel. Vehicle testing showed this mapping was incorrect for the installed dual-CAN harness; this build is revoked and replaced by beta.7.
+- Added bounded CAN2 MCP2515 recovery after five consecutive TX failures or bus-off, preserving the receive-all recorder mode after reset.
+
+### Safety
+
+- Recorder changes are observation-only. They do not arm Scroll DND, alter `0x3C2`, or change any CAN transmission gate.
+- A CAN2 RX count proves frame visibility only. Vehicle acceptance still requires paired baseline/action captures and an observable vehicle response.
+
+## [4.3.0-beta.5] - 2026-07-24
+
+### Added
+
+- Added an independent Legacy Scroll DND path driven by CAN1 `0x399` hands-warning transitions and a fresh native CAN2 `0x3C2` mux-1 idle frame.
+- Added warning episode, hands state, native-frame age, action count, cooldown, TX failure, auto-disarm, and block-reason diagnostics to `wheelDndDiag`.
+- Added `legacy_scroll_dnd` as an explicit `/defense_config` alias while preserving the existing `dnd_volume` API and `def_dv` NVS key.
+
+### Changed
+
+- Changed the reactive wheel sequence to `01 -> 00 -> 3F -> 00` at 100 ms intervals and limited it to three actions per warning episode with a two-second cooldown.
+- Reactive Scroll DND now changes only `0x3C2 data[2]`; it preserves the native counter/checksum bytes and never starts the speed-wheel path.
+- The dashboard switch now waits for a real `0x399` warning instead of transmitting immediately when enabled.
+
+### Fixed
+
+- Fixed the dual-CAN mobile More menu remaining open after navigation to FSD Defense.
+- Removed misleading UI coupling between ISA sound suppression and wheel/camera behavior.
+
+### Safety
+
+- Legacy Scroll DND remains default-off and requires CAN write, defense master, effective Legacy mode, active AP state 3 through 6, CAN2 availability, no vehicle OTA, and a native idle `0x3C2` mux-1 frame no older than 1000 ms.
+- Hands-warning states 9 and 10 are observation-only. Two consecutive transmission failures automatically disarm the feature until the user toggles it off and on.
+- Scroll DND does not modify cabin-camera fields, `0x3FD`, or continuous `0x370` NAG behavior. Vehicle effectiveness remains pending controlled validation.
+
+## [4.3.0-beta.4] - 2026-07-24
+
+### Fixed
+
+- Fixed Legacy NAG being permanently blocked when real `0x399` frames report AP status 6. Legacy now consistently treats statuses 3 through 6 as active context without changing HW3/HW4 AP semantics.
+- Removed the Legacy NAG D-gear gate after captures 68/69 proved the current `0x118` gear bit definition is incompatible with the target vehicle and causes rapidly changing false gear values.
+
+### Added
+
+- Added a native regression using the captured status-6/no-gear scenario and requiring a same-bus, counter+1, checksummed `0x370` TX frame.
+- Added `gearGateRequired=false` and Legacy AP context limits to the NAG runtime diagnostics.
+
+### Safety
+
+- Legacy NAG remains default-off and still requires CAN write, the defense master, Legacy mode, fresh `0x399` status 3..6 context, same-bus learning, a native `0x370` frame, accepted native hands level, and successful bounded transmission.
+- The D-gear gate is removed only from Legacy NAG. Lighting, fog, shifting, HW3/HW4, and other vehicle-write safety gates are unchanged.
+
+## [4.3.0-beta.3] - 2026-07-24
+
+### Added
+
+- Added a 120-second queue-backed CAN recorder that streams compact 19-byte records to SPIFFS from a low-priority writer task.
+- Added 60/90/120-second selection, editable hexadecimal CAN ID filtering, and a default Legacy NAG diagnostic filter (`118,186,370,389,399,3EE`).
+- Added recorder progress, written-frame, dropped-frame, file-size, storage-full, finalizing, and stop-reason diagnostics.
+- Added streamed binary-to-CSV download conversion so stopping a recording no longer serializes a large in-memory buffer.
+
+### Changed
+
+- Removed the 2000-frame RAM capture ceiling and synchronous `/rec_stop` CSV save path.
+- Recorder producers now use non-blocking queue writes and count dropped records instead of blocking CAN processing.
+
+### Safety
+
+- A 120-second capture is storage-guaranteed only with a suitably narrow filter. Unfiltered full dual-CAN traffic stops explicitly on storage exhaustion and reports `storage_full` rather than silently truncating.
+
+## [4.3.0-beta.2] - 2026-07-24
+
+### Added
+
+- Added the `Legacy Continuous Absolute v4` engine using raw torque zero point 2050, a hard `+/-1.8 Nm` limit, and hands-on level 1.
+- Added continuous same-source `0x370` responses on the learned native CAN bus, one bounded retry, and automatic runtime shutdown after three consecutive logical TX failures.
+- Added v4 state, coverage, silence, retry, torque, target-hands, and degradation diagnostics to `/status` and `/defense_config`.
+
+### Changed
+
+- Replaced the Legacy Reactive v2 burst algorithm with Continuous Absolute v4 while preserving the beta1 `bionic_steering` API, `def_bio` NVS key, dashboard switch, and page initialization logic.
+- Native `0x370` target hands levels 0 and 1 are accepted; levels 2 and 3 remain blocked.
+
+### Safety
+
+- Legacy NAG remains default-off and requires the existing CAN-write master, defense master, Legacy mode, fresh Drive/AP context, learned bus affinity, and a live native `0x370` frame.
+- This implementation is host-tested and firmware-build verified but remains pending controlled vehicle validation.
+
+## [4.3.0-beta.1] - 2026-07-23
+
+### Added
+
+- Added the Waveshare-verified Legacy smart speed-offset engine with fixed, automatic, and four-zone custom percentage strategies.
+- Added 3-second `0x2F8` map-limit priority with fresh `0x399` fused-limit fallback and default 5 km/h/s downward smoothing.
+- Added automatic CAN1/CAN2 `0x3EE mux0` route learning, mirrored-frame ambiguity blocking, manual bus override, and same-driver transmission.
+- Added `/legacy_speed_config`, `legacySmartSpeed` runtime diagnostics, NVS persistence, and desktop/mobile controls for route and smoothing.
+
+### Changed
+
+- Changed Legacy `0x2F8` handling to read-only telemetry; calculated offset requests now modify the native `0x3EE mux0` frame.
+- Mapped the existing `/speed_strategy` and `/speed_custom` contracts to Legacy without changing HW3/HW4 behavior.
+- Replaced hard-coded Legacy CAN-A/TWAI diagnostics with the actual frame bus and corresponding dual-CAN driver labels.
+
+### Safety
+
+- Legacy smart speed fails closed on stale/unknown limits, route ambiguity, bus mismatch, disabled CAN write, OTA/AP gate rejection, plugin ownership, or an unchanged output frame.
+- Automatic routing requires three consistent native `0x3EE mux0` samples; mirrored frames require explicit CAN1/CAN2 selection.
+
+## [4.2.0-beta.1] - 2026-07-23
+
+### Added
+
+- Added user-verified Legacy Reactive NAG v2 as an optional Legacy subfeature, reusing the existing defense/NVS contract.
+- Added proactive and reactive `0x370` handling from real source frames with bounded torque adjustment, counter/checksum regeneration, and own-echo rejection.
+- Added automatic CAN1/CAN2 target-bus learning and same-driver transmission to prevent dual-bus duplicate injection.
+- Added `/status` and `/defense_config` Legacy NAG diagnostics for mode, selected bus, AP/hands-on state, block reason, RX/TX counts, failures, and frame ages.
+
+### Changed
+
+- Replaced the active `0x370` prohibition with positive runtime contracts after user confirmation on the target vehicle.
+- Renamed the dashboard control from experimental bionic steering to verified `Legacy NAG免打扰`, while preserving the `bionic_steering` API and `def_bio` NVS key.
+
+### Safety
+
+- Legacy NAG remains default-off and requires Legacy mode, CAN write, defense master, D gear, engaged AP state, fresh DAS context, a learned target bus, and a live native `0x370` frame.
+
+## [4.1.1] - 2026-07-23
+
+### Added
+
 - Added `waveshare_single_can_standalone` profile for Waveshare ESP32-S3-RS485-CAN single-CAN deployments.
 - Added Dashboard capabilities for single-CAN UI/API pruning: CAN2, Bus2, Service Mode, Stalk/highbeam, and lighting-stunt surfaces are hidden or unregistered in standalone builds (controlled via the `DASH_SINGLE_CAN_STANDALONE` build flag).
 - Added AP Injection Gate safety parity with upstream `ev-open-can-tools v3.0.2-beta.3`: Legacy `0x3EE mux0` requires AP active for 2 seconds when the gate is enabled, and live unknown gear fails closed.
 - Added official JSON plugin manager for Waveshare Single CAN standalone: URL install, `.json` upload, paste JSON, disabled-by-default installs, per-plugin enable/priority/remove/detail, GTW2047 replay count, and SPIFFS persistence (`/plugins_state.json`) restored on boot.
 - Added AP Gate delayed-injection controls and AP injection state to the standalone driving status UI (desktop + mobile).
+
+### Changed
+
+- Refreshed the desktop and mobile dashboard with the cockpit design system while preserving the LILYGO dual-CAN controls and APIs.
+- Restored persisted FSD runtime controls through `GET /config`, including Legacy offset and speed-limit override state.
+- Extended Legacy vision-limit clearing, HW3 ISA chime suppression, and HW4 CAN 923 ISA speed-limit rewriting.
 - Cleaned standalone desktop and mobile UI to remove CAN2/T-2CAN/Auto Shift product surfaces while preserving dual-CAN builds.
+
+### Security
+
+- Physically removed the experimental EPAS-faithful NAG injection engine and its CAN `0x370` write path. Existing passive/handler behavior is retained; the removed engine must not be reintroduced without independent safety review and bench validation.
 
 ## [4.0.2] - 2026-05-31
 

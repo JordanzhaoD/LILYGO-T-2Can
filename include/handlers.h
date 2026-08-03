@@ -9,7 +9,11 @@
 #include "log_buffer.h"
 #include "dash_hw3_speed.h"
 #include "dash_legacy_speed.h"
+#include "dash_abort_guard.h"
+#include "dash_minimal_inject.h"
+#include "dash_legacy_steer_defense.h"
 #include "dash_bionic_steer.h"
+#include "dash_reactive_nag.h"
 #include "dash_fsd_diag.h"
 
 #ifndef DASH_FSD_252_COMPAT
@@ -40,12 +44,45 @@ static inline bool framePayloadChanged(const CanFrame &original, const CanFrame 
     return false;
 }
 
+struct LegacySpeedRuntimeDiag
+{
+    LegacySmartOffsetResult result{};
+    LegacySpeedLimitSource limitSource = LegacySpeedLimitSource::None;
+    bool gpsSpeedSeen = false;
+    bool gpsSpeedFresh = false;
+    uint32_t gpsSpeedPeriodMs = 0;
+    uint32_t gpsSpeedLastMs = 0;
+    uint32_t gpsSpeedCount = 0;
+    uint8_t gpsUserOffsetRaw = 0;
+    int gpsUserOffsetKph = -30;
+    uint8_t gpsMppLimitRaw = 0;
+    uint16_t gpsMppLimitKph = 0;
+    uint32_t fusedLimitLastMs = 0;
+    uint8_t lastSentOffsetRaw = 0;
+    uint8_t lastSentOffsetKph = 0;
+    uint8_t outputOffsetPct = 0;
+    uint32_t mux0Count = 0;
+    uint8_t mux0RxByte3 = 0;
+    uint8_t mux0TxByte3 = 0;
+    uint8_t mux0RxByte5 = 0;
+    uint8_t mux0TxByte5 = 0;
+    uint8_t mux0RxByte7 = 0;
+    uint8_t mux0TxByte7 = 0;
+    uint32_t txOk = 0;
+    uint32_t txFail = 0;
+    uint32_t offsetOnlyTxOk = 0;
+    uint32_t offsetOnlyTxFail = 0;
+    bool runtimeActive = false;
+    const char *blockedReason = "off";
+};
+
 struct CarManagerBase
 {
     Shared<int> speedProfile{1};
     Shared<bool> speedProfileAuto{true};
     Shared<bool> ADEnabled{false};
     Shared<bool> APActive{false};
+    Shared<uint8_t> currentGear{0};
     // Default Parked=true so the AP Injection Gate opens immediately on
     // module boot when the DI is asleep (e.g. car locked with Sentry on,
     // CAN ID 280 not broadcast). The first DI_systemStatus frame with a
@@ -64,6 +101,13 @@ struct CarManagerBase
     LegacyFsdDiag legacyFsdDiag{};
     Shared<int> legacyOffset{0};
     Shared<bool> overrideSpeedLimit{false};
+    LegacySmartOffsetConfig legacySmartOffsetConfig{};
+    LegacySmartOffsetEngine legacySmartOffsetEngine{};
+    LegacySpeedRuntimeDiag legacySpeedDiag{};
+    DashLegacySpeedBusLock legacySpeedBus{};
+    DashAbortGuard abortGuard{};
+    DashMinimalInject minimalInject{};
+    DashLegacySteerDefense legacySteerDefense{}; // #108 steer-jerk defense (Legacy mux0 authority)
     Shared<bool> tlsscBypass{false};
     Shared<bool> emergencyVehicleDetection{true};
     Shared<bool> isaChimeSuppress{false};
@@ -244,6 +288,7 @@ struct CarManagerBase
         if (frame.id != 280 || frame.dlc < 3)
             return false;
         uint8_t diGear = readDIGear(frame);
+        currentGear = diGear;
         Parked = isVehicleParked(diGear);
         updateSummonFromDISystemStatus(frame);
         clearSummonOnParkIfAcaInactive(diGear);
@@ -257,6 +302,7 @@ struct CarManagerBase
         if (frame.id != 390 || frame.dlc < 8)
             return false;
         uint8_t difGear = readVehicleGear(frame);
+        currentGear = difGear;
         Parked = isVehicleParked(difGear);
         clearSummonOnParkIfAcaInactive(difGear);
         return true;
@@ -276,26 +322,380 @@ struct CarManagerBase
     virtual uint8_t filterIdCount() const = 0;
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
+    virtual DashLegacyNagDiag legacyNagDiag(uint32_t /*nowMs*/) const { return {}; }
     virtual ~CarManagerBase() = default;
 };
 
 struct LegacyHandler : public CarManagerBase
 {
+    static constexpr uint32_t kNagContextStaleMs{1000};
+    static constexpr uint8_t kNagMaxConsecutiveTxFailures{3};
+    static constexpr uint8_t kNagMaxCounterCollisions{3};
+    static constexpr uint32_t kNagOwnEchoWindowMs{100};
+    static constexpr uint32_t kNagNativeFollowerMinMs{20};
+    DashLegacyNagV4 legacyNagV4;
+    DashNagBusLock legacyNagBus;
+    DashLegacyNagDiag legacyNagState{};
+    bool legacyNagAutoDisarmed{false};
+    uint8_t legacyNagLastTxData[8]{};
+    uint8_t legacyNagLastTxDlc{0};
+    uint8_t legacyNagLastTxBus{CAN_BUS_ANY};
+    bool legacyNagHasTxFingerprint{false};
+
+    static FsdDiagBus legacyDiagBus(const CanFrame &frame)
+    {
+        return frame.bus == CAN_BUS_PARTY ? FsdDiagBus::CanB : FsdDiagBus::CanA;
+    }
+
+    static FsdDiagDriver legacyDiagDriver(const CanFrame &frame)
+    {
+        return frame.bus == CAN_BUS_PARTY ? FsdDiagDriver::Mcp2515 : FsdDiagDriver::Twai;
+    }
+
+    bool legacySpeedOffsetRequested() const
+    {
+        return dashClampLegacySmartMode(static_cast<int>(legacySmartOffsetConfig.mode)) !=
+               LegacySmartOffsetMode::Off;
+    }
+
+    uint8_t computeLegacySpeedOffset(uint32_t nowMs)
+    {
+        legacySpeedDiag.gpsSpeedFresh = legacySpeedDiag.gpsSpeedSeen &&
+                                        static_cast<uint32_t>(nowMs - legacySpeedDiag.gpsSpeedLastMs) <=
+                                            kLegacyGpsLimitFreshMs;
+        bool fusedFresh = legacySpeedDiag.fusedLimitLastMs != 0 &&
+                          static_cast<uint32_t>(nowMs - legacySpeedDiag.fusedLimitLastMs) <=
+                              kLegacyFusedLimitFreshMs;
+        uint8_t limitRaw = 0;
+        legacySpeedDiag.limitSource = LegacySpeedLimitSource::None;
+        if (legacySpeedDiag.gpsSpeedFresh && dashLegacySmartLimitValid(legacySpeedDiag.gpsMppLimitRaw))
+        {
+            limitRaw = legacySpeedDiag.gpsMppLimitRaw;
+            legacySpeedDiag.limitSource = LegacySpeedLimitSource::Gps2F8;
+        }
+        else if (fusedFresh && dashLegacySmartLimitValid(fusedSpeedLimitRaw))
+        {
+            limitRaw = fusedSpeedLimitRaw;
+            legacySpeedDiag.limitSource = LegacySpeedLimitSource::Fused399;
+        }
+
+        legacySpeedDiag.result = legacySmartOffsetEngine.compute(
+            legacySmartOffsetConfig,
+            limitRaw,
+            nowMs,
+            (bool)APActive || (bool)ADEnabled);
+        uint8_t offset = legacySpeedDiag.result.outputOffsetKph;
+        legacySpeedDiag.outputOffsetPct = legacySpeedDiag.result.offsetPct;
+        legacySpeedDiag.blockedReason = offset > 0 ? "ready" : legacySpeedDiag.result.blockedReason;
+        speedOffset = offset;
+        return offset;
+    }
+
+    void resetBionic(uint32_t seed) override
+    {
+        (void)seed;
+        legacyNagV4.configure((bool)bionicSteering && (bool)nagKillerRuntime);
+        legacyNagV4.resetRuntime();
+        legacyNagBus.reset();
+        legacyNagAutoDisarmed = false;
+        legacyNagState.runtimeActive = false;
+        legacyNagState.autoDisarmed = false;
+        legacyNagState.degraded = false;
+        legacyNagState.consecutiveTxFailures = 0;
+        legacyNagState.consecutiveCounterCollisions = 0;
+        legacyNagState.state = legacyNagV4.state;
+        legacyNagState.selectedBus = CAN_BUS_ANY;
+        legacyNagState.blocked = LegacyNagBlockReason::Disabled;
+        memset(legacyNagLastTxData, 0, sizeof(legacyNagLastTxData));
+        legacyNagLastTxDlc = 0;
+        legacyNagLastTxBus = CAN_BUS_ANY;
+        legacyNagHasTxFingerprint = false;
+    }
+
+    bool bionicDisabled() const override { return legacyNagAutoDisarmed; }
+
+    DashLegacyNagDiag legacyNagDiag(uint32_t nowMs) const override
+    {
+        DashLegacyNagDiag result = legacyNagState;
+        result.selectedBus = legacyNagBus.selectedBus;
+        result.gear = (uint8_t)currentGear;
+        result.state = legacyNagAutoDisarmed ? LegacyNagV4State::Degraded : legacyNagV4.state;
+        result.autoDisarmed = legacyNagAutoDisarmed;
+        result.degraded = legacyNagAutoDisarmed;
+        result.dasHandsState = legacyNagV4.handsOnState;
+        result.state1EnterCount = legacyNagV4.state1EnterCount;
+        result.state1HoldCount = legacyNagV4.state1HoldCount;
+        result.state1FallbackCount = legacyNagV4.state1FallbackCount;
+        result.faithfulWalkSteps = legacyNagV4.faithfulWalkSteps;
+        result.directionChangeCount = legacyNagV4.directionChangeCount;
+        result.targetTorqueCentiNm = legacyNagV4.targetTorqueCentiNm;
+        result.steeringSeen = legacyNagV4.steeringSeen;
+        result.steeringControlType = legacyNagV4.steeringControlType;
+        result.steeringAngleX10 = legacyNagV4.steeringAngleX10;
+        result.steeringBus = legacyNagV4.steeringBus;
+        result.steeringAgeMs = legacyNagV4.steeringAgeMs(nowMs);
+        result.episodeDirection = legacyNagV4.episodeDirection;
+        result.currentSilentMs = result.lastTxMs ? nowMs - result.lastTxMs : 0;
+        return result;
+    }
+
+    bool legacyNagConfigured() const
+    {
+        return (bool)bionicSteering && (bool)nagKillerRuntime && !legacyNagAutoDisarmed;
+    }
+
+    static bool legacyNagApContextActive(uint8_t apState)
+    {
+        // Real Legacy captures report 0x399 status 6 throughout active FSD.
+        // Keep this rule local so HW3/HW4 AP semantics remain unchanged.
+        return apState >= 3 && apState <= 6;
+    }
+
+    bool legacyNagRuntimeAllowed(uint32_t nowMs)
+    {
+        if (legacyNagAutoDisarmed)
+        {
+            legacyNagState.blocked = LegacyNagBlockReason::Degraded;
+            return false;
+        }
+        if (!legacyNagConfigured())
+        {
+            legacyNagState.blocked = LegacyNagBlockReason::Disabled;
+            return false;
+        }
+        if (!legacyNagApContextActive(legacyNagState.apState))
+        {
+            legacyNagState.blocked = LegacyNagBlockReason::ApInactive;
+            return false;
+        }
+        if (legacyNagState.lastContextMs == 0 || nowMs - legacyNagState.lastContextMs > kNagContextStaleMs)
+        {
+            legacyNagState.blocked = LegacyNagBlockReason::ContextStale;
+            return false;
+        }
+        return true;
+    }
+
+    static uint8_t legacyNagChecksum(const CanFrame &frame)
+    {
+        uint16_t sum = 0;
+        for (uint8_t i = 0; i < 7; i++)
+            sum += frame.data[i];
+        return static_cast<uint8_t>((sum + 0x73) & 0xFF);
+    }
+
+    static LegacyNagBlockReason legacyNagV4BlockReason(LegacyNagV4Block reason)
+    {
+        switch (reason)
+        {
+        case LegacyNagV4Block::Satisfied: return LegacyNagBlockReason::DasSatisfied;
+        case LegacyNagV4Block::StateDelay: return LegacyNagBlockReason::StateDelay;
+        case LegacyNagV4Block::StateStopped: return LegacyNagBlockReason::StateStopped;
+        case LegacyNagV4Block::SteeringMissing: return LegacyNagBlockReason::SteeringMissing;
+        case LegacyNagV4Block::SteeringStale: return LegacyNagBlockReason::SteeringStale;
+        case LegacyNagV4Block::SteeringInvalid: return LegacyNagBlockReason::SteeringInvalid;
+        case LegacyNagV4Block::CenterNoDirection: return LegacyNagBlockReason::CenterNoDirection;
+        default: return LegacyNagBlockReason::None;
+        }
+    }
+
+    void handleLegacyNag370(const CanFrame &frame, CanDriver &driver)
+    {
+        uint32_t nowMs = dashDiagNowMs();
+        legacyNagV4.configure((bool)bionicSteering && (bool)nagKillerRuntime && !legacyNagAutoDisarmed);
+        legacyNagState.rx370++;
+        legacyNagState.lastRxMs = nowMs;
+        if (frame.dlc < 8)
+        {
+            legacyNagState.blocked = LegacyNagBlockReason::DlcShort;
+            return;
+        }
+
+        uint8_t counter = static_cast<uint8_t>(frame.data[6] & 0x0F);
+        if (!legacyNagBus.accept(frame.bus, counter, nowMs))
+        {
+            legacyNagState.blocked = legacyNagBus.selectedBus == CAN_BUS_ANY
+                ? LegacyNagBlockReason::BusLearning
+                : LegacyNagBlockReason::BusMismatch;
+            return;
+        }
+        legacyNagState.selectedBus = legacyNagBus.selectedBus;
+
+        uint8_t targetHandsOn = static_cast<uint8_t>((frame.data[4] >> 6) & 0x03);
+        legacyNagState.nativeHandsOnLevel = targetHandsOn;
+        uint32_t txAgeMs = legacyNagState.lastTxMs ? nowMs - legacyNagState.lastTxMs : 0;
+        bool recentMatchingCounter = legacyNagHasTxFingerprint && legacyNagState.lastTxMs &&
+                                     counter == legacyNagState.txCounter &&
+                                     txAgeMs <= kNagOwnEchoWindowMs;
+        if (recentMatchingCounter && frame.bus == legacyNagLastTxBus &&
+            frame.dlc == legacyNagLastTxDlc &&
+            memcmp(frame.data, legacyNagLastTxData, frame.dlc) == 0)
+        {
+            legacyNagState.duplicateCounterObserved++;
+            legacyNagState.runtimeActive = false;
+            legacyNagState.blocked = LegacyNagBlockReason::OwnEcho;
+            return;
+        }
+        if (recentMatchingCounter && frame.bus == legacyNagLastTxBus &&
+            txAgeMs >= kNagNativeFollowerMinMs &&
+            legacyNagChecksum(frame) == frame.data[7])
+        {
+            // In the observed Legacy stream the module sends counter n+1
+            // immediately after native n. The vehicle then emits its own n+1
+            // frame about 39-40 ms later. It is a native follower, not loopback;
+            // let it drive the next overlay so the path remains continuous.
+            legacyNagState.expectedNativeFollowerObserved++;
+            legacyNagState.lastNativeFollowerDelayMs = txAgeMs;
+            legacyNagState.consecutiveCounterCollisions = 0;
+        }
+        else if (recentMatchingCounter && frame.bus == legacyNagLastTxBus)
+        {
+            legacyNagState.counterCollisionObserved++;
+            if (nowMs - legacyNagState.lastTxMs > 1000)
+                legacyNagState.consecutiveCounterCollisions = 0;
+            if (legacyNagState.consecutiveCounterCollisions < 0xFF)
+                legacyNagState.consecutiveCounterCollisions++;
+            legacyNagState.runtimeActive = false;
+            if (legacyNagState.consecutiveCounterCollisions >= kNagMaxCounterCollisions)
+            {
+                legacyNagAutoDisarmed = true;
+                legacyNagV4.configure(false);
+                legacyNagState.autoDisarmed = true;
+                legacyNagState.degraded = true;
+                legacyNagState.state = LegacyNagV4State::Degraded;
+                legacyNagState.blocked = LegacyNagBlockReason::Degraded;
+            }
+            else
+                legacyNagState.blocked = LegacyNagBlockReason::CounterCollision;
+            return;
+        }
+        if (targetHandsOn == 1)
+        {
+            legacyNagState.targetHandsBlocked++;
+            legacyNagState.blocked = LegacyNagBlockReason::TargetHandsOn;
+            return;
+        }
+        if (!abortGuard.allowsInjection())
+        {
+            abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyNag370);
+            legacyNagState.runtimeActive = false;
+            legacyNagState.blocked = LegacyNagBlockReason::AbortGuard;
+            return;
+        }
+
+        bool gatesAllowed = legacyNagRuntimeAllowed(nowMs);
+        DashLegacyNagV4Decision decision = legacyNagV4.decide(nowMs, gatesAllowed);
+        legacyNagState.state = decision.state;
+        legacyNagState.dasHandsState = legacyNagV4.handsOnState;
+        if (!decision.send)
+        {
+            legacyNagState.runtimeActive = false;
+            LegacyNagBlockReason decisionBlock = legacyNagV4BlockReason(decision.blocked);
+            if (decisionBlock != LegacyNagBlockReason::None)
+                legacyNagState.blocked = decisionBlock;
+            else if (decision.state == LegacyNagV4State::Detected)
+                legacyNagState.blocked = LegacyNagBlockReason::Detected;
+            return;
+        }
+
+        CanFrame echo = frame;
+        DashLegacyNagV4::applyTorque(echo.data[2], echo.data[3], decision.torqueCentiNm);
+        // EPAS-faithful: preserve the complete native byte 4. Ground-truth
+        // captures keep handsOnLevel at zero even when hands are detected.
+        echo.data[4] = frame.data[4];
+        echo.data[6] = static_cast<uint8_t>((frame.data[6] & 0xF0) | ((counter + 1) & 0x0F));
+        echo.data[7] = legacyNagChecksum(echo);
+
+        legacyNagState.eligible370++;
+        legacyNagState.txAttempts++;
+        legacyNagState.requestedTorqueCentiNm = decision.torqueCentiNm;
+        legacyNagState.requestedTorqueRaw = DashLegacyNagV4::torqueRaw(decision.torqueCentiNm);
+        legacyNagState.txCounter = static_cast<uint8_t>(echo.data[6] & 0x0F);
+        legacyNagState.txChecksum = echo.data[7];
+        if (legacyNagState.lastTxMs)
+        {
+            uint32_t silentMs = nowMs - legacyNagState.lastTxMs;
+            if (silentMs > legacyNagState.maxSilentMs)
+                legacyNagState.maxSilentMs = silentMs;
+        }
+        framesSent++;
+        bool ok = driver.send(echo);
+        if (!ok)
+        {
+            legacyNagState.txRetryAttempts++;
+            framesSent++;
+            ok = driver.send(echo);
+            if (ok)
+                legacyNagState.txRetryOk++;
+        }
+        legacyNagState.runtimeActive = ok;
+        legacyNagState.lastTxMs = ok ? nowMs : legacyNagState.lastTxMs;
+        if (ok)
+        {
+            legacyNagState.tx370++;
+            legacyNagState.consecutiveTxFailures = 0;
+            legacyNagState.blocked = LegacyNagBlockReason::None;
+            memcpy(legacyNagLastTxData, echo.data, echo.dlc);
+            legacyNagLastTxDlc = echo.dlc;
+            legacyNagLastTxBus = echo.bus;
+            legacyNagHasTxFingerprint = true;
+        }
+        else
+        {
+            legacyNagState.txFail++;
+            if (legacyNagState.consecutiveTxFailures < 0xFF)
+                legacyNagState.consecutiveTxFailures++;
+            if (legacyNagState.consecutiveTxFailures >= kNagMaxConsecutiveTxFailures)
+            {
+                legacyNagAutoDisarmed = true;
+                legacyNagV4.configure(false);
+                legacyNagState.autoDisarmed = true;
+                legacyNagState.degraded = true;
+                legacyNagState.state = LegacyNagV4State::Degraded;
+                legacyNagState.blocked = LegacyNagBlockReason::Degraded;
+            }
+            else
+                legacyNagState.blocked = LegacyNagBlockReason::TxFailed;
+        }
+    }
+
     const uint32_t *filterIds() const override
     {
         // 1080 added for UI_driverAssistAnonDebugParams visionSpeedSlider override.
         // 920 added for auto hardware detection (GTW_carConfig).
         // 880 (0x370 EPAS3P_sysStatus) added for EPAS-faithful nag engine.
-        static constexpr uint32_t ids[] = {69, 280, 390, 760, 880, 920, 921, 1006, 1080, CAN_ID_OTA_STATUS};
+        // 962 (0x3C2) is admitted on CAN1 as receive-only evidence so the
+        // recorder can locate the native wheel stream on either T-2CAN input.
+        // 1160 (0x488 DAS_steeringControl) is the receive-only direction source
+        // for the Legacy one-sided Mode-C torque engine.
+        static constexpr uint32_t ids[] = {69, 280, 390, 760, 880, 920, 921, 962, 1006, 1080, 1160, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 10; }
+    uint8_t filterIdCount() const override { return 12; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
         if (onFrame)
             onFrame(frame);
         updateHwDetectedFrom920(frame);
+        if (frame.id == 1160)
+        {
+            if (frame.dlc < 3)
+                return;
+            uint8_t controlType = static_cast<uint8_t>((frame.data[2] >> 6) & 0x03);
+            uint16_t rawAngle = static_cast<uint16_t>(((frame.data[0] & 0x7F) << 8) |
+                                                       frame.data[1]);
+            int16_t angleX10 = static_cast<int16_t>(static_cast<int32_t>(rawAngle) - 16384);
+            uint32_t nowMs = dashDiagNowMs();
+            legacyNagV4.onSteeringRequest(controlType, angleX10, frame.bus, nowMs);
+            legacyNagState.rx488++;
+            return;
+        }
+        if (frame.id == 880)
+        {
+            handleLegacyNag370(frame, driver);
+            return;
+        }
         // STW_ACTN_RQ (0x045 = 69): Follow-Distance-Stalk as Source for Profile Mapping
         // byte[1]: 0x00=Pos1, 0x21=Pos2, 0x42=Pos3, 0x64=Pos4, 0x85=Pos5, 0xA6=Pos6, 0xC8=Pos7
         if (frame.id == 69)
@@ -313,25 +713,24 @@ struct LegacyHandler : public CarManagerBase
                 speedProfile = 0;
             return;
         }
-        // UI_gpsVehicleSpeed (0x2F8 = 760): write UI_userSpeedOffset (bit40|6,
-        // raw = kph+30). Byte 5 layout: bits 0-5 = offset (0-63), bit 6 reserved,
-        // bit 7 = UI_userSpeedOffsetUnits (0=MPH, 1=KPH). We preserve bits 6-7
-        // so the offset unit follows the car's setting.
+        // UI_gpsVehicleSpeed (0x2F8 = 760) is a read-only map speed-limit
+        // source. The actual Legacy offset request is applied to 0x3EE mux 0.
         if (frame.id == 760)
         {
-            if (checkAD && !checkAD()) return;
-            if (frame.dlc < 6) return;
-            uint8_t effectiveOffset = dashComputeLegacySimpleOffsetKph((int)legacyOffset);
-            if (effectiveOffset == 0) return;
-            uint8_t raw = (uint8_t)(effectiveOffset + 30);
-            legacyFsdDiag.aux760.recordBefore(frame.data);
-            frame.data[5] = (frame.data[5] & 0xC0) | (raw & 0x3F);
-            legacyFsdDiag.aux760.recordAfter(frame.data);
-            legacyFsdDiag.aux760.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
-            framesSent++;
-            bool ok = driver.send(frame);
-            legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux760, ok, dashDiagNowMs());
-            if (onSend) onSend(0, ok);
+            if (frame.dlc < 7)
+                return;
+            uint32_t nowMs = dashDiagNowMs();
+            legacySpeedDiag.gpsSpeedSeen = true;
+            legacySpeedDiag.gpsSpeedFresh = true;
+            legacySpeedDiag.gpsUserOffsetRaw = frame.data[5] & 0x3F;
+            legacySpeedDiag.gpsUserOffsetKph = static_cast<int>(legacySpeedDiag.gpsUserOffsetRaw) - 30;
+            legacySpeedDiag.gpsMppLimitRaw = frame.data[6] & 0x1F;
+            legacySpeedDiag.gpsMppLimitKph = static_cast<uint16_t>(legacySpeedDiag.gpsMppLimitRaw) * 5U;
+            if (legacySpeedDiag.gpsSpeedLastMs != 0)
+                legacySpeedDiag.gpsSpeedPeriodMs = nowMs - legacySpeedDiag.gpsSpeedLastMs;
+            legacySpeedDiag.gpsSpeedLastMs = nowMs;
+            legacySpeedDiag.gpsSpeedCount++;
+            legacySpeedDiag.blockedReason = "waiting3ee";
             return;
         }
         // 0x438 (1080) — UI_driverAssistAnonDebugParams: visionSpeedSlider = 100
@@ -340,10 +739,15 @@ struct LegacyHandler : public CarManagerBase
             if (frame.dlc < 8) return;
             if (!overrideSpeedLimit) return;
             if (checkAD && !checkAD()) return;
+            if (!abortGuard.allowsInjection())
+            {
+                abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyVisionSlider0x438);
+                return;
+            }
             legacyFsdDiag.aux1080.recordBefore(frame.data);
             frame.data[7] = (frame.data[7] & 0x80) | 100;
             legacyFsdDiag.aux1080.recordAfter(frame.data);
-            legacyFsdDiag.aux1080.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
+            legacyFsdDiag.aux1080.recordPath(legacyDiagBus(frame), legacyDiagDriver(frame));
             framesSent++;
             bool ok = driver.send(frame);
             legacyFsdDiag.recordMuxTx(legacyFsdDiag.aux1080, ok, dashDiagNowMs());
@@ -356,9 +760,30 @@ struct LegacyHandler : public CarManagerBase
         {
             if (frame.dlc < 1)
                 return;
-            APActive = isDASAutopilotActive(readDASAutopilotStatus(frame));
+            uint8_t apState = readDASAutopilotStatus(frame);
+            const uint32_t nowMs = dashDiagNowMs();
+            abortGuard.onApState(apState, nowMs);
+            minimalInject.onApState(apState);
+            // Steer-jerk defense (#108): observe engagement edges once per
+            // primary 921 frame. Bus2 never feeds this gate.
+            legacySteerDefense.observe(apState, nowMs);
+            APActive = legacyNagApContextActive(apState);
+            legacyNagState.apState = apState;
+            legacyNagState.lastContextMs = nowMs;
             if (frame.dlc >= 2)
+            {
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
+                legacySpeedDiag.fusedLimitLastMs = legacyNagState.lastContextMs;
+            }
+            if (frame.dlc >= 6)
+            {
+                uint8_t handsOn = static_cast<uint8_t>((frame.data[5] >> 2) & 0x0F);
+                legacyNagV4.configure((bool)bionicSteering && (bool)nagKillerRuntime && !legacyNagAutoDisarmed);
+                legacyNagV4.onContext(legacyNagApContextActive(apState), handsOn, legacyNagState.lastContextMs);
+                legacyNagState.dasHandsState = handsOn;
+                legacyNagState.state = legacyNagV4.state;
+                legacyNagState.runtimeActive = false;
+            }
             return;
         }
         // 0x3EE (1006) — FSD activation frame (mux 0/1)
@@ -374,9 +799,11 @@ struct LegacyHandler : public CarManagerBase
             auto index = readMuxID(frame);
             if (index == 0)
             {
+                legacySpeedDiag.mux0Count++;
+                legacySpeedDiag.runtimeActive = false;
                 legacyFsdDiag.mux0.recordRx(nowMs);
                 legacyFsdDiag.markMux0Rx(nowMs);
-                legacyFsdDiag.mux0.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
+                legacyFsdDiag.mux0.recordPath(legacyDiagBus(frame), legacyDiagDriver(frame));
                 bool forced = (bool)forceActivateRuntime;
                 bool uiSelected = isFSDSelectedInUI(frame);
                 fsdTriggered = forced || uiSelected;
@@ -385,50 +812,133 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.forceRuntime = forced;
                 legacyFsdDiag.triggerSource = forced ? FsdTriggerSource::Force : (uiSelected ? FsdTriggerSource::UiBit : FsdTriggerSource::FalseSource);
 
-                if (!(bool)fsdTriggered)
+                const bool speedRequested = legacySpeedOffsetRequested();
+                const bool speedBusAllowed = speedRequested && legacySpeedBus.accept(frame, nowMs);
+                if (speedRequested && legacySpeedBus.ambiguous)
+                    legacySpeedDiag.blockedReason = "busAmbiguous";
+                else if (speedRequested && !speedBusAllowed)
+                    legacySpeedDiag.blockedReason = legacySpeedBus.selectedBus == CAN_BUS_ANY
+                                                        ? "busLearning"
+                                                        : "busMismatch";
+
+                if (!(bool)fsdTriggered && !speedRequested)
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::NotTriggered;
                     legacyFsdDiag.health = FsdHealthState::NotTriggered;
                     return;
                 }
-                bool legacyActivationAllowed = legacyFsdActivationAllowed
-                    ? legacyFsdActivationAllowed(nowMs)
-                    : injectionAllowed();
-                if (!legacyActivationAllowed)
+                if (!abortGuard.allowsInjection())
                 {
-                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
-                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
-                    legacyFsdDiag.lastBlockedBy = legacyFsdActivationAllowed
-                        ? FsdGateBlockReason::LegacyFsdSettle
-                        : currentGateBlockReason();
+                    abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux0);
+                    if ((bool)fsdTriggered)
+                    {
+                        legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                        legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                        legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::AbortGuard;
+                    }
+                    if (speedRequested)
+                        legacySpeedDiag.blockedReason = "abortGuard";
                     return;
                 }
+                bool activationAllowed = false;
+                if ((bool)fsdTriggered)
+                {
+                    activationAllowed = legacyFsdActivationAllowed
+                                            ? legacyFsdActivationAllowed(nowMs)
+                                            : injectionAllowed();
+                    if (!activationAllowed && !speedRequested)
+                    {
+                        legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                        legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                        // Dashboard installs a resolver so an optional strict
+                        // Legacy AP gate is reported as ApGate. Keep the
+                        // historical settle reason for standalone callbacks
+                        // that do not supply a reason resolver.
+                        legacyFsdDiag.lastBlockedBy = gateBlockReason
+                                                          ? gateBlockReason()
+                                                          : (legacyFsdActivationAllowed
+                                                                 ? FsdGateBlockReason::LegacyFsdSettle
+                                                                 : currentGateBlockReason());
+                        return;
+                    }
+                    // Minimal Inject burst verdict now lives inside the steer-jerk
+                    // defense decide() (consulted via the activation callback above).
+                    // The base DashMinimalInject is no longer consulted on the Legacy
+                    // mux0 path; burst accounting happens via recordMinimalInjection().
+                }
+
+                bool speedAllowed = speedRequested && speedBusAllowed && injectionAllowed();
+                if (speedRequested && speedBusAllowed && !speedAllowed)
+                    legacySpeedDiag.blockedReason = "gateBlocked";
 
                 // Plugin owns FSD activation frames: suppress built-in injection.
                 if (!builtInFsdInjectionAllowed())
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacySpeedDiag.blockedReason = "pluginOwner";
                     return;
                 }
 
                 legacyFsdDiag.mux0.recordBefore(frame.data);
-                setBit(frame, 46, true);
-                if (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
+                if (activationAllowed)
+                    setBit(frame, 46, true);
+                uint8_t effectiveOffset = speedAllowed ? computeLegacySpeedOffset(nowMs) : 0;
+                if (effectiveOffset > 0)
+                    dashWriteLegacyOffsetTo3eeMux0(frame.data,
+                                                   effectiveOffset,
+                                                   legacySpeedDiag.outputOffsetPct);
+                if (activationAllowed &&
+                    (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
                     (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental && legacyFsdDiag.profileWriteEnable))
+                   )
                     setSpeedProfileV12V13(frame, speedProfile);
+
+                if (!activationAllowed && effectiveOffset == 0)
+                    return;
+                legacySpeedDiag.mux0RxByte3 = legacyFsdDiag.mux0.before[3];
+                legacySpeedDiag.mux0TxByte3 = frame.data[3];
+                legacySpeedDiag.mux0RxByte5 = legacyFsdDiag.mux0.before[5];
+                legacySpeedDiag.mux0TxByte5 = frame.data[5];
+                legacySpeedDiag.mux0RxByte7 = legacyFsdDiag.mux0.before[7];
+                legacySpeedDiag.mux0TxByte7 = frame.data[7];
                 legacyFsdDiag.mux0.recordAfter(frame.data);
                 framesSent++;
                 bool ok = driver.send(frame);
-                legacyFsdDiag.recordMuxTx(legacyFsdDiag.mux0, ok, nowMs);
-                legacyFsdDiag.markTxResult(ok, nowMs);
+                if (effectiveOffset > 0)
+                {
+                    legacySpeedDiag.lastSentOffsetRaw = static_cast<uint8_t>(effectiveOffset + 30U);
+                    legacySpeedDiag.lastSentOffsetKph = effectiveOffset;
+                    legacySpeedDiag.runtimeActive = ok;
+                    if (ok)
+                    {
+                        legacySpeedDiag.txOk++;
+                        legacySpeedDiag.blockedReason = "none";
+                    }
+                    else
+                    {
+                        legacySpeedDiag.txFail++;
+                        legacySpeedDiag.blockedReason = "txFail";
+                    }
+                }
+                if (activationAllowed)
+                {
+                    legacyFsdDiag.recordMuxTx(legacyFsdDiag.mux0, ok, nowMs);
+                    legacyFsdDiag.markTxResult(ok, nowMs);
+                    if (ok)
+                        legacySteerDefense.recordMinimalInjection("legacy_fsd_mux0");
+                }
+                else if (ok)
+                    legacySpeedDiag.offsetOnlyTxOk++;
+                else
+                    legacySpeedDiag.offsetOnlyTxFail++;
                 if (onSend) onSend(0, ok);
             }
             else if (index == 1)
             {
                 legacyFsdDiag.mux1.recordRx(nowMs);
                 legacyFsdDiag.markMux1Rx(nowMs);
-                legacyFsdDiag.mux1.recordPath(FsdDiagBus::CanA, FsdDiagDriver::Twai);
+                legacyFsdDiag.mux1.recordPath(legacyDiagBus(frame), legacyDiagDriver(frame));
                 if (legacyFsdDiag.policy == LegacyFsdPolicy::Stable)
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::DisabledInStable;
@@ -443,6 +953,14 @@ struct LegacyHandler : public CarManagerBase
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::NotTriggered;
                     legacyFsdDiag.health = FsdHealthState::NotTriggered;
+                    return;
+                }
+                if (!abortGuard.allowsInjection())
+                {
+                    abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux1);
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::AbortGuard;
                     return;
                 }
                 if (!injectionAllowed())
@@ -498,10 +1016,10 @@ struct HW3Handler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
         // 880 (0x370 EPAS3P_sysStatus) + 923 (0x39B DAS_status Highland/HW4) added for EPAS-faithful nag engine.
-        static constexpr uint32_t ids[] = {280, 390, 880, 920, 921, 923, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
+        static constexpr uint32_t ids[] = {280, 390, 880, 920, 921, 923, 962, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 10; }
+    uint8_t filterIdCount() const override { return 11; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -728,10 +1246,10 @@ struct NagHandler : public CarManagerBase
 
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {880, 920, CAN_ID_OTA_STATUS};
+        static constexpr uint32_t ids[] = {880, 920, 962, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 3; }
+    uint8_t filterIdCount() const override { return 4; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -844,10 +1362,10 @@ struct HW4Handler : public CarManagerBase
     const uint32_t *filterIds() const override
     {
         // 880 (0x370 EPAS3P_sysStatus) + 923 (0x39B DAS_status Highland/HW4) added for EPAS-faithful nag engine.
-        static constexpr uint32_t ids[] = {280, 390, 880, 920, 921, 923, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
+        static constexpr uint32_t ids[] = {280, 390, 880, 920, 921, 923, 962, 1016, 1021, 2047, CAN_ID_OTA_STATUS};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 10; }
+    uint8_t filterIdCount() const override { return 11; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {

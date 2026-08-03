@@ -814,9 +814,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           </div>
           <div class="src-row"><span>注入来源</span><b id="injection-source">Disabled</b></div>
           <div class="ctl-section">注入门控（服务端强制）</div>
-          <div class="ctl-row"><div><div class="cn">AP 门控</div><div class="cd">要求 Parked / AP / Summon 后才注入</div></div>
+          <div class="ctl-row"><div><div class="cn">AP 门控</div><div class="cd">Legacy 仅在 0x399 AP 活动后注入</div></div>
             <label class="tgl"><input id="ap-core-gate-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
-          <div class="ctl-row"><div><div class="cn">延迟注入</div><div class="cd">AP 激活后等待再注入（推荐 2000ms）</div></div>
+          <div class="ctl-row"><div><div class="cn">延迟注入</div><div class="cd">AP 连续激活后等待再注入</div></div>
             <label class="field"><select id="ap-delay-select" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label></div>
           <div class="ctl-row"><div><div class="cn">AP 自动恢复</div><div class="cd">重启后恢复上次 AP 配置</div></div>
             <label class="tgl"><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
@@ -899,7 +899,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">AP 注入门控</div>
-      <div class="setting-desc">要求 Parked/AP/Summon 状态后才允许注入</div>
+      <div class="setting-desc">Legacy 仅在 0x399 AP 活动后才允许注入</div>
     </div>
     <label class="tgl">
       <input type="checkbox" id="ap-gate-tgl" onchange="saveApGate()">
@@ -996,7 +996,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 </div>
 <div class="card cockpit-card">
   <div class="card-title">速度策略模式</div>
-  <div class="card-subtitle">选择固定百分比 / 自动偏移 / 自定义偏移，配置会同步到 /speed_strategy 与 /speed_custom</div>
+  <div class="card-subtitle">HW3/HW4：固定百分比 / 自动偏移 / 自定义偏移。Legacy 请使用下方独立四档控制。</div>
   <div class="sel-cards c3" id="speed-mode-tabs" style="margin-bottom:12px">
     <div class="sel-card" onclick="showSpeedMode('fixed')"><div class="sel-lbl">模式</div><div class="sel-name">固定百分比</div></div>
     <div class="sel-card active" onclick="showSpeedMode('auto')"><div class="sel-lbl">模式</div><div class="sel-name">自动偏移</div></div>
@@ -1015,6 +1015,53 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="diag-item"><span class="lbl">Wire Encoding</span><span class="v-dim" id="sp-wire">--</span></div>
     <div class="diag-item"><span class="lbl">Fused Raw</span><span class="v-dim" id="sp-raw">--</span></div>
     <div class="diag-item"><span class="lbl">Stock Offset</span><span class="v-dim" id="sp-stock">--</span></div>
+    <div class="diag-item"><span class="lbl">Legacy 限速来源</span><span class="v-info" id="sp-legacy-source">--</span></div>
+    <div class="diag-item"><span class="lbl">Legacy 目标速度</span><span class="v-acc" id="sp-legacy-target">--</span></div>
+    <div class="diag-item"><span class="lbl">Legacy 目标总线</span><span class="v-dim" id="sp-legacy-bus">--</span></div>
+    <div class="diag-item"><span class="lbl">Legacy 运行状态</span><span class="v-dim" id="sp-legacy-runtime">--</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Legacy 智能速度偏移</div>
+  <div class="card-subtitle">独立四档：关闭 / 手动 / 自动 / 自定义。0x2F8 只读限速，0x3EE mux0 输出。</div>
+  <div class="sel-cards c4" id="legacy-speed-mode" style="margin:12px 0">
+    <div class="sel-card" onclick="setLegacySpeedMode('off')"><div class="sel-lbl">模式</div><div class="sel-name">关闭</div></div>
+    <div class="sel-card" onclick="setLegacySpeedMode('manual')"><div class="sel-lbl">模式</div><div class="sel-name">手动</div></div>
+    <div class="sel-card" onclick="setLegacySpeedMode('auto')"><div class="sel-lbl">模式</div><div class="sel-name">自动</div></div>
+    <div class="sel-card" onclick="setLegacySpeedMode('custom')"><div class="sel-lbl">模式</div><div class="sel-name">自定义</div></div>
+  </div>
+  <div class="setting-row" id="legacy-speed-manual-row">
+    <div><div class="setting-name">手动偏移</div><div class="setting-desc">固定加值，范围 0-33 km/h</div></div>
+    <input class="inp" type="number" min="0" max="33" id="legacy-speed-manual" value="0" onchange="saveLegacySpeedConfig()" style="width:86px">
+  </div>
+  <div id="legacy-speed-custom-panel">
+    <div class="setting-row"><div><div class="setting-name">0-50 km/h</div><div class="setting-desc">低速区间</div></div><input class="inp" type="number" min="0" max="63" id="legacy-speed-cp1" value="50" onchange="saveLegacySpeedConfig()" style="width:86px"></div>
+    <div class="setting-row"><div><div class="setting-name">51-70 km/h</div><div class="setting-desc">城市快速路</div></div><input class="inp" type="number" min="0" max="63" id="legacy-speed-cp2" value="30" onchange="saveLegacySpeedConfig()" style="width:86px"></div>
+    <div class="setting-row"><div><div class="setting-name">71-100 km/h</div><div class="setting-desc">高速巡航</div></div><input class="inp" type="number" min="0" max="63" id="legacy-speed-cp3" value="20" onchange="saveLegacySpeedConfig()" style="width:86px"></div>
+    <div class="setting-row"><div><div class="setting-name">101+ km/h</div><div class="setting-desc">高限速区间</div></div><input class="inp" type="number" min="0" max="63" id="legacy-speed-cp4" value="10" onchange="saveLegacySpeedConfig()" style="width:86px"></div>
+  </div>
+  <div class="setting-row">
+    <div><div class="setting-name">目标总线</div><div class="setting-desc">Auto 遇到双通道镜像时停止写入</div></div>
+    <select class="inp" id="legacy-speed-bus" onchange="saveLegacySpeedConfig()" style="width:112px">
+      <option value="Auto">Auto</option>
+      <option value="CAN1">CAN1</option>
+      <option value="CAN2">CAN2</option>
+    </select>
+  </div>
+  <div class="setting-row">
+    <div><div class="setting-name">下降缓冲</div><div class="setting-desc">限速下降时平滑调整目标速度</div></div>
+    <label class="tgl"><input type="checkbox" id="legacy-speed-smooth" onchange="saveLegacySpeedConfig()" checked><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div><div class="setting-name">缓降速率</div><div class="setting-desc">1-20 km/h/s</div></div>
+    <input class="inp" type="number" min="1" max="20" id="legacy-speed-rate" value="5" onchange="saveLegacySpeedConfig()" style="width:86px">
+  </div>
+  <div class="diag-grid" style="margin-top:10px">
+    <div class="diag-item"><span class="lbl">0x2F8 RX</span><span class="v-dim" id="sp-legacy-rx2f8">0</span></div>
+    <div class="diag-item"><span class="lbl">0x3EE RX</span><span class="v-dim" id="sp-legacy-rx3ee">0</span></div>
+    <div class="diag-item"><span class="lbl">TX OK / Fail</span><span class="v-dim" id="sp-legacy-tx">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">阻断原因</span><span class="v-dim" id="sp-legacy-block">--</span></div>
   </div>
 </div>
 
@@ -1280,32 +1327,42 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-defense-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-defense-run">待检测</div></div>
 </div>
-<!-- Master switch + 5 defense toggles -->
+<!-- Independent defense master and feature toggles -->
 <div class="card cockpit-card">
   <div class="card-title">FSD 防护状态</div>
-  <div class="card-subtitle">仿生扭矩替代固定echo，轮DND消除提示音</div>
+  <div class="card-subtitle">通用防御、Legacy 0x370 与左滚轮 DND 分别独立控制</div>
   <div class="setting-row">
     <div>
-      <div class="setting-name">启用 slew rate 限制</div>
-      <div class="setting-desc">限制偏移值下降速率</div>
+      <div class="setting-name">FSD 防御总开关</div>
+      <div class="setting-desc">控制通用防御策略；Legacy 0x370 NAG 与左滚轮免打扰不受此开关联动</div>
     </div>
     <label class="tgl">
-      <input type="checkbox" id="hw3-slew-tgl" onchange="saveHw3Slew()">
+      <input type="checkbox" id="def-master-tgl" onchange="saveDefenseConfig()">
       <div class="tgl-track"></div>
     </label>
   </div>
   <div class="setting-row">
     <div>
-      <div class="setting-name">仿生方向盘 <span class="exp-badge">实验</span></div>
-      <div class="setting-desc">0x370 正弦波随机扭矩，模拟人手握持</div>
-      <div class="setting-desc" id="def-bionic-warn" style="color:#ef4444;display:none">⚠ 已自动回退至echo（连续帧异常）</div>
+      <div class="setting-name">Legacy 0x370 NAG 主路径</div>
+      <div class="setting-desc">独立开关直连：Legacy + CAN + AP上下文 + 原生0x370；2050零点，硬限制 ±1.8 Nm；仅即时counter冲突连续3次降级</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="diag-grid" style="margin:8px 0 4px">
+    <div class="diag-item"><span class="lbl">运行模式</span><span class="v-acc" id="legacy-nag-mode">idle</span></div>
+    <div class="diag-item"><span class="lbl">目标通道</span><span class="v-info" id="legacy-nag-bus">AUTO</span></div>
+    <div class="diag-item"><span class="lbl">原生/发送</span><span class="v-dim" id="legacy-nag-rxtx">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">AP/Hands</span><span class="v-dim" id="legacy-nag-context">-- / --</span></div>
+    <div class="diag-item"><span class="lbl">当前状态</span><span class="v-dim" id="legacy-nag-state">等待</span></div>
+    <div class="diag-item"><span class="lbl">覆盖率/静默</span><span class="v-dim" id="legacy-nag-coverage">0% / 0 ms</span></div>
+    <div class="diag-item"><span class="lbl">重试/降级</span><span class="v-dim" id="legacy-nag-retry">0 / 正常</span></div>
+    <div class="diag-item"><span class="lbl">回声/跟随/冲突</span><span class="v-dim" id="legacy-nag-collision">0 / 0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">阻断原因</span><span class="v-dim" id="legacy-nag-block">disabled</span></div>
   </div>
   <div class="setting-row">
     <div>
       <div class="setting-name">声音警告抑制</div>
-      <div class="setting-desc">ISA bit 抑制 + 0x3C2 音量滚轮DND</div>
+      <div class="setting-desc">独立 ISA 提示音策略，不联动滚轮或摄像头配置</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-sound-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
@@ -1318,10 +1375,19 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
-      <div class="setting-name">音量滚轮DND <span class="exp-badge">Phase 3</span></div>
-      <div class="setting-desc">0x3C2 四步序列消除音量提示音</div>
+      <div class="setting-name">Legacy 左滚轮免打扰 <span class="exp-badge">实车路径</span></div>
+      <div class="setting-desc">0x399 告警触发；CAN1 原生 0x045 告警持续才反向平衡，清除后立即停止</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-dnd-vol-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="diag-grid" style="margin:6px 0 4px">
+    <div class="diag-item"><span class="lbl">告警状态</span><span class="v-dim" id="wheel-hands-state">--</span></div>
+    <div class="diag-item"><span class="lbl">原生 0x045</span><span class="v-dim" id="wheel-native-3c2">等待</span></div>
+    <div class="diag-item"><span class="lbl">状态/正向/待补偿</span><span class="v-dim" id="wheel-sequence-state">idle / 0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">正向/补偿/中和完成</span><span class="v-dim" id="wheel-action-type">0 / 0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">重复/冲突</span><span class="v-dim" id="wheel-counter-state">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">回声/镜像</span><span class="v-dim" id="wheel-echo-state">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">阻断原因</span><span class="v-dim" id="wheel-blocked-reason">disabled</span></div>
   </div>
   <div class="setting-row">
     <div>
@@ -1332,23 +1398,55 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
-      <div class="setting-name">速度滚轮DND <span class="exp-badge">Phase 3</span></div>
-      <div class="setting-desc">0x3C2 四步序列消除速度滚轮提示</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="def-dnd-spd-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
-  <div class="setting-row">
-    <div>
       <div class="setting-name">AP/EAP 兼容 <span class="exp-badge">未验证</span></div>
       <div class="setting-desc">保留 AP/EAP 兼容策略位</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-apeap-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">Abort Guard <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">0x399 AP state 8/9 后锁止 Legacy 注入；仅状态小于 2 自动解除</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-abort-guard-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">Minimal Inject <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">AP 接管边沿仅注入 5 帧 burst，随后停止（远离 6→8/9 中止窗口）</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-minimal-inject-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">Instant Engage <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">AP 真接合瞬间注入，跳过稳定等待（ap_first_edge，#108）</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-instant-engage-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">Soft Engage <span class="exp-badge">实验</span></div>
+      <div class="setting-desc">方向盘近居中（±5°）才注入 bit46，避免转弯中激活（#108）</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-soft-engage-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="diag-grid" style="margin:6px 0 4px">
+    <div class="diag-item"><span class="lbl">Abort Guard</span><span class="v-dim" id="def-abort-state">关闭</span></div>
+    <div class="diag-item"><span class="lbl">Steer Defense</span><span class="v-dim" id="def-steer-state">关闭</span></div>
   </div>
 </div>
 
 <!-- Slew Config -->
 <div class="card">
   <div class="card-title">保护参数</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">启用 slew rate 限制</div>
+      <div class="setting-desc">仅限制速度偏移值下降速率，不控制 FSD 防御或 NAG</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="hw3-slew-tgl" onchange="saveHw3Slew()"><div class="tgl-track"></div></label>
+  </div>
   <div class="diag-grid">
     <div class="diag-item"><span class="lbl">最大下降速率</span><span class="v-acc" id="def-rate">--</span></div>
     <div class="diag-item"><span class="lbl">最小保持偏移</span><span class="v-acc" id="def-min">--</span></div>
@@ -1665,19 +1763,42 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <div id="can-recorder" style="display:none">
   <div class="card">
     <div class="card-title">CAN 记录器</div>
-    <div style="display:flex;gap:8px;margin-bottom:10px">
+    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <button class="btn btn-sm" id="rec-start" onclick="startRec()">开始记录</button>
       <button class="btn btn-sm btn-outline" id="rec-stop" onclick="stopRec()" disabled>停止</button>
       <button class="btn btn-sm btn-outline" id="rec-dl" onclick="downloadRec()" disabled>下载 CSV</button>
+      <button class="btn btn-sm btn-outline" id="rec-meta" onclick="downloadRecMeta()" disabled>下载诊断</button>
     </div>
     <div class="setting-row">
-      <div class="setting-name">录制帧数限制</div>
-      <input class="inp" type="number" id="rec-limit" value="1000" style="width:100px">
+      <div><div class="setting-name">录制时长</div><div class="setting-desc">后台流式写入，不阻塞 CAN</div></div>
+      <select class="inp" id="rec-duration" style="width:110px"><option value="60">60 秒</option><option value="90">90 秒</option><option value="120" selected>120 秒</option></select>
+    </div>
+    <div class="setting-row" style="align-items:flex-start">
+      <div><div class="setting-name">CAN ID 过滤</div><div class="setting-desc">含 Model X CAN1 0x045 滚轮 RX/TX 及只读网关别名 0x238 / 0x292</div></div>
+      <input class="inp" id="rec-ids" value="045,118,129,186,238,292,370,389,399,3C2,3EE,3FD,47D,47F,488,5D9" style="width:min(420px,100%)">
     </div>
     <div class="setting-row">
       <div class="setting-name">状态</div>
       <div class="setting-desc" id="rec-status">空闲</div>
     </div>
+    <div class="diag-grid">
+      <div class="diag-item"><span class="lbl">已写入</span><span class="v-dim" id="rec-count">0 帧</span></div>
+      <div class="diag-item"><span class="lbl">丢帧</span><span class="v-dim" id="rec-dropped">0</span></div>
+      <div class="diag-item"><span class="lbl">文件</span><span class="v-dim" id="rec-bytes">0 KB</span></div>
+      <div class="diag-item"><span class="lbl">进度</span><span class="v-dim" id="rec-progress">0 / 120 秒</span></div>
+      <div class="diag-item"><span class="lbl">CAN1 0x3C2 RX/TX/ERR</span><span class="v-dim" id="rec-3c2-can1">0 / 0 / 0</span></div>
+      <div class="diag-item"><span class="lbl">CAN2 0x3C2 RX/TX/ERR</span><span class="v-dim" id="rec-3c2-can2">0 / 0 / 0</span></div>
+      <div class="diag-item"><span class="lbl">mux1 / idle</span><span class="v-dim" id="rec-3c2-mux1">0 / 0</span></div>
+      <div class="diag-item"><span class="lbl">音量上 / 下</span><span class="v-dim" id="rec-3c2-volume">0 / 0</span></div>
+      <div class="diag-item"><span class="lbl">0x3C2 TX / 错误</span><span class="v-dim" id="rec-3c2-tx">0 / 0</span></div>
+      <div class="diag-item"><span class="lbl">CAN1 0x045 RX/TX/ERR</span><span class="v-dim" id="rec-045-can1">0 / 0 / 0</span></div>
+      <div class="diag-item"><span class="lbl">CAN2 0x045 RX/TX/ERR</span><span class="v-dim" id="rec-045-can2">0 / 0 / 0</span></div>
+      <div class="diag-item"><span class="lbl">0x045 滚轮 上 / 下</span><span class="v-dim" id="rec-045-updown">0 / 0</span></div>
+      <div class="diag-item"><span class="lbl">0x045 前 / 后</span><span class="v-dim" id="rec-045-fwdback">0 / 0</span></div>
+      <div class="diag-item"><span class="lbl">条件轮 上 / 下</span><span class="v-dim" id="rec-045-cond">0 / 0</span></div>
+      <div class="diag-item"><span class="lbl">最后 Bus / Counter / CRC</span><span class="v-dim" id="rec-045-last">-- / -- / --</span></div>
+    </div>
+    <div class="setting-desc" style="margin-top:10px">120 秒可靠录制需保留过滤。全量双 CAN 流量可能在时限前占满设备存储，状态会明确标记。</div>
   </div>
 </div>
 
@@ -1863,8 +1984,6 @@ function experimentSummary(){
   if(light&&light.checked)flags.push('灯光爆闪');
   var apeap=$('def-apeap-tgl');
   if(apeap&&apeap.checked)flags.push('AP/EAP');
-  var bionic=$('def-bionic-tgl');
-  if(bionic&&bionic.checked)flags.push('FSD增强');
   return flags.length?('实验: '+flags.join('/')):'实验项需实车验证';
 }
 function fmtUp(sec){
@@ -2027,6 +2146,7 @@ function toggleLanguage(){
 
 // ── Navigation ─────────────────────────────────────────────
 function showPage(pageId){
+  var mobMore=$('mob-more');if(mobMore)mobMore.classList.remove('open');
   var _tgt=document.getElementById(pageId);
   if(_tgt&&_tgt.getAttribute('data-single-hide')&&isSingleCan())pageId='pg-overview';
   var pages=document.querySelectorAll('.page');
@@ -2150,12 +2270,12 @@ async function poll(){
   setText('ov-can', d.can ? 'CAN1 Online' : 'CAN1 Offline');
   // AP 激活状态（问题2：替换 CAN2，与 ap-core-state-pill 同源字段 d.apInjectionState）
   var apState = d.apInjectionState || 'blocked';
-  var apActive = (apState === 'injecting' || apState === 'settling');
+  var apActive = (apState === 'injecting' || apState === 'settling' || apState === 'armed');
   setText('ov-ap', apActive ? '激活' : '等待');
   var apMetric = $('ov-ap-metric');
   if (apMetric) apMetric.style.borderColor = apActive ? 'rgba(52,211,153,.45)' : '';
   var apHint = $('ov-ap-hint');
-  if (apHint) apHint.textContent = (apState==='settling') ? ('Gate ' + (d.apDelayMs || 2000) + 'ms · 已就绪') : (apState==='injecting' ? '正在注入' : '门控未触发');
+  if (apHint) apHint.textContent = (apState==='settling') ? ('Gate ' + (d.apDelayMs || 2000) + 'ms · 已就绪') : (apState==='injecting' ? '正在注入' : (apState==='armed' ? 'Legacy 已就绪' : '门控未触发'));
   setText('ov-up',fmtUp(uptime));
   var mCan=$('m-can');
   if(mCan){mCan.className=(mCan.classList&&mCan.classList.contains('val')?'val ':'stat-val ')+(d.can?'v-ok':'v-err');mCan.textContent=d.can?'Online':'Offline';}
@@ -2208,7 +2328,7 @@ async function poll(){
   setStatusTriplet('module',d.ci?'FSD ON':'FSD OFF','启动保存: '+((d.bootCan!==undefined?d.bootCan:d.ci)?'ON':'OFF'),d.can?'CAN Online':'CAN Offline',d.can?'ok':'err');
   setStatusTriplet('hw',(d.hwName||hwLabel(d.hw)),'mode_hw: '+(d.hwName||hwLabel(d.hw)),(d.can?'CAN运行 / ':'CAN离线 / ')+(d.hwName||hwLabel(d.hw)),d.can?'ok':'warn');
   setStatusTriplet('speed','偏移 '+(d.soff!==undefined?d.soff:'--'),driveLabel(d.sp,d.spAuto),d.fusedSpeedLimitKph?('Fused '+d.fusedSpeedLimitKph+' kph'):'CAN未给出速度',d.can?'ok':'warn');
-  setStatusTriplet('defense',d.hw3OffsetSlew?'防御 ON':'防御 OFF','slew '+(d.hw3OffsetSlew?'ON':'OFF'),'触发 '+(d.hw3SlewCount||0)+' / offset '+(d.hw3OffsetLast!==undefined?d.hw3OffsetLast:'--'),d.hw3OffsetSlew?'ok':'warn');
+  setStatusTriplet('defense',d.defenseEnabled?'防御 ON':'防御 OFF','slew '+(d.hw3OffsetSlew?'ON':'OFF'),'NAG '+(d.bionicSteering?'ON':'OFF'),d.defenseEnabled?'ok':'warn');
 
   // FSD page toggle
   updateFsdToggle(d.ci);
@@ -2237,6 +2357,7 @@ async function poll(){
 
   // Defense page
   updateDefensePage(d);
+  updateLegacyNagStatus(d);
 
   // Legacy Real Wiring truth cards
   renderLegacyTruth(d);
@@ -2327,6 +2448,7 @@ async function loadDriveProfile(){
 
 var speedStrategyState='auto';
 var speedManualPct=30;
+var legacySpeedModeState='off';
 
 function speedPctVal(id,def){
   var el=$(id);
@@ -2372,9 +2494,24 @@ function updateSpeedPage(d){
   setText('sp-wire',d.hw3WireEncoding!==undefined?d.hw3WireEncoding:'--');
   setText('sp-stock',d.hw3StockOffset!==undefined?d.hw3StockOffset+' kph':'--');
   setText('sp-raw',d.fusedSpeedLimitRaw!==undefined?d.fusedSpeedLimitRaw:'--');
+  var ls=d.legacySmartSpeed||{};
+  setText('sp-legacy-source',ls.limitSource&&ls.limitSource!=='none'?(ls.limitSource+' / '+(ls.limitKph||0)+' kph'):'--');
+  setText('sp-legacy-target',ls.smoothedTargetKph?ls.smoothedTargetKph+' kph':'--');
+  setText('sp-legacy-bus',(ls.busMode||'Auto')+' / '+(ls.targetBus||'AUTO'));
+  setText('sp-legacy-runtime',ls.runtimeActive?'运行中':(ls.configured?'等待条件':'未配置'));
+  setText('sp-legacy-rx2f8',ls.rx2F8||0);
+  setText('sp-legacy-rx3ee',ls.rx3EE||0);
+  setText('sp-legacy-tx',(ls.txOk||0)+' / '+(ls.txFail||0));
+  setText('sp-legacy-block',ls.blockedReason||'--');
+  if(ls.legacyHandler){
+    var run=ls.runtimeActive?('Legacy '+(ls.offsetKph||0)+' kph / '+(ls.targetBus||'AUTO')):('Legacy '+(ls.blockedReason||'waiting'));
+    setStatusTriplet('speed',speedStrategyState,'Legacy '+(ls.mode||speedStrategyState),run,ls.runtimeActive?'ok':(ls.busAmbiguous?'err':'warn'));
+  }
 }
 
 function updateDefensePage(d){
+  var master=$('def-master-tgl');
+  if(master)master.checked=!!d.defenseEnabled;
   var tgl=$('hw3-slew-tgl');
   if(tgl)tgl.checked=!!d.hw3OffsetSlew;
   setText('def-rate',d.hw3SlewRate!==undefined?d.hw3SlewRate+'%/s':'--');
@@ -2383,7 +2520,7 @@ function updateDefensePage(d){
   setText('def-cur',d.hw3OffsetLast!==undefined?d.hw3OffsetLast:'--');
   var dot=$('def-dot');
   var statusEl=$('def-status');
-  if(d.hw3OffsetSlew){
+  if(d.defenseEnabled){
     if(dot)dot.className='status-dot ok';
     setText('def-status',T('保护已启用'));
   }else{
@@ -2395,26 +2532,53 @@ function updateDefensePage(d){
 async function loadDefenseConfig(){
   var d=await fetchJson('/defense_config');
   if(!d)return;
+  var master=$('def-master-tgl');
+  if(master)master.checked=!!d.enabled;
   var tgl=$('hw3-slew-tgl');
-  if(tgl)tgl.checked=!!d.enabled;
+  if(tgl)tgl.checked=!!d.slew_rate_enabled;
   var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
-  // Bionic auto-disabled warning
-  var bioWarn=$('def-bionic-warn');
-  if(bioWarn)bioWarn.style.display=!!d.bionic_disabled?'block':'none';
+  updateLegacyNagStatus(d);
   var sound=$('def-sound-tgl');if(sound)sound.checked=!!d.sound_warning_suppression;
   var isaOvr=$('def-isa-override-tgl');if(isaOvr)isaOvr.checked=!!d.isa_override;
   var dndVol=$('def-dnd-vol-tgl');if(dndVol)dndVol.checked=!!d.dnd_volume;
   var nd=$('def-speed-nd-tgl');if(nd)nd.checked=!!d.speed_no_disturb;
   var dndSpd=$('def-dnd-spd-tgl');if(dndSpd)dndSpd.checked=!!d.dnd_speed;
   var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
+  var abortTgl=$('def-abort-guard-tgl');if(abortTgl)abortTgl.checked=!!d.abort_guard;
+  var minimalTgl=$('def-minimal-inject-tgl');if(minimalTgl)minimalTgl.checked=!!d.minimal_inject;
+  var instantTgl=$('def-instant-engage-tgl');if(instantTgl)instantTgl.checked=!!d.instant_engage;
+  var softTgl=$('def-soft-engage-tgl');if(softTgl)softTgl.checked=!!d.soft_engage;
+  var safety=d.legacyInjectionSafety||{};
+  var abort=safety.abortGuard||{};
+  var steer=safety.steerDefense||{};
+  setText('def-abort-state',abort.enabled?(abort.latched?('锁止 / AP '+(abort.lastAbortState??'--')):('就绪 / 阻断 '+(abort.blocks||0))):'关闭');
+  setText('def-steer-state',steer.minimalEnabled?((steer.minimalUsed||0)+'/'+(steer.minimalBudget||5)+' 帧 · Instant '+(steer.instantBypassCount||0)+' 次'):(steer.instantEnabled?('Instant '+(steer.instantBypassCount||0)+' 次'):'关闭'));
   setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
   var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
-  var exp=(d.bionic_steering||d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
+  var exp=(d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
+  var nag=d.legacyNag||{};
   setStatusTriplet('defense',d.enabled?'防御 ON':'防御 OFF',
-    'NVS '+(d.enabled?'ON':'OFF')+(exp?' / 含实验项':''),
-    exp?'实验项需实车验证':'等待 /status 运行确认',
-    exp?'warn':(d.enabled?'ok':'warn'));
+    'NVS '+(d.enabled?'ON':'OFF')+(d.bionic_steering?' / NAG ON':''),
+    d.bionic_steering?('NAG '+(nag.runtime?'运行中':(nag.blockedReason||'等待'))):(exp?'实验项需实车验证':'等待 /status 运行确认'),
+    nag.runtime?'ok':(exp?'warn':(d.enabled?'ok':'warn')));
   setText('tb-exp',experimentSummary());
+}
+
+function updateLegacyNagStatus(d){
+  var nag=(d&&d.legacyNag)||{};
+  setText('legacy-nag-mode',(nag.torqueModel||nag.mode||'continuous_absolute')+' / '+(nag.state||'disabled'));
+  setText('legacy-nag-bus',nag.bus||'AUTO');
+  setText('legacy-nag-tx',(nag.tx370||0)+' / '+(nag.txFail||0));
+  setText('legacy-nag-rxtx',(nag.rx370||0)+' / '+(nag.tx370||0));
+  var steering=nag.steeringSeen?('0x488 '+Number(nag.steeringAngleDeg||0).toFixed(1)+'° / '+(nag.steeringAgeMs??'--')+' ms'):'0x488 未发现';
+  setText('legacy-nag-context',(nag.apState??'--')+' / '+(nag.handsOnState??'--')+' / '+steering);
+  setText('legacy-nag-block',nag.blockedReason||'none');
+  setText('legacy-nag-coverage',Number(nag.coveragePct||0).toFixed(1)+'% / '+(nag.maxSilentMs||0)+' ms');
+  setText('legacy-nag-retry',(nag.txRetryOk||0)+' / '+(nag.degraded?'已降级':'正常'));
+  setText('legacy-nag-collision',(nag.duplicateCounterObserved||0)+' / '+(nag.expectedNativeFollowerObserved||0)+' / '+(nag.counterCollisionObserved||0));
+  var state=!nag.configured?'未启用':(!nag.legacyHandler?'仅Legacy可用':(nag.runtime?'运行中':(nag.blockedReason||'等待')));
+  setText('legacy-nag-state',state);
+  setCls('legacy-nag-state','v-'+(nag.runtime?'ok':(nag.configured?'warn':'dim')));
 }
 
 // ── FSD Toggle ─────────────────────────────────────────────
@@ -2525,10 +2689,69 @@ function applySpeedCustom(d){
 async function loadSpeedStrategy(){
   var strategyResp=await fetchJson('/speed_strategy');
   var customResp=await fetchJson('/speed_custom');
+  var legacyResp=await fetchJson('/legacy_speed_config');
   if(customResp)applySpeedCustom(customResp);
+  if(legacyResp)applyLegacySpeedConfig(legacyResp);
   var strategy=(strategyResp&&strategyResp.strategy)||'auto';
   showSpeedMode(strategy);
   setStatusTriplet('speed',strategy,strategy,'等待 /status 速度确认',strategy==='custom'?'warn':'ok');
+}
+
+function legacySpeedVal(id,def,max){
+  var el=$(id),v=el?parseInt(el.value,10):def;
+  if(isNaN(v))v=def;
+  if(v<0)v=0;
+  if(v>max)v=max;
+  if(el)el.value=String(v);
+  return v;
+}
+
+function updateLegacySpeedMode(mode){
+  legacySpeedModeState=mode||'off';
+  var cards=$('legacy-speed-mode');
+  if(cards){
+    var items=cards.querySelectorAll('.sel-card'),values=['off','manual','auto','custom'];
+    for(var i=0;i<items.length;i++)items[i].classList.toggle('active',values[i]===legacySpeedModeState);
+  }
+  var manual=$('legacy-speed-manual-row'),custom=$('legacy-speed-custom-panel');
+  if(manual)manual.style.display=legacySpeedModeState==='manual'?'flex':'none';
+  if(custom)custom.style.display=legacySpeedModeState==='custom'?'block':'none';
+}
+
+function applyLegacySpeedConfig(d){
+  if(!d)return;
+  var bus=$('legacy-speed-bus');if(bus)bus.value=d.bus||'Auto';
+  var smooth=$('legacy-speed-smooth');if(smooth)smooth.checked=!!d.smooth_down;
+  var rate=$('legacy-speed-rate');if(rate)rate.value=d.smooth_rate_kph_s||5;
+  var manual=$('legacy-speed-manual');if(manual&&d.manual_offset_kph!==undefined)manual.value=d.manual_offset_kph;
+  var vals=d.custom_pct||[];
+  for(var i=0;i<4;i++){var el=$('legacy-speed-cp'+(i+1));if(el&&vals[i]!==undefined)el.value=vals[i];}
+  updateLegacySpeedMode(d.mode||'off');
+}
+
+async function setLegacySpeedMode(mode){
+  updateLegacySpeedMode(mode);
+  await saveLegacySpeedConfig();
+}
+
+async function saveLegacySpeedConfig(){
+  var bus=$('legacy-speed-bus'),smooth=$('legacy-speed-smooth'),rate=$('legacy-speed-rate');
+  var data={
+    mode:legacySpeedModeState,
+    manual_offset_kph:String(legacySpeedVal('legacy-speed-manual',0,33)),
+    cp1:String(legacySpeedVal('legacy-speed-cp1',50,63)),
+    cp2:String(legacySpeedVal('legacy-speed-cp2',30,63)),
+    cp3:String(legacySpeedVal('legacy-speed-cp3',20,63)),
+    cp4:String(legacySpeedVal('legacy-speed-cp4',10,63)),
+    bus:bus?bus.value:'Auto',
+    smooth_down:smooth&&smooth.checked?'1':'0',
+    smooth_rate_kph_s:String(rate&&rate.value?rate.value:5)
+  };
+  try{
+    var d=await postForm('/legacy_speed_config',data);
+    applyLegacySpeedConfig(d);
+    showToast(T('已保存')||'Saved',true);
+  }catch(e){loadSpeedStrategy();}
 }
 
 async function setSpeedStrategy(strategy){
@@ -2604,10 +2827,10 @@ function renderApInjectionState(d){
   if(!d)return;
   var gate=(d.fsdDiag&&d.fsdDiag.gate)?d.fsdDiag.gate:{};
   var state=d.apInjectionState||'blocked';
-  var label=state==='waiting_ap'?'等待 AP':state==='settling'?'稳定计时中':state==='injecting'?'正在注入':'已阻断';
+  var label=state==='waiting_ap'?'等待 AP':state==='settling'?'稳定计时中':state==='injecting'?'正在注入':state==='armed'?'Legacy 已就绪':'已阻断';
   setText('ap-core-state-pill',label);
   // 驾驶舱状态主区 + Gate 进度条（仅显示层，不读新后端字段）
-  var apActive = (state==='injecting'||state==='settling');
+  var apActive = (state==='injecting'||state==='settling'||state==='armed');
   var apBig = document.getElementById('ap-core-state-big');
   var apPanel = document.getElementById('ap-state-panel');
   var apFill = document.getElementById('ap-gate-fill');
@@ -2702,11 +2925,14 @@ async function saveHw3Speed(){
 
 // ── HW3 Slew Save ──────────────────────────────────────────
 async function saveHw3Slew(){
-  saveDefenseConfig();
+  var tgl=$('hw3-slew-tgl');
+  try{await postForm('/config','hw3OffsetSlew='+(tgl&&tgl.checked?'1':'0'));}
+  catch(e){}
+  poll();
 }
 
 async function saveDefenseConfig(){
-  var tgl=$('hw3-slew-tgl');
+  var master=$('def-master-tgl');
   var bio=$('def-bionic-tgl');
   var sound=$('def-sound-tgl');
   var isaOvr=$('def-isa-override-tgl');
@@ -2714,16 +2940,24 @@ async function saveDefenseConfig(){
   var nd=$('def-speed-nd-tgl');
   var dndSpd=$('def-dnd-spd-tgl');
   var apeap=$('def-apeap-tgl');
+  var abortTgl=$('def-abort-guard-tgl');
+  var minimalTgl=$('def-minimal-inject-tgl');
+  var instantTgl=$('def-instant-engage-tgl');
+  var softTgl=$('def-soft-engage-tgl');
   var data={
-    enabled:tgl&&tgl.checked?'1':'0',
+    enabled:master&&master.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
     isa_override:isaOvr&&isaOvr.checked?'1':'0',
     dnd_volume:dndVol&&dndVol.checked?'1':'0',
     speed_no_disturb:nd&&nd.checked?'1':'0',
-    dnd_speed:dndSpd&&dndSpd.checked?'1':'0',
-    ap_eap_compatible:apeap&&apeap.checked?'1':'0'
+    ap_eap_compatible:apeap&&apeap.checked?'1':'0',
+    abort_guard:abortTgl&&abortTgl.checked?'1':'0',
+    minimal_inject:minimalTgl&&minimalTgl.checked?'1':'0',
+    instant_engage:instantTgl&&instantTgl.checked?'1':'0',
+    soft_engage:softTgl&&softTgl.checked?'1':'0'
   };
+  if(dndSpd)data.dnd_speed=dndSpd.checked?'1':'0';
   try{await postForm('/defense_config',data);}
   catch(e){loadDefenseConfig()}
   loadDefenseConfig();
@@ -3449,6 +3683,7 @@ function switchCanTab(tab){
     if(el)el.style.display=tabNames[i]===tab?'block':'none';
   }
   if(tab==='sniffer')pollSniffer();
+  if(tab==='recorder')pollRecStatus();
   if(tab==='controller')pollCanController();
   if(tab==='debug')pollLastWrite();
 }
@@ -3494,19 +3729,46 @@ function toggleSniffPause(){
 
 // Recorder
 async function startRec(){
-  try{await postForm('/rec_start',{});}catch(e){return}
+  var duration=$('rec-duration')?$('rec-duration').value:'120';
+  var ids=$('rec-ids')?$('rec-ids').value.trim():'';
+  try{await postForm('/rec_start',{duration_s:duration,ids:ids});}catch(e){return}
   recActive=true;
-  $('rec-start').disabled=true;$('rec-stop').disabled=false;$('rec-dl').disabled=true;
+  $('rec-start').disabled=true;$('rec-stop').disabled=false;$('rec-dl').disabled=true;$('rec-meta').disabled=true;
   setText('rec-status',T('录制中')||'Recording...');
+  pollRecStatus();
 }
 async function stopRec(){
-  setText('rec-status',T('保存中...')||'Saving...');
-  try{await postForm('/rec_stop',{});}catch(e){setText('rec-status',T('保存失败')||'Save failed');return}
-  recActive=false;
-  $('rec-start').disabled=false;$('rec-stop').disabled=true;$('rec-dl').disabled=false;
-  setText('rec-status',T('已保存')||'Saved');
+  setText('rec-status',T('收尾中...')||'Finalizing...');
+  try{await postForm('/rec_stop',{});}catch(e){setText('rec-status',T('停止失败')||'Stop failed');return}
+  pollRecStatus();
 }
 function downloadRec(){window.location.href='/rec_download'}
+function downloadRecMeta(){window.location.href='/rec_meta'}
+function recFmtBytes(n){return n>=1048576?(n/1048576).toFixed(2)+' MB':(n/1024).toFixed(1)+' KB'}
+async function pollRecStatus(){
+  var d=await fetchJson('/rec_status');if(!d)return;
+  recActive=!!d.active;
+  var finalizing=!!d.finalizing;
+  var elapsed=Math.floor((d.elapsed_ms||0)/1000),duration=Math.floor((d.duration_ms||120000)/1000);
+  setText('rec-count',(d.count||0)+' 帧');setText('rec-dropped',d.dropped||0);
+  setText('rec-bytes',recFmtBytes(d.file_bytes||0));setText('rec-progress',Math.min(elapsed,duration)+' / '+duration+' 秒');
+  setText('rec-3c2-can1',(d.can1_rx_3c2||0)+' / '+(d.can1_tx_3c2||0)+' / '+(d.can1_tx_error_3c2||0));
+  setText('rec-3c2-can2',(d.can2_rx_3c2||0)+' / '+(d.can2_tx_3c2||0)+' / '+(d.can2_tx_error_3c2||0));
+  setText('rec-3c2-mux1',(d.can2_rx_3c2_mux1||0)+' / '+(d.can2_rx_3c2_mux1_idle||0));
+  setText('rec-3c2-volume',(d.can2_rx_3c2_volume_up||0)+' / '+(d.can2_rx_3c2_volume_down||0));
+  setText('rec-3c2-tx',(d.can2_tx_3c2||0)+' / '+(d.can2_tx_error_3c2||0));
+  setText('rec-045-can1',(d.can1_rx_045||0)+' / '+(d.can1_tx_045||0)+' / '+(d.can1_tx_error_045||0));
+  setText('rec-045-can2',(d.can2_rx_045||0)+' / '+(d.can2_tx_045||0)+' / '+(d.can2_tx_error_045||0));
+  setText('rec-045-updown',(d.wheel_045_lever_up||0)+' / '+(d.wheel_045_lever_down||0));
+  setText('rec-045-fwdback',(d.wheel_045_lever_forward||0)+' / '+(d.wheel_045_lever_back||0));
+  setText('rec-045-cond',(d.wheel_045_cond_up||0)+' / '+(d.wheel_045_cond_down||0));
+  setText('rec-045-last',(d.wheel_045_last_bus||'--')+' / '+(d.wheel_045_last_counter??'--')+' / '+toHex(d.wheel_045_last_crc||0));
+  var status=recActive?'录制中':finalizing?'收尾中':d.storage_full?'存储已满':d.saved?'已保存':'空闲';
+  if((d.dropped||0)>0)status+=' · 丢帧 '+d.dropped;
+  if(d.stop_reason&&d.stop_reason!=='none')status+=' · '+d.stop_reason;
+  setText('rec-status',status);
+  $('rec-start').disabled=recActive||finalizing;$('rec-stop').disabled=!recActive;$('rec-dl').disabled=recActive||finalizing||!d.saved;$('rec-meta').disabled=recActive||finalizing||!d.saved;
+}
 
 // Controller
 async function pollCanController(){
@@ -3707,9 +3969,14 @@ function renderLegacyTruth(d){
   set('service-last-data',svctx.lastData||'--');
   set('service-tx-evidence',`成功 ${svctx.txOk||0} / 失败 ${svctx.txErr||0}`);
   const wd=d.wheelDndDiag||{};
-  set('wheel-native-3c2',wd.native3c2Seen?`已接收 ${wd.native3c2AgeMs}ms 前`:'等待原生帧');
-  set('wheel-base-frame',wd.baseFrameMode==='native'?'原生帧':wd.baseFrameMode==='synthetic_fallback'?'合成帧':wd.baseFrameMode||'等待中');
-  set('wheel-sequence-state',wd.sequenceState==='sent'?'已发送':wd.sequenceState==='failed'?'失败':wd.sequenceState==='running'?'运行中':wd.sequenceState||'空闲');
+  set('wheel-hands-state',wd.dasStatusSeen?`AP${wd.apState??'--'} · 手部${wd.handsState??'--'} · ${wd.warningActive?'告警':'等待'} · ${wd.dasStatusDriver||'unknown'}`:'等待 0x399');
+  set('wheel-native-3c2',wd.native045Seen?`${wd.native045AgeMs} ms · C${Number(wd.nativeCounter||0).toString(16).toUpperCase()}`:'等待 CAN1 0x045');
+  set('wheel-base-frame',wd.baseFrameMode||'等待中');
+  set('wheel-sequence-state',`${wd.sequenceState||'idle'} / ${wd.positiveThisEpisode||0} / ${wd.compensationPending||0}`);
+  set('wheel-action-type',`${wd.positiveTx||0} / ${wd.negativeTx||0} / ${wd.volumeNeutralEpisodes||0}`);
+  set('wheel-counter-state',`${wd.expectedCounterDuplicates||0} / ${wd.counterConflicts||0}`);
+  set('wheel-echo-state',`${wd.ownEchoRx||0} / ${wd.gatewayMirrorRx||0}`);
+  set('wheel-blocked-reason',wd.blockedReason||'--');
 }
 
 // ── Temp from system_status ────────────────────────────────
@@ -3806,7 +4073,7 @@ document.addEventListener('DOMContentLoaded',function(){
     var activePage=document.querySelector('.page.active');
     if(activePage){
       var pid=activePage.id;
-      if(pid==='pg-can'){if(canTab==='sniffer'&&!sniffPaused)pollSniffer();else if(canTab==='debug')pollLastWrite()}
+      if(pid==='pg-can'){if(canTab==='sniffer'&&!sniffPaused)pollSniffer();else if(canTab==='recorder')pollRecStatus();else if(canTab==='debug')pollLastWrite()}
       if(pid==='pg-bus2'&&!isSingleCan())pollCAN2();
       if(pid==='pg-shift'&&!isSingleCan())pollGearAssist();
     }

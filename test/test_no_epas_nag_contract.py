@@ -1,58 +1,72 @@
 #!/usr/bin/env python3
-"""Guard rail: EPAS-faithful nag injection must stay REMOVED.
-
-DashEpasNagEngine injected spoofed 0x370 (EPAS own-status) frames and caused a
-real-vehicle body-control fault (2026-06-19). It was physically removed. This
-test prevents re-introducing that hazard class by asserting the forbidden
-symbols are absent from compiled source.
-
-Run: python3 -m pytest test/test_no_epas_nag_contract.py -q
-"""
+"""Positive contract for the Legacy Continuous Absolute v4 implementation."""
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parent.parent
+HANDLERS = (ROOT / "include" / "handlers.h").read_text()
+DASH = (ROOT / "include" / "web" / "mcp2515_dashboard.h").read_text()
+UI = (ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h").read_text()
+ENGINE = (ROOT / "include" / "dash_reactive_nag.h").read_text()
+V4_ENGINE = (ROOT / "include" / "dash_legacy_nag_v4.h").read_text()
 
-# Symbols that exist ONLY for the removed DashEpasNagEngine path.
-# Legacy NagHandler / nagKillerRuntime / bit-19 baseline do NOT match these.
-FORBIDDEN = [
-    "DashEpasNag",       # engine struct + diag
-    "dashEpasNag",       # global instance / wiring
-    "epasNagDiag",       # /status JSON object
-    "tryBuildEcho",      # engine echo builder
-    "nextDemandTorque",  # engine demand-state machine
-    "EpasNagTraceRing",  # trace recorder
-    "dash_epas_nag",     # include filename
-    "def_epnag",         # NVS key
-]
-
-# Scanned COMPILED source only (never test/ — this file itself contains the words).
-SCAN_DIRS = [ROOT / "include", ROOT / "src"]
-SCAN_FILES = [ROOT / "platformio.ini"]
-SRC_EXTS = (".h", ".hpp", ".c", ".cpp", ".ino")
+def test_legacy_owns_continuous_absolute_v4_subfeature():
+    legacy = re.search(r"struct LegacyHandler.*?^\};", HANDLERS, re.S | re.M)
+    assert legacy
+    body = legacy.group(0)
+    assert "DashLegacyNagV4 legacyNagV4" in body
+    assert "frame.id == 880" in body
+    assert "frame.id == 921" in body
+    assert "driver.send(echo)" in body
 
 
-def _source_text():
-    chunks = []
-    for d in SCAN_DIRS:
-        for p in d.rglob("*"):
-            if p.is_file() and p.suffix in SRC_EXTS:
-                chunks.append(p.read_text(errors="ignore"))
-    for f in SCAN_FILES:
-        if f.exists():
-            chunks.append(f.read_text(errors="ignore"))
-    return "\n".join(chunks)
+def test_runtime_is_default_off_and_layered():
+    assert "Shared<bool> bionicSteering{false}" in HANDLERS
+    assert "nagKillerRuntime = canActive;" in DASH
+    assert "nagKillerRuntime = canActive && dashDefenseEnabled" not in DASH
+    assert "legacyNagConfigured()" in HANDLERS
+    assert "legacyNagApContextActive" in HANDLERS
+    assert "currentGear != 4" not in HANDLERS
+    assert "kNagContextStaleMs" in HANDLERS
+    assert "legacyNagLastTxData" in HANDLERS
+    assert "CounterCollision" in HANDLERS
+    assert "DasSatisfied" in ENGINE
+    assert "counterCollisionObserved" in DASH
+    assert "expectedNativeFollowerObserved" in HANDLERS
+    assert "kNagNativeFollowerMinMs" in HANDLERS
 
 
-def test_no_epas_nag_symbols_in_compiled_source():
-    src = _source_text()
-    hits = {sym: src.count(sym) for sym in FORBIDDEN if sym in src}
-    assert not hits, (
-        "EPAS-faithful nag symbols must stay REMOVED (2026-06-19 safety incident). "
-        f"Found: {hits}. See docs/EPAS-NAG-REMOVAL-INCIDENT.md — do NOT re-add "
-        "0x370 echo injection; it faults the power-steering ECU."
-    )
+def test_v4_engine_is_bounded_and_same_frame_based():
+    assert "kTorqueRawBase{2050}" in V4_ENGINE
+    assert "kEncoderMinCentiNm{-270}" in V4_ENGINE
+    assert "kEncoderMaxCentiNm{450}" in V4_ENGINE
+    assert "onSteeringRequest" in V4_ENGINE
+    assert "kSteeringFreshMs{250}" in V4_ENGINE
+    assert "kMildMaxCentiNm{180}" in V4_ENGINE
+    assert "kStrongMaxCentiNm{210}" in V4_ENGINE
+    assert "kPreserveNativeHandsOnLevel{true}" in V4_ENGINE
+    assert "echo.data[4] = frame.data[4];" in HANDLERS
+    assert "handsOnState == 0 || handsOnState == 8" in V4_ENGINE
+    assert "CanFrame echo = frame" in HANDLERS
+    assert "legacyNagBus.accept(frame.bus" in HANDLERS
+    assert "legacyNagChecksum(echo)" in HANDLERS
 
 
-def test_no_native_epas_nag_env():
-    ini = (ROOT / "platformio.ini").read_text()
-    assert "[env:native_epas_nag]" not in ini, "native_epas_nag env must stay removed"
+def test_api_nvs_and_ui_contract():
+    assert 'prefs.putBool("def_bio", dashBionicSteering)' in DASH
+    assert 'prefs.getBool("def_bio", false)' in DASH
+    assert '"legacyNag"' in DASH
+    assert '"verified":false' in DASH
+    assert '"vehicleTest":"pending_beta16_vehicle_test"' in DASH
+    assert '"gearGateRequired":false' in DASH
+    assert '"apContextStatusMax":6' in DASH
+    assert 'legacy_nag_strategy' in DASH
+    assert 'continuous_absolute' in DASH
+    assert 'modec_488_one_sided' in DASH
+    assert '"directionSource":"0x488"' in DASH
+    assert "Legacy 0x370 NAG 主路径" in UI
+    assert "continuous_absolute" in UI
+    assert "updateLegacyNagStatus" in UI
+    assert 'id="def-epnag-tgl"' not in UI
+    assert 'id="legacy-nag-strategy"' not in UI
+    assert 'id="legacy-nag-arm-tgl"' not in UI

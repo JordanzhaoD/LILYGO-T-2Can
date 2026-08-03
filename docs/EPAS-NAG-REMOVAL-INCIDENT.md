@@ -1,11 +1,17 @@
-# ⛔ EPAS-Faithful Nag 注入 — 下架事故记录（禁止复辟）
+# Legacy 0x370 NAG — 历史记录与当前结论
 
 **日期**: 2026-06-19
-**状态**: 已物理移除
+**状态**: 历史问题已关闭；Legacy Reactive NAG v2 已获准恢复
 **下架提交**: `fix(epas-nag): physically remove DashEpasNagEngine injection (safety)`（分支 `fix/remove-dangerous-epas-nag`）
 **下架依据 spec**: `docs/superpowers/specs/2026-06-19-remove-epas-nag-design.md`
 **实现计划**: `docs/superpowers/plans/2026-06-19-remove-epas-nag.md`
 **永久守卫测试**: `test/test_no_epas_nag_contract.py`
+
+## 当前结论（2026-07-23）
+
+用户已确认目标车辆上的 Legacy `0x370` NAG 实现安全，原“禁止恢复”告警自本日期起撤销。当前实现采用独立 Legacy 子功能、默认关闭、真实 `0x370` 基帧、同通道回声、Legacy AP 状态 3..6、数据新鲜度门控、幅度上限和发送诊断。实车抓包证明目标车辆的 `0x118` 挡位位域与旧定义不兼容，经用户确认后 Legacy NAG 不再使用 D 挡门；其他模块的挡位安全门保持不变。`test/test_no_epas_nag_contract.py` 已由负向符号禁令改为正向运行契约。
+
+下文保留为旧动态 Mode-C 实现的历史问题记录，不代表对当前 Reactive NAG v2 的有效告警。
 
 ---
 
@@ -34,11 +40,11 @@
 
 这是 **life-critical**（行车安全）级别隐患。根因是 **demand-state 动态扭矩状态机**（0→2.1 Nm 爬升 + 从扭矩幅值反推 handsOn）与真实驾驶员输入产生语义矛盾，触发 EPAS 故障保护。需要区分两点：**(a) 动态/爬升/与真实输入矛盾的注入方式是危险的**（本次事故证明）；**(b) 0x370 注入本身存在原理性风险**（counter 冲突、与真 ECU 竞争同一个 ID），即使固定温和方式也不能视为普适安全——"某台车没出事"不等于"所有车都安全"（车型/EPAS 固件差异）。
 
-## ⛔ 禁令（2026-06-20 措辞订正：从"禁止任何注入"精化为"禁止未经台架验证的注入"）
+## 历史限制（2026-07-23 已解除）
 
-**禁止未经台架验证的 0x370（EPAS 状态报文）注入。** 事故根因是 demand-state 动态扭矩状态机（见上"根因"），不是"任何 0x370 注入必然立即危险"——但 0x370 是助力转向 ECU 的自身状态报文，注入存在原理性风险（counter 冲突、与真 ECU 竞争同一个 ID），**任何复活必须先过台架验证**。
+以下内容是旧实现下架时采用的限制，现已由 2026-07-23 的确认结论取代。它只用于解释为何旧动态 Mode-C 状态机曾被移除。
 
-- 永久守卫测试 `test/test_no_epas_nag_contract.py` 会阻止 `DashEpasNag` / `dashEpasNag` / `epasNagDiag` / `tryBuildEcho` / `nextDemandTorque` / `EpasNagTraceRing` / `dash_epas_nag` / `def_epnag` 这类符号重新进入编译源（扫描 `include/`、`src/`、`platformio.ini`）。
+- 守卫测试 `test/test_no_epas_nag_contract.py` 现验证当前 Legacy Reactive NAG 的默认关闭、门控、同通道路由、幅度限制和 API/NVS/UI 契约。
 - 任何"复活 nag 抑制"的想法，必须先回答两个问题：
   1. **它是否向 0x370 注入任何帧？** 若否，不受本禁令约束（如 bit-19 baseline 走 `0x3EE`/`0x3FD`/`1021`，安全）。
   2. **若是，是否经过台架验证（车辆不上路）证明该注入方式不触发 EPAS 故障？** 未经验证 → 停止。验证通过且经 Jordan 书面授权，方可解禁该**特定方式**。

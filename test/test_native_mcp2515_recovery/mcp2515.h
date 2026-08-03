@@ -57,6 +57,7 @@ public:
     }
 
     void setNormalMode() { normalModeCount++; }
+    void setReceiveAllMode() { receiveAllModeCount++; }
     void setConfigMode() {}
     void setFilterMask(MASK, bool, uint32_t) {}
     void setFilter(RXF, bool, uint32_t) {}
@@ -86,6 +87,7 @@ public:
         resetCount = 0;
         bitrateCount = 0;
         normalModeCount = 0;
+        receiveAllModeCount = 0;
         errorFlagsReadCount = 0;
         lastSpeed = 0;
         lastClock = 0;
@@ -100,6 +102,7 @@ public:
     static int resetCount;
     static int bitrateCount;
     static int normalModeCount;
+    static int receiveAllModeCount;
     static int errorFlagsReadCount;
     static int lastSpeed;
     static int lastClock;

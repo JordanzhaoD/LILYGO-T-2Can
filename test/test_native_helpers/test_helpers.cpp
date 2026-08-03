@@ -277,6 +277,51 @@ void test_runtime_defaults_start_disabled()
     TEST_ASSERT_EQUAL(kEnhancedAutopilotDefaultEnabled, enhancedAutopilotRuntime);
 }
 
+// --- Soft Engage (dashSoftEngageRelease, upstream v2.16-beta.10 parity) ---
+
+void test_soft_engage_disabled_is_passthrough()
+{
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(false, false, false, 0xFF, 999, true, false, 50));
+}
+
+void test_soft_engage_already_sent_is_passthrough()
+{
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(true, true, false, 0xFF, 999, true, false, 50));
+}
+
+void test_soft_engage_not_settled_is_passthrough()
+{
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(true, false, true, 0, 0, false, false, 50));
+}
+
+void test_soft_engage_holds_when_off_centre()
+{
+    // 12.0° (>5.0° threshold), valid, settled, not sent, no timeout -> hold bit46.
+    TEST_ASSERT_FALSE(dashSoftEngageRelease(true, false, true, 0, 120, true, false, 50));
+}
+
+void test_soft_engage_releases_when_centred()
+{
+    // 3.0° (<=5.0°), valid, settled -> release.
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(true, false, true, 0, 30, true, false, 50));
+    // Exactly at threshold (5.0°) -> release (<=).
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(true, false, true, 0, 50, true, false, 50));
+}
+
+void test_soft_engage_releases_on_timeout()
+{
+    // Off-centre but timeout elapsed -> release (never strand the driver).
+    TEST_ASSERT_TRUE(dashSoftEngageRelease(true, false, true, 0, 300, true, true, 50));
+}
+
+void test_soft_engage_invalid_or_unseen_steering_blocks()
+{
+    // Validity != 0 -> not centred -> hold (no timeout).
+    TEST_ASSERT_FALSE(dashSoftEngageRelease(true, false, true, 1, 0, true, false, 50));
+    // steerSeen false -> not centred -> hold (no timeout).
+    TEST_ASSERT_FALSE(dashSoftEngageRelease(true, false, false, 0, 0, true, false, 50));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -320,6 +365,14 @@ int main()
     RUN_TEST(test_ui_bit5_is_not_detected);
     RUN_TEST(test_ui_bit6_still_reads_real_bit);
     RUN_TEST(test_runtime_defaults_start_disabled);
+
+    RUN_TEST(test_soft_engage_disabled_is_passthrough);
+    RUN_TEST(test_soft_engage_already_sent_is_passthrough);
+    RUN_TEST(test_soft_engage_not_settled_is_passthrough);
+    RUN_TEST(test_soft_engage_holds_when_off_centre);
+    RUN_TEST(test_soft_engage_releases_when_centred);
+    RUN_TEST(test_soft_engage_releases_on_timeout);
+    RUN_TEST(test_soft_engage_invalid_or_unseen_steering_blocks);
 
     return UNITY_END();
 }

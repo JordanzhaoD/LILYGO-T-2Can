@@ -1,348 +1,272 @@
 #include <unity.h>
+
 #include "dash_wheel_dnd.h"
 
-// ─── Constants ────────────────────────────────────────────────────────
+static const uint8_t kNativeMux1Idle[8] = {0xA9, 0x55, 0x00, 0x00, 0x00, 0x00, 0x31, 0x80};
 
-void test_dnd_constants()
+static void seedNative3c2(DashWheelDND &dnd, uint32_t nowMs = 1000)
+{
+    TEST_ASSERT_TRUE(dnd.recordNative3c2(kNativeMux1Idle, nowMs));
+}
+
+static void armReactive(DashWheelDND &dnd)
+{
+    dnd.setReactiveConfigured(true);
+    dnd.setRuntimeAllowed(true, DashWheelDndBlock::None);
+}
+
+static void finishReactiveAction(DashWheelDND &dnd, uint32_t startMs)
+{
+    uint8_t data[8] = {};
+    for (uint8_t i = 0; i < DashWheelDND::kStepCount; ++i)
+    {
+        TEST_ASSERT_TRUE(dnd.tick(startMs + i * DashWheelDND::kStepIntervalMs, data));
+        dnd.recordTxResult(true, startMs + i * DashWheelDND::kStepIntervalMs);
+    }
+}
+
+void test_dnd_constants_match_reactive_contract()
 {
     TEST_ASSERT_EQUAL(4, DashWheelDND::kStepCount);
-    TEST_ASSERT_EQUAL(50, DashWheelDND::kStepIntervalMs);
+    TEST_ASSERT_EQUAL_UINT32(100, DashWheelDND::kStepIntervalMs);
+    TEST_ASSERT_EQUAL_UINT32(1000, DashWheelDND::kNativeMaxAgeMs);
+    TEST_ASSERT_EQUAL_UINT32(2000, DashWheelDND::kReactiveCooldownMs);
+    TEST_ASSERT_EQUAL(3, DashWheelDND::kMaxActionsPerEpisode);
     TEST_ASSERT_EQUAL_HEX32(0x3C2, DashWheelDND::kCanId);
-    TEST_ASSERT_EQUAL_HEX8(0x01, DashWheelDND::kSteps[0]);
-    TEST_ASSERT_EQUAL_HEX8(0x00, DashWheelDND::kSteps[1]);
-    TEST_ASSERT_EQUAL_HEX8(0x3F, DashWheelDND::kSteps[2]);
-    TEST_ASSERT_EQUAL_HEX8(0x00, DashWheelDND::kSteps[3]);
 }
 
-// ─── Volume DND sequence ──────────────────────────────────────────────
+void test_native_cache_accepts_only_idle_mux1()
+{
+    DashWheelDND dnd;
+    uint8_t wrongMux[8] = {};
+    uint8_t activeScroll[8] = {0x09, 0, 1, 0, 0, 0, 0, 0};
 
-void test_volume_sequence_writes_correct_steps_to_data2()
+    TEST_ASSERT_FALSE(dnd.recordNative3c2(wrongMux, 100));
+    TEST_ASSERT_FALSE(dnd.recordNative3c2(activeScroll, 200));
+    TEST_ASSERT_TRUE(dnd.recordNative3c2(kNativeMux1Idle, 300));
+    TEST_ASSERT_EQUAL_UINT32(2, dnd.diag.nativeRejected);
+    TEST_ASSERT_TRUE(dnd.diag.nativeMux1IdleSeen);
+}
+
+void test_native_cache_expires_after_1000_ms()
+{
+    DashWheelDND dnd;
+    seedNative3c2(dnd, 1000);
+    TEST_ASSERT_TRUE(dnd.native3c2Fresh(2000));
+    TEST_ASSERT_FALSE(dnd.native3c2Fresh(2001));
+}
+
+void test_volume_sequence_changes_only_data2()
 {
     DashWheelDND dnd;
     uint8_t data[8] = {};
-
+    seedNative3c2(dnd, 1000);
     dnd.startVolume();
+
+    for (uint8_t i = 0; i < DashWheelDND::kStepCount; ++i)
+    {
+        TEST_ASSERT_TRUE(dnd.tick(1000 + i * 100, data));
+        TEST_ASSERT_EQUAL_HEX8(DashWheelDND::kSteps[i], data[2]);
+        TEST_ASSERT_EQUAL_HEX8(kNativeMux1Idle[0], data[0]);
+        TEST_ASSERT_EQUAL_HEX8(kNativeMux1Idle[3], data[3]);
+        TEST_ASSERT_EQUAL_HEX8(kNativeMux1Idle[7], data[7]);
+    }
+    TEST_ASSERT_FALSE(dnd.isRunning());
+}
+
+void test_tick_uses_100_ms_interval()
+{
+    DashWheelDND dnd;
+    uint8_t data[8] = {};
+    seedNative3c2(dnd, 1000);
+    dnd.startVolume();
+    TEST_ASSERT_TRUE(dnd.tick(1000, data));
+    TEST_ASSERT_FALSE(dnd.tick(1099, data));
+    TEST_ASSERT_TRUE(dnd.tick(1100, data));
+}
+
+void test_0x399_primary_warning_starts_reactive_volume_only()
+{
+    DashWheelDND dnd;
+    uint8_t data[8] = {};
+    seedNative3c2(dnd, 1000);
+    armReactive(dnd);
+    dnd.onDasStatus(6, 2, 1000);
+    TEST_ASSERT_FALSE(dnd.isRunning());
+
+    dnd.onDasStatus(6, 3, 1100, CAN_BUS_PARTY);
+    TEST_ASSERT_TRUE(dnd.reactiveAction);
     TEST_ASSERT_TRUE(dnd.volumeActive);
-    TEST_ASSERT_EQUAL(0, dnd.volumeStep);
-
-    // Step 0 → data[2] = 0x01
-    dnd.tick(50, data);
+    TEST_ASSERT_FALSE(dnd.speedActive);
+    TEST_ASSERT_TRUE(dnd.tick(1100, data));
     TEST_ASSERT_EQUAL_HEX8(0x01, data[2]);
-
-    // Step 1 → data[2] = 0x00
-    dnd.tick(100, data);
-    TEST_ASSERT_EQUAL_HEX8(0x00, data[2]);
-
-    // Step 2 → data[2] = 0x3F
-    dnd.tick(150, data);
-    TEST_ASSERT_EQUAL_HEX8(0x3F, data[2]);
-
-    // Step 3 → data[2] = 0x00 (final step)
-    dnd.tick(200, data);
-    TEST_ASSERT_EQUAL_HEX8(0x00, data[2]);
-
-    // Sequence complete → volumeActive should be false
-    TEST_ASSERT_FALSE(dnd.volumeActive);
+    TEST_ASSERT_EQUAL_HEX8(0x00, data[3]);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.warningEpisodes);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.triggerCount);
+    TEST_ASSERT_TRUE(dnd.diag.dasStatusSeen);
+    TEST_ASSERT_EQUAL_UINT8(6, dnd.diag.apState);
+    TEST_ASSERT_EQUAL_UINT8(CAN_BUS_PARTY, dnd.diag.dasStatusBus);
+    TEST_ASSERT_EQUAL_UINT32(1100, dnd.diag.dasStatusMs);
 }
 
-void test_volume_sequence_four_steps_then_done()
+void test_0x399_primary_warning_starts_reactive_right_scroll()
 {
     DashWheelDND dnd;
     uint8_t data[8] = {};
+    seedNative3c2(dnd, 1000);
+    dnd.setReactiveActions(false, true);
+    dnd.setRuntimeAllowed(true, DashWheelDndBlock::None);
+    dnd.onDasStatus(6, 3, 1100, CAN_BUS_PARTY);
 
-    dnd.startVolume();
-    int sentCount = 0;
-    int t = 50;
-    while (dnd.isRunning())
-    {
-        if (dnd.tick(t, data))
-            sentCount++;
-        t += 50;
-    }
-
-    TEST_ASSERT_EQUAL(4, sentCount);
-    TEST_ASSERT_FALSE(dnd.volumeActive);
-    TEST_ASSERT_EQUAL(0, dnd.volumeStep);
-}
-
-// ─── Speed DND sequence ───────────────────────────────────────────────
-
-void test_speed_sequence_writes_correct_steps_to_data3()
-{
-    DashWheelDND dnd;
-    uint8_t data[8] = {};
-
-    dnd.startSpeed();
+    TEST_ASSERT_TRUE(dnd.reactiveAction);
     TEST_ASSERT_TRUE(dnd.speedActive);
-
-    dnd.tick(50, data);
-    TEST_ASSERT_EQUAL_HEX8(0x01, data[3]);
-
-    dnd.tick(100, data);
-    TEST_ASSERT_EQUAL_HEX8(0x00, data[3]);
-
-    dnd.tick(150, data);
-    TEST_ASSERT_EQUAL_HEX8(0x3F, data[3]);
-
-    dnd.tick(200, data);
-    TEST_ASSERT_EQUAL_HEX8(0x00, data[3]);
-
-    TEST_ASSERT_FALSE(dnd.speedActive);
-}
-
-void test_speed_sequence_four_steps_then_done()
-{
-    DashWheelDND dnd;
-    uint8_t data[8] = {};
-
-    dnd.startSpeed();
-    int sentCount = 0;
-    int t = 50;
-    while (dnd.isRunning())
+    TEST_ASSERT_FALSE(dnd.volumeActive);
+    TEST_ASSERT_EQUAL(DashWheelDndAction::RightSpeed, dnd.diag.action);
+    for (uint8_t i = 0; i < DashWheelDND::kStepCount; ++i)
     {
-        if (dnd.tick(t, data))
-            sentCount++;
-        t += 50;
+        TEST_ASSERT_TRUE(dnd.tick(1100 + i * DashWheelDND::kStepIntervalMs, data));
+        TEST_ASSERT_EQUAL_HEX8(DashWheelDND::kSteps[i], data[3]);
+        TEST_ASSERT_EQUAL_HEX8(0x00, data[2]);
     }
-
-    TEST_ASSERT_EQUAL(4, sentCount);
-    TEST_ASSERT_FALSE(dnd.speedActive);
+    TEST_ASSERT_FALSE(dnd.isRunning());
+    TEST_ASSERT_EQUAL_STRING("right_scroll", dashWheelDndActionName(dnd.diag.action));
 }
 
-// ─── OR-combined volume + speed ────────────────────────────────────────
+void test_right_scroll_wins_when_both_reactive_actions_enabled()
+{
+    DashWheelDND dnd;
+    seedNative3c2(dnd, 1000);
+    dnd.setReactiveActions(true, true);
+    dnd.setRuntimeAllowed(true, DashWheelDndBlock::None);
+    dnd.onDasStatus(6, 3, 1100);
+    TEST_ASSERT_TRUE(dnd.speedActive);
+    TEST_ASSERT_FALSE(dnd.volumeActive);
+    TEST_ASSERT_EQUAL(DashWheelDndAction::RightSpeed, dnd.diag.action);
+}
 
-void test_combined_volume_and_speed_both_active()
+void test_escalated_states_are_observe_only()
+{
+    DashWheelDND dnd;
+    seedNative3c2(dnd, 1000);
+    armReactive(dnd);
+    dnd.onDasStatus(6, 9, 1100);
+
+    TEST_ASSERT_FALSE(dnd.isRunning());
+    TEST_ASSERT_EQUAL(DashWheelDndBlock::EscalatedObserveOnly, dnd.diag.blocked);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.escalatedObservations);
+    TEST_ASSERT_EQUAL_UINT32(0, dnd.diag.triggerCount);
+}
+
+void test_warning_does_not_send_when_ap_inactive()
+{
+    DashWheelDND dnd;
+    seedNative3c2(dnd, 1000);
+    armReactive(dnd);
+    dnd.onDasStatus(2, 3, 1100);
+
+    TEST_ASSERT_FALSE(dnd.isRunning());
+    TEST_ASSERT_EQUAL(DashWheelDndBlock::ApInactive, dnd.diag.blocked);
+}
+
+void test_warning_clear_aborts_reactive_action()
+{
+    DashWheelDND dnd;
+    seedNative3c2(dnd, 1000);
+    armReactive(dnd);
+    dnd.onDasStatus(6, 3, 1100);
+    TEST_ASSERT_TRUE(dnd.isRunning());
+    dnd.onDasStatus(6, 2, 1150);
+
+    TEST_ASSERT_FALSE(dnd.isRunning());
+    TEST_ASSERT_EQUAL(DashWheelDndBlock::WarningClear, dnd.diag.blocked);
+}
+
+void test_reactive_repeat_is_bounded_to_three_actions()
+{
+    DashWheelDND dnd;
+    seedNative3c2(dnd, 1000);
+    armReactive(dnd);
+    dnd.onDasStatus(6, 3, 1000);
+    finishReactiveAction(dnd, 1000);
+
+    seedNative3c2(dnd, 3300);
+    dnd.serviceReactive(3300);
+    TEST_ASSERT_TRUE(dnd.isRunning());
+    finishReactiveAction(dnd, 3300);
+
+    seedNative3c2(dnd, 5600);
+    dnd.serviceReactive(5600);
+    TEST_ASSERT_TRUE(dnd.isRunning());
+    finishReactiveAction(dnd, 5600);
+
+    seedNative3c2(dnd, 7900);
+    dnd.serviceReactive(7900);
+    TEST_ASSERT_FALSE(dnd.isRunning());
+    TEST_ASSERT_EQUAL(3, dnd.diag.actionsThisEpisode);
+    TEST_ASSERT_EQUAL(DashWheelDndBlock::EpisodeLimit, dnd.diag.blocked);
+}
+
+void test_two_consecutive_tx_failures_auto_disarm()
 {
     DashWheelDND dnd;
     uint8_t data[8] = {};
+    seedNative3c2(dnd, 1000);
+    armReactive(dnd);
+    dnd.onDasStatus(6, 3, 1000);
+    TEST_ASSERT_TRUE(dnd.tick(1000, data));
+    dnd.recordTxResult(false, 1000);
+    TEST_ASSERT_FALSE(dnd.autoDisarmed);
 
-    dnd.startVolume();
+    seedNative3c2(dnd, 3000);
+    dnd.serviceReactive(3000);
+    TEST_ASSERT_TRUE(dnd.tick(3000, data));
+    dnd.recordTxResult(false, 3000);
+
+    TEST_ASSERT_TRUE(dnd.autoDisarmed);
+    TEST_ASSERT_FALSE(dnd.diag.armed);
+    TEST_ASSERT_EQUAL(DashWheelDndBlock::AutoDisarmed, dnd.diag.blocked);
+}
+
+void test_manual_speed_action_remains_separate()
+{
+    DashWheelDND dnd;
+    uint8_t data[8] = {};
+    seedNative3c2(dnd, 1000);
     dnd.startSpeed();
-
-    // Step 0: volume=0x01 on data[2], speed=0x01 on data[3]
-    dnd.tick(50, data);
-    TEST_ASSERT_EQUAL_HEX8(0x01, data[2]);
+    TEST_ASSERT_TRUE(dnd.tick(1000, data));
+    TEST_ASSERT_EQUAL_HEX8(0x00, data[2]);
     TEST_ASSERT_EQUAL_HEX8(0x01, data[3]);
-
-    // Step 1: both = 0x00
-    dnd.tick(100, data);
-    TEST_ASSERT_EQUAL_HEX8(0x00, data[2]);
-    TEST_ASSERT_EQUAL_HEX8(0x00, data[3]);
-
-    // Step 2: both = 0x3F
-    dnd.tick(150, data);
-    TEST_ASSERT_EQUAL_HEX8(0x3F, data[2]);
-    TEST_ASSERT_EQUAL_HEX8(0x3F, data[3]);
-
-    // Step 3: both = 0x00, both sequences complete
-    dnd.tick(200, data);
-    TEST_ASSERT_EQUAL_HEX8(0x00, data[2]);
-    TEST_ASSERT_EQUAL_HEX8(0x00, data[3]);
-    TEST_ASSERT_FALSE(dnd.volumeActive);
-    TEST_ASSERT_FALSE(dnd.speedActive);
+    TEST_ASSERT_FALSE(dnd.reactiveAction);
 }
 
-void test_combined_eight_frames_total()
+void test_runtime_gate_blocks_non_legacy()
 {
     DashWheelDND dnd;
-    uint8_t data[8] = {};
-
-    // Start volume first, then speed 2 steps later
-    dnd.startVolume();
-    dnd.tick(50, data);  // vol step 0
-    dnd.tick(100, data); // vol step 1
-    dnd.startSpeed();    // start speed at vol step 2
-    dnd.tick(150, data); // vol step 2, speed step 0
-
-    // Volume should have data[2], Speed should have data[3]
-    TEST_ASSERT_EQUAL_HEX8(0x3F, data[2]); // vol step 2
-    TEST_ASSERT_EQUAL_HEX8(0x01, data[3]); // speed step 0
-    TEST_ASSERT_TRUE(dnd.isRunning());
-}
-
-// ─── Tick timing: 50ms interval ───────────────────────────────────────
-
-void test_tick_returns_false_within_50ms()
-{
-    DashWheelDND dnd;
-    uint8_t data[8] = {};
-
-    dnd.startVolume();
-    dnd.tick(100, data); // first tick at t=100
-
-    // Next tick at t=120 (< 50ms since last step) → should return false
-    TEST_ASSERT_FALSE(dnd.tick(120, data));
-
-    // Next tick at t=149 (< 50ms) → still false
-    TEST_ASSERT_FALSE(dnd.tick(149, data));
-
-    // Next tick at t=150 (== 50ms) → should return true
-    TEST_ASSERT_TRUE(dnd.tick(150, data));
-}
-
-void test_tick_no_frame_when_inactive()
-{
-    DashWheelDND dnd;
-    uint8_t data[8] = {};
-
-    TEST_ASSERT_FALSE(dnd.tick(50, data));
-    TEST_ASSERT_FALSE(dnd.tick(100, data));
-}
-
-// ─── Counter increment ────────────────────────────────────────────────
-
-void test_counter_increments_each_frame()
-{
-    DashWheelDND dnd;
-    uint8_t data[8] = {};
-
-    dnd.startVolume();
-
-    dnd.tick(50, data);
-    uint8_t c1 = data[0];
-
-    dnd.tick(100, data);
-    uint8_t c2 = data[0];
-
-    TEST_ASSERT_EQUAL_UINT8((c1 + 1) & 0x0F, c2);
-}
-
-void test_counter_wraps_at_16()
-{
-    DashWheelDND dnd;
-    dnd.counter = 14;
-    uint8_t data[8] = {};
-
-    dnd.startVolume();
-
-    dnd.tick(50, data);
-    TEST_ASSERT_EQUAL_HEX8(15, data[0]);
-
-    dnd.tick(100, data);
-    TEST_ASSERT_EQUAL_HEX8(0, data[0]); // wraps to 0
-
-    dnd.tick(150, data);
-    TEST_ASSERT_EQUAL_HEX8(1, data[0]);
-}
-
-// ─── Checksum calculation ─────────────────────────────────────────────
-
-void test_checksum_is_correct()
-{
-    DashWheelDND dnd;
-    uint8_t data[8] = {};
-
-    dnd.startVolume();
-    dnd.tick(50, data);
-
-    // Checksum = (0xC2 + 0x03) + sum(data[0..6])
-    uint16_t expected = 0xC2u + 0x03u;
-    for (int i = 0; i < 7; i++)
-        expected += data[i];
-
-    TEST_ASSERT_EQUAL_HEX8(expected & 0xFF, data[7]);
-}
-
-void test_checksum_changes_with_counter()
-{
-    DashWheelDND dnd;
-    uint8_t data1[8] = {};
-    uint8_t data2[8] = {};
-
-    dnd.startVolume();
-
-    dnd.tick(50, data1);
-    dnd.tick(100, data2);
-
-    // Different counter values → different checksums
-    TEST_ASSERT_TRUE(data1[0] != data2[0]); // different counters
-    // data[7] is checksum; should differ since counter differs
-    // (unless coincidentally same, but very unlikely)
-}
-
-// ─── isRunning state machine ──────────────────────────────────────────
-
-void test_is_running_while_active()
-{
-    DashWheelDND dnd;
-    uint8_t data[8] = {};
-
+    seedNative3c2(dnd, 1000);
+    dnd.setReactiveConfigured(true);
+    dnd.setRuntimeAllowed(false, DashWheelDndBlock::NotLegacy);
+    dnd.onDasStatus(6, 3, 1100);
     TEST_ASSERT_FALSE(dnd.isRunning());
-
-    dnd.startVolume();
-    TEST_ASSERT_TRUE(dnd.isRunning());
-
-    // Advance through all steps
-    dnd.tick(50, data);
-    dnd.tick(100, data);
-    dnd.tick(150, data);
-    TEST_ASSERT_TRUE(dnd.isRunning()); // last step still running
-
-    dnd.tick(200, data);
-    TEST_ASSERT_FALSE(dnd.isRunning()); // done
+    TEST_ASSERT_EQUAL(DashWheelDndBlock::NotLegacy, dnd.diag.blocked);
 }
-
-// ─── reset ────────────────────────────────────────────────────────────
-
-void test_reset_clears_all_state()
-{
-    DashWheelDND dnd;
-    uint8_t data[8] = {};
-
-    dnd.startVolume();
-    dnd.startSpeed();
-    dnd.tick(50, data);
-    dnd.tick(100, data);
-    dnd.counter = 10;
-
-    dnd.reset();
-
-    TEST_ASSERT_FALSE(dnd.volumeActive);
-    TEST_ASSERT_FALSE(dnd.speedActive);
-    TEST_ASSERT_EQUAL(0, dnd.volumeStep);
-    TEST_ASSERT_EQUAL(0, dnd.speedStep);
-    TEST_ASSERT_EQUAL(0, dnd.counter);
-    TEST_ASSERT_FALSE(dnd.isRunning());
-}
-
-// ── main ──────────────────────────────────────────────────────────────
 
 int main()
 {
     UNITY_BEGIN();
-
-    // Constants
-    RUN_TEST(test_dnd_constants);
-
-    // Volume DND
-    RUN_TEST(test_volume_sequence_writes_correct_steps_to_data2);
-    RUN_TEST(test_volume_sequence_four_steps_then_done);
-
-    // Speed DND
-    RUN_TEST(test_speed_sequence_writes_correct_steps_to_data3);
-    RUN_TEST(test_speed_sequence_four_steps_then_done);
-
-    // Combined
-    RUN_TEST(test_combined_volume_and_speed_both_active);
-    RUN_TEST(test_combined_eight_frames_total);
-
-    // Timing
-    RUN_TEST(test_tick_returns_false_within_50ms);
-    RUN_TEST(test_tick_no_frame_when_inactive);
-
-    // Counter
-    RUN_TEST(test_counter_increments_each_frame);
-    RUN_TEST(test_counter_wraps_at_16);
-
-    // Checksum
-    RUN_TEST(test_checksum_is_correct);
-    RUN_TEST(test_checksum_changes_with_counter);
-
-    // State machine
-    RUN_TEST(test_is_running_while_active);
-
-    // Reset
-    RUN_TEST(test_reset_clears_all_state);
-
+    RUN_TEST(test_dnd_constants_match_reactive_contract);
+    RUN_TEST(test_native_cache_accepts_only_idle_mux1);
+    RUN_TEST(test_native_cache_expires_after_1000_ms);
+    RUN_TEST(test_volume_sequence_changes_only_data2);
+    RUN_TEST(test_tick_uses_100_ms_interval);
+    RUN_TEST(test_0x399_primary_warning_starts_reactive_volume_only);
+    RUN_TEST(test_0x399_primary_warning_starts_reactive_right_scroll);
+    RUN_TEST(test_right_scroll_wins_when_both_reactive_actions_enabled);
+    RUN_TEST(test_escalated_states_are_observe_only);
+    RUN_TEST(test_warning_does_not_send_when_ap_inactive);
+    RUN_TEST(test_warning_clear_aborts_reactive_action);
+    RUN_TEST(test_reactive_repeat_is_bounded_to_three_actions);
+    RUN_TEST(test_two_consecutive_tx_failures_auto_disarm);
+    RUN_TEST(test_manual_speed_action_remains_separate);
+    RUN_TEST(test_runtime_gate_blocks_non_legacy);
     return UNITY_END();
 }

@@ -1,11 +1,8 @@
 #pragma once
-// Legacy (HW2.x) MPP speed-limit override — mirrors the HW3 custom-speed
-// bucket-table UX, but writes UI_mppSpeedLimit on CAN ID 760 (UI_gpsVehicleSpeed)
-// instead of the HW3 1021 mux 2 offset. Behavior: read the gateway's current
-// raw_mpp value (byte 6 low 5 bits, ×5 = km/h), look up a target km/h via the
-// same bucket layout HW3 uses, only write the modified frame back when the
-// target is HIGHER than the gateway's current value (never lower). Required
-// byte 7 vehicle checksum is recomputed in the handler.
+// Legacy speed compatibility helpers. The active verified implementation reads
+// CAN 0x2F8 as telemetry and writes its request on native 0x3EE mux0 through
+// dash_legacy_smart_offset.h. The older MPP bucket symbols below remain only to
+// preserve NVS/API compatibility and must not transmit a modified 0x2F8 frame.
 //
 // Bucket layout matches HW3 for UX consistency:
 //   Custom table (low-speed):  30 / 40 / 50 / 60 / 70 km/h  → user target km/h
@@ -19,6 +16,7 @@
 #include <algorithm>
 #include "can_frame_types.h"
 #include "dash_hw3_speed.h"
+#include "dash_legacy_smart_offset.h"
 
 // Current verified Legacy/HW2.x speed-offset wire path writes UI_userSpeedOffset
 // on CAN 760 byte 5 low 6 bits (raw = offset_kph + 30). The field can encode

@@ -411,6 +411,12 @@ void File::close()
     dir_ = nullptr;
 }
 
+void File::flush()
+{
+    if (fp_)
+        std::fflush(fp_);
+}
+
 size_t File::write(const uint8_t *buf, size_t len)
 {
     return fp_ ? std::fwrite(buf, 1, len, fp_) : 0;
@@ -523,6 +529,20 @@ bool SPIFFSClass::remove(const String &path)
 {
     std::string full = std::string(kSpiffsBase) + path.c_str();
     return std::remove(full.c_str()) == 0;
+}
+
+size_t SPIFFSClass::totalBytes()
+{
+    size_t total = 0;
+    size_t used = 0;
+    return esp_spiffs_info(nullptr, &total, &used) == ESP_OK ? total : 0;
+}
+
+size_t SPIFFSClass::usedBytes()
+{
+    size_t total = 0;
+    size_t used = 0;
+    return esp_spiffs_info(nullptr, &total, &used) == ESP_OK ? used : 0;
 }
 
 void WiFiClass::ensure()
@@ -1126,7 +1146,9 @@ void WebServer::sendRaw(int code, const char *type, const char *body, size_t len
         return;
     httpd_resp_set_status(currentReq_, code == 200 ? "200 OK" : code == 400 ? "400 Bad Request"
                                                             : code == 404   ? "404 Not Found"
+                                                            : code == 409   ? "409 Conflict"
                                                             : code == 500   ? "500 Internal Server Error"
+                                                            : code == 507   ? "507 Insufficient Storage"
                                                                             : "200 OK");
     httpd_resp_set_type(currentReq_, type);
     applyHeaders();
@@ -1169,6 +1191,27 @@ void WebServer::streamFile(File &file, const char *type)
     while ((n = file.read(buf, sizeof(buf))) > 0)
         httpd_resp_send_chunk(currentReq_, reinterpret_cast<const char *>(buf), n);
     httpd_resp_send_chunk(currentReq_, nullptr, 0);
+}
+
+bool WebServer::beginChunkedResponse(int code, const char *type)
+{
+    if (!currentReq_)
+        return false;
+    httpd_resp_set_status(currentReq_, code == 200 ? "200 OK" : "500 Internal Server Error");
+    httpd_resp_set_type(currentReq_, type);
+    applyHeaders();
+    return true;
+}
+
+bool WebServer::sendChunk(const char *data, size_t len)
+{
+    return currentReq_ && httpd_resp_send_chunk(currentReq_, data, len) == ESP_OK;
+}
+
+void WebServer::endChunkedResponse()
+{
+    if (currentReq_)
+        httpd_resp_send_chunk(currentReq_, nullptr, 0);
 }
 
 bool WebServer::authenticate(const char *, const char *)
