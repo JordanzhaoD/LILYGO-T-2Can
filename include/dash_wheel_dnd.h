@@ -36,9 +36,12 @@ static inline const char *dashWheelDndActionName(DashWheelDndAction action)
 {
     switch (action)
     {
-    case DashWheelDndAction::None: return "none";
-    case DashWheelDndAction::LeftVolume: return "left_volume";
-    case DashWheelDndAction::RightSpeed: return "right_scroll";
+    case DashWheelDndAction::None:
+        return "none";
+    case DashWheelDndAction::LeftVolume:
+        return "left_volume";
+    case DashWheelDndAction::RightSpeed:
+        return "right_scroll";
     }
     return "unknown";
 }
@@ -47,21 +50,36 @@ static inline const char *dashWheelDndBlockName(DashWheelDndBlock reason)
 {
     switch (reason)
     {
-    case DashWheelDndBlock::None: return "none";
-    case DashWheelDndBlock::Disabled: return "disabled";
-    case DashWheelDndBlock::NotLegacy: return "not_legacy";
-    case DashWheelDndBlock::ApInactive: return "ap_inactive";
-    case DashWheelDndBlock::WarningClear: return "warning_clear";
-    case DashWheelDndBlock::EscalatedObserveOnly: return "escalated_observe_only";
-    case DashWheelDndBlock::NoNativeMux1: return "no_native_mux1";
-    case DashWheelDndBlock::StaleNative: return "stale_native";
-    case DashWheelDndBlock::Cooldown: return "cooldown";
-    case DashWheelDndBlock::EpisodeLimit: return "episode_limit";
-    case DashWheelDndBlock::Busy: return "busy";
-    case DashWheelDndBlock::Can2Offline: return "can2_offline";
-    case DashWheelDndBlock::OtaGuard: return "ota_guard";
-    case DashWheelDndBlock::TxFailed: return "tx_failed";
-    case DashWheelDndBlock::AutoDisarmed: return "auto_disarmed";
+    case DashWheelDndBlock::None:
+        return "none";
+    case DashWheelDndBlock::Disabled:
+        return "disabled";
+    case DashWheelDndBlock::NotLegacy:
+        return "not_legacy";
+    case DashWheelDndBlock::ApInactive:
+        return "ap_inactive";
+    case DashWheelDndBlock::WarningClear:
+        return "warning_clear";
+    case DashWheelDndBlock::EscalatedObserveOnly:
+        return "escalated_observe_only";
+    case DashWheelDndBlock::NoNativeMux1:
+        return "no_native_mux1";
+    case DashWheelDndBlock::StaleNative:
+        return "stale_native";
+    case DashWheelDndBlock::Cooldown:
+        return "cooldown";
+    case DashWheelDndBlock::EpisodeLimit:
+        return "episode_limit";
+    case DashWheelDndBlock::Busy:
+        return "busy";
+    case DashWheelDndBlock::Can2Offline:
+        return "can2_offline";
+    case DashWheelDndBlock::OtaGuard:
+        return "ota_guard";
+    case DashWheelDndBlock::TxFailed:
+        return "tx_failed";
+    case DashWheelDndBlock::AutoDisarmed:
+        return "auto_disarmed";
     }
     return "unknown";
 }
@@ -179,9 +197,9 @@ struct DashWheelDND
     void setReactiveActions(bool volumeEnabled, bool speedEnabled)
     {
         const DashWheelDndAction requested = speedEnabled
-                                                  ? DashWheelDndAction::RightSpeed
-                                                  : (volumeEnabled ? DashWheelDndAction::LeftVolume
-                                                                   : DashWheelDndAction::None);
+                                                 ? DashWheelDndAction::RightSpeed
+                                                 : (volumeEnabled ? DashWheelDndAction::LeftVolume
+                                                                  : DashWheelDndAction::None);
         if (reactiveAction && requested != reactiveActionType)
             cancelReactiveAction();
 

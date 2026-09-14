@@ -55,18 +55,18 @@ void test_non_3ee_id_ignored()
 
 void test_non_mux0_ignored()
 {
-    cad.observe(mk3ee(1), 1000);          // mux1 (scroll wheel activity)
-    cad.observe(mk3ee(7), 2000);          // worst-case low bits
-    cad.observe(mk3ee(0x08), 3000);       // low 3 bits zero: IS mux0 — counts
+    cad.observe(mk3ee(1), 1000);    // mux1 (scroll wheel activity)
+    cad.observe(mk3ee(7), 2000);    // worst-case low bits
+    cad.observe(mk3ee(0x08), 3000); // low 3 bits zero: IS mux0 — counts
     TEST_ASSERT_EQUAL_UINT32(1, cad.total);
     TEST_ASSERT_EQUAL_UINT32(3000, cad.lastMs);
 }
 
 void test_wrong_bus_ignored()
 {
-    cad.observe(mk3ee(0, CAN_BUS_CH), 1000);   // chassis bus: not the source
+    cad.observe(mk3ee(0, CAN_BUS_CH), 1000); // chassis bus: not the source
     cad.observe(mk3ee(0, CAN_BUS_PARTY), 2000);
-    cad.observe(mk3ee(0, CAN_BUS_ANY), 3000);  // unrouted: not the source
+    cad.observe(mk3ee(0, CAN_BUS_ANY), 3000); // unrouted: not the source
     TEST_ASSERT_EQUAL_UINT32(0, cad.total);
 }
 
@@ -113,9 +113,9 @@ void test_long_gap_boundary_2001_counted()
 void test_long_gaps_accumulate()
 {
     cad.observe(mk3ee(), 1000);
-    cad.observe(mk3ee(), 4000);   // 3000 -> longGap 1
-    cad.observe(mk3ee(), 4100);   // 100 -> normal
-    cad.observe(mk3ee(), 9000);   // 4900 -> longGap 2
+    cad.observe(mk3ee(), 4000); // 3000 -> longGap 1
+    cad.observe(mk3ee(), 4100); // 100 -> normal
+    cad.observe(mk3ee(), 9000); // 4900 -> longGap 2
     TEST_ASSERT_EQUAL_UINT32(4, cad.total);
     TEST_ASSERT_EQUAL_UINT32(2, cad.longGaps);
     TEST_ASSERT_EQUAL_UINT32(4900, cad.maxGapMs);
@@ -148,10 +148,10 @@ void test_filtered_frames_do_not_break_the_timeline()
     // the measured mux0-to-mux0 gap — the whole point of the observer is
     // the true carrier rhythm on the qualification stream.
     cad.observe(mk3ee(), 1000);
-    cad.observe(mk3ee(1), 1500);               // filtered
-    cad.observe(mk3ee(0, CAN_BUS_CH), 1800);   // filtered
+    cad.observe(mk3ee(1), 1500);                        // filtered
+    cad.observe(mk3ee(0, CAN_BUS_CH), 1800);            // filtered
     cad.observe(mk3ee(0, CAN_BUS_VEH, 8, 0x118), 1900); // filtered
-    cad.observe(mk3ee(), 4000);                // real gap = 3000
+    cad.observe(mk3ee(), 4000);                         // real gap = 3000
     TEST_ASSERT_EQUAL_UINT32(2, cad.total);
     TEST_ASSERT_EQUAL_UINT32(3000, cad.lastGapMs);
     TEST_ASSERT_EQUAL_UINT32(1, cad.longGaps);

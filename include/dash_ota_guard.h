@@ -16,23 +16,26 @@
 //      ota_guard_override / NVS otg_ovr / UI「忽略车辆 OTA 守卫」）→
 //      立即清除并暂停置位，关掉后干净重来（真 OTA 会被 3 帧确认重新捕获）。
 #include "can_frame_types.h"
-static volatile bool vehicleOtaActive = false;  // true=车辆OTA进行中，暂停注入
-static volatile uint8_t otaConfirmCount = 0;     // 连续检测到OTA的次数
-static volatile uint8_t otaClearCount   = 0;     // 连续未检测到OTA的次数
+static volatile bool vehicleOtaActive = false; // true=车辆OTA进行中，暂停注入
+static volatile uint8_t otaConfirmCount = 0;   // 连续检测到OTA的次数
+static volatile uint8_t otaClearCount = 0;     // 连续未检测到OTA的次数
 // beta12 观测/降级状态（同 TU static，otaWatch 与 /vehicle_ota_status 发射）
-static volatile bool otaGuardOverride  = false;  // 用户覆盖：忽略守卫（诊断用）
-static volatile uint32_t otaLastSeenMs  = 0;      // 最近一帧 0x318（任意 dlc）的时刻
-static volatile uint32_t otaActiveSinceMs = 0;    // 本轮置位起点（0=未置位）
-static volatile uint32_t otaStaleClears  = 0;     // 停流超时降级清除累计次数
-#define OTA_CONFIRM_THRESHOLD 3   // 连续3次确认OTA
-#define OTA_CLEAR_THRESHOLD   6   // 连续6次确认OTA结束
-#define OTA_STALE_TIMEOUT_MS 600000UL // 停流超时降级：10 分钟零 0x318 → 清除
+static volatile bool otaGuardOverride = false; // 用户覆盖：忽略守卫（诊断用）
+static volatile uint32_t otaLastSeenMs = 0;    // 最近一帧 0x318（任意 dlc）的时刻
+static volatile uint32_t otaActiveSinceMs = 0; // 本轮置位起点（0=未置位）
+static volatile uint32_t otaStaleClears = 0;   // 停流超时降级清除累计次数
+#define OTA_CONFIRM_THRESHOLD 3                // 连续3次确认OTA
+#define OTA_CLEAR_THRESHOLD 6                  // 连续6次确认OTA结束
+#define OTA_STALE_TIMEOUT_MS 600000UL          // 停流超时降级：10 分钟零 0x318 → 清除
 
-inline void dashOtaGuardProcessFrame(const CanFrame& frame, uint32_t nowMs) {
-    if (frame.id != CAN_ID_OTA_STATUS) return;
+inline void dashOtaGuardProcessFrame(const CanFrame &frame, uint32_t nowMs)
+{
+    if (frame.id != CAN_ID_OTA_STATUS)
+        return;
     // 任意 dlc 的 0x318 都证明载波存活（dlc 门仅约束 OTA 标志位判读）
     otaLastSeenMs = nowMs;
-    if (otaGuardOverride) {
+    if (otaGuardOverride)
+    {
         // 覆盖期间：不置位、不计数（保持干净，关闭覆盖后从零确认）
         vehicleOtaActive = false;
         otaConfirmCount = 0;
@@ -40,19 +43,25 @@ inline void dashOtaGuardProcessFrame(const CanFrame& frame, uint32_t nowMs) {
         otaActiveSinceMs = 0;
         return;
     }
-    if (frame.dlc < 7) return;
+    if (frame.dlc < 7)
+        return;
     bool otaFlag = (frame.data[6] & 0x03) == 0x02;
-    if (otaFlag) {
+    if (otaFlag)
+    {
         otaConfirmCount = otaConfirmCount + 1;
         otaClearCount = 0;
-        if (otaConfirmCount >= OTA_CONFIRM_THRESHOLD && !vehicleOtaActive) {
+        if (otaConfirmCount >= OTA_CONFIRM_THRESHOLD && !vehicleOtaActive)
+        {
             vehicleOtaActive = true;
             otaActiveSinceMs = nowMs;
         }
-    } else {
+    }
+    else
+    {
         otaClearCount = otaClearCount + 1;
         otaConfirmCount = 0;
-        if (otaClearCount >= OTA_CLEAR_THRESHOLD && vehicleOtaActive) {
+        if (otaClearCount >= OTA_CLEAR_THRESHOLD && vehicleOtaActive)
+        {
             vehicleOtaActive = false;
             otaActiveSinceMs = 0;
         }
@@ -62,11 +71,15 @@ inline void dashOtaGuardProcessFrame(const CanFrame& frame, uint32_t nowMs) {
 // 停流超时降级（路径 B）。由 main.cpp CAN 任务周期调用；nowMs 必须显式传入
 // （native 测试驱动离散时钟）。返回 true = 本次调用执行了降级清除（调用方
 // 记日志；staleClears 已自增）。
-inline bool dashOtaGuardTick(uint32_t nowMs) {
-    if (!vehicleOtaActive || otaGuardOverride) return false;
+inline bool dashOtaGuardTick(uint32_t nowMs)
+{
+    if (!vehicleOtaActive || otaGuardOverride)
+        return false;
     const uint32_t lastSeen = otaLastSeenMs;
-    if (lastSeen == 0) return false; // 开机以来从未见过 0x318：无从判定停流
-    if ((uint32_t)(nowMs - lastSeen) < OTA_STALE_TIMEOUT_MS) return false;
+    if (lastSeen == 0)
+        return false; // 开机以来从未见过 0x318：无从判定停流
+    if ((uint32_t)(nowMs - lastSeen) < OTA_STALE_TIMEOUT_MS)
+        return false;
     vehicleOtaActive = false;
     otaActiveSinceMs = 0;
     otaConfirmCount = 0;
@@ -76,9 +89,11 @@ inline bool dashOtaGuardTick(uint32_t nowMs) {
 }
 
 // 用户覆盖（路径 C）：开=立即清除并暂停置位；关=干净重来。
-inline void dashOtaGuardSetOverride(bool v) {
+inline void dashOtaGuardSetOverride(bool v)
+{
     otaGuardOverride = v;
-    if (v) {
+    if (v)
+    {
         vehicleOtaActive = false;
         otaActiveSinceMs = 0;
         otaConfirmCount = 0;

@@ -1083,9 +1083,18 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('bool legacyHw3CustomSpeed = hw3CustomSpeed;', body)
         self.assertIn('bool legacyHw3HighSpeedEnable = hw3HighSpeedEnable;', body)
         self.assertIn('bool legacyHw3AutoSpeed = hw3AutoSpeed;', body)
-        self.assertIn('if (server.hasArg("hw3CustomSpeed")) legacyHw3CustomSpeed = server.arg("hw3CustomSpeed") == "1";', body)
-        self.assertIn('if (server.hasArg("hw3HighSpeedEnable")) legacyHw3HighSpeedEnable = server.arg("hw3HighSpeedEnable") == "1";', body)
-        self.assertIn('if (server.hasArg("hw3AutoSpeed")) legacyHw3AutoSpeed = server.arg("hw3AutoSpeed") == "1";', body)
+        self.assertIn(
+            'if (server.hasArg("hw3CustomSpeed"))\n            legacyHw3CustomSpeed = server.arg("hw3CustomSpeed") == "1";',
+            body,
+        )
+        self.assertIn(
+            'if (server.hasArg("hw3HighSpeedEnable"))\n            legacyHw3HighSpeedEnable = server.arg("hw3HighSpeedEnable") == "1";',
+            body,
+        )
+        self.assertIn(
+            'if (server.hasArg("hw3AutoSpeed"))\n            legacyHw3AutoSpeed = server.arg("hw3AutoSpeed") == "1";',
+            body,
+        )
         self.assertNotIn('bool legacyHw3CustomSpeed = server.hasArg("hw3CustomSpeed") && server.arg("hw3CustomSpeed") == "1";', body)
         self.assertNotIn('bool legacyHw3HighSpeedEnable = server.hasArg("hw3HighSpeedEnable") && server.arg("hw3HighSpeedEnable") == "1";', body)
         self.assertNotIn('bool legacyHw3AutoSpeed = server.hasArg("hw3AutoSpeed") && server.arg("hw3AutoSpeed") == "1";', body)
@@ -1723,7 +1732,7 @@ class DashboardApiContractTests(unittest.TestCase):
         """Fog light must auto-stop when gearRaw != 4 (Drive)."""
         fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
         self.assertIn("gearRaw != 4", fog)
-        self.assertIn("if (isActive()) stop()", fog)
+        self.assertIn("if (isActive())\n                stop()", fog)
 
     def test_phase4_fog_light_uses_can273_constants(self) -> None:
         """Fog light must use the 0x273 CAN frame constants from can_frame_types.h."""
@@ -2400,7 +2409,7 @@ class DashboardApiContractTests(unittest.TestCase):
         )
         self.assertIn("    StalkOwnedByJitter,", wheel)
         self.assertIn(
-            'case DashLegacyWheel045Block::StalkOwnedByJitter: return "stalk_owned_by_jitter";',
+            'case DashLegacyWheel045Block::StalkOwnedByJitter:\n        return "stalk_owned_by_jitter";',
             wheel,
         )
         self.assertNotIn("StalkOwnedByReRequest", wheel)
@@ -2573,9 +2582,9 @@ class DashboardApiContractTests(unittest.TestCase):
         # 1. Guard module: three clear paths + thresholds pinned.
         for token in (
             "#define OTA_CONFIRM_THRESHOLD 3",
-            "#define OTA_CLEAR_THRESHOLD   6",
+            "#define OTA_CLEAR_THRESHOLD 6",
             "#define OTA_STALE_TIMEOUT_MS 600000UL",
-            "inline void dashOtaGuardProcessFrame(const CanFrame& frame, uint32_t nowMs)",
+            "inline void dashOtaGuardProcessFrame(const CanFrame &frame, uint32_t nowMs)",
             "inline bool dashOtaGuardTick(uint32_t nowMs)",
             "inline void dashOtaGuardSetOverride(bool v)",
             "inline bool dashOtaGuardAllowInjection() { return !vehicleOtaActive; }",
@@ -2658,9 +2667,9 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn("carrier3ee", self.ui_gen)
         for token in (
             "static constexpr uint32_t kDash3eeLongGapMs = 2000;",
-            "if (frame.id != 0x3EE || frame.dlc == 0) return;",
-            "if ((frame.data[0] & 0x07) != 0) return; // mux0 only",
-            "if (frame.bus != CAN_BUS_VEH) return;    // coordinator source bus",
+            "if (frame.id != 0x3EE || frame.dlc == 0)\n            return;",
+            "if ((frame.data[0] & 0x07) != 0)\n            return; // mux0 only",
+            "if (frame.bus != CAN_BUS_VEH)\n            return; // coordinator source bus",
             "struct Dash3eeCadence",
         ):
             self.assertIn(token, module_cad)

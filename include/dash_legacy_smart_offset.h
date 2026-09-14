@@ -136,18 +136,30 @@ inline uint16_t dashLegacySmartAbsoluteCapKph(uint16_t speedLimitKph)
         return 60;
     switch (speedLimitKph)
     {
-    case 40: return 60;
-    case 45: return 67;
-    case 50: return 75;
-    case 55: return 82;
-    case 60: return 90;
-    case 70: return 91;
-    case 80: return 104;
-    case 90: return 117;
-    case 100: return 120;
-    case 110: return 132;
-    case 120: return 132;
-    default: return static_cast<uint16_t>(speedLimitKph + 15);
+    case 40:
+        return 60;
+    case 45:
+        return 67;
+    case 50:
+        return 75;
+    case 55:
+        return 82;
+    case 60:
+        return 90;
+    case 70:
+        return 91;
+    case 80:
+        return 104;
+    case 90:
+        return 117;
+    case 100:
+        return 120;
+    case 110:
+        return 132;
+    case 120:
+        return 132;
+    default:
+        return static_cast<uint16_t>(speedLimitKph + 15);
     }
 }
 

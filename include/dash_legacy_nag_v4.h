@@ -18,14 +18,22 @@ inline const char *dashLegacyNagV4StateName(LegacyNagV4State state)
 {
     switch (state)
     {
-    case LegacyNagV4State::Armed: return "armed";
-    case LegacyNagV4State::StartupHold: return "state_delay";
-    case LegacyNagV4State::Support: return "support_488";
-    case LegacyNagV4State::DetectedHold: return "state1_hold";
-    case LegacyNagV4State::Detected: return "state1_stopped";
-    case LegacyNagV4State::Escalated: return "strong_488";
-    case LegacyNagV4State::Degraded: return "degraded";
-    default: return "disabled";
+    case LegacyNagV4State::Armed:
+        return "armed";
+    case LegacyNagV4State::StartupHold:
+        return "state_delay";
+    case LegacyNagV4State::Support:
+        return "support_488";
+    case LegacyNagV4State::DetectedHold:
+        return "state1_hold";
+    case LegacyNagV4State::Detected:
+        return "state1_stopped";
+    case LegacyNagV4State::Escalated:
+        return "strong_488";
+    case LegacyNagV4State::Degraded:
+        return "degraded";
+    default:
+        return "disabled";
     }
 }
 
@@ -145,8 +153,8 @@ struct DashLegacyNagV4
 
         if (controlType != kRequiredSteeringControlType)
             return;
-        int8_t nextDirection = angleX10 > kSteeringDeadbandX10 ? -1 :
-                               angleX10 < -kSteeringDeadbandX10 ? 1 : 0;
+        int8_t nextDirection = angleX10 > kSteeringDeadbandX10 ? -1 : angleX10 < -kSteeringDeadbandX10 ? 1
+                                                                                                       : 0;
         if (nextDirection == 0)
             return;
         if (lastSteeringDirection != 0 && nextDirection != lastSteeringDirection)
@@ -286,8 +294,7 @@ struct DashLegacyNagV4
             }
             state = LegacyNagV4State::Escalated;
             uint32_t activeMs = stateAge - kStrongDelayMs;
-            int magnitude = activeMs >= kStrongRampMs ? kStrongMaxCentiNm :
-                static_cast<int>((activeMs * kStrongMaxCentiNm) / kStrongRampMs);
+            int magnitude = activeMs >= kStrongRampMs ? kStrongMaxCentiNm : static_cast<int>((activeMs * kStrongMaxCentiNm) / kStrongRampMs);
             targetTorqueCentiNm = static_cast<int16_t>(episodeDirection * magnitude);
         }
 
@@ -344,9 +351,8 @@ private:
         if (nowMs < steeringMs || nowMs - steeringMs > kSteeringFreshMs)
             return LegacyNagV4Block::SteeringStale;
 
-        int8_t nextDirection = steeringAngleX10 > kSteeringDeadbandX10 ? -1 :
-                               steeringAngleX10 < -kSteeringDeadbandX10 ? 1 :
-                               lastSteeringDirection;
+        int8_t nextDirection = steeringAngleX10 > kSteeringDeadbandX10 ? -1 : steeringAngleX10 < -kSteeringDeadbandX10 ? 1
+                                                                                                                       : lastSteeringDirection;
         if (nextDirection == 0)
             return LegacyNagV4Block::CenterNoDirection;
         episodeDirection = nextDirection;

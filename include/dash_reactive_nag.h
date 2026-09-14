@@ -81,30 +81,54 @@ static inline const char *legacyNagBlockReasonName(LegacyNagBlockReason reason)
 {
     switch (reason)
     {
-    case LegacyNagBlockReason::None: return "none";
-    case LegacyNagBlockReason::Disabled: return "disabled";
-    case LegacyNagBlockReason::NotLegacy: return "not_legacy";
-    case LegacyNagBlockReason::NotInDrive: return "not_in_drive";
-    case LegacyNagBlockReason::ApInactive: return "ap_inactive";
-    case LegacyNagBlockReason::ContextStale: return "context_stale";
-    case LegacyNagBlockReason::BusLearning: return "bus_learning";
-    case LegacyNagBlockReason::BusMismatch: return "bus_mismatch";
-    case LegacyNagBlockReason::TargetHandsOn: return "target_hands_on";
-    case LegacyNagBlockReason::CheckAd: return "check_ad";
-    case LegacyNagBlockReason::DlcShort: return "dlc_short";
-    case LegacyNagBlockReason::TxFailed: return "tx_failed";
-    case LegacyNagBlockReason::Detected: return "detected";
-    case LegacyNagBlockReason::Degraded: return "degraded";
-    case LegacyNagBlockReason::OwnEcho: return "own_echo";
-    case LegacyNagBlockReason::CounterCollision: return "counter_collision";
-    case LegacyNagBlockReason::DasSatisfied: return "das_satisfied";
-    case LegacyNagBlockReason::SteeringMissing: return "steering_missing";
-    case LegacyNagBlockReason::SteeringStale: return "steering_stale";
-    case LegacyNagBlockReason::SteeringInvalid: return "steering_invalid";
-    case LegacyNagBlockReason::CenterNoDirection: return "center_no_direction";
-    case LegacyNagBlockReason::StateDelay: return "state_delay";
-    case LegacyNagBlockReason::StateStopped: return "state_stopped";
-    case LegacyNagBlockReason::AbortGuard: return "abort_guard";
+    case LegacyNagBlockReason::None:
+        return "none";
+    case LegacyNagBlockReason::Disabled:
+        return "disabled";
+    case LegacyNagBlockReason::NotLegacy:
+        return "not_legacy";
+    case LegacyNagBlockReason::NotInDrive:
+        return "not_in_drive";
+    case LegacyNagBlockReason::ApInactive:
+        return "ap_inactive";
+    case LegacyNagBlockReason::ContextStale:
+        return "context_stale";
+    case LegacyNagBlockReason::BusLearning:
+        return "bus_learning";
+    case LegacyNagBlockReason::BusMismatch:
+        return "bus_mismatch";
+    case LegacyNagBlockReason::TargetHandsOn:
+        return "target_hands_on";
+    case LegacyNagBlockReason::CheckAd:
+        return "check_ad";
+    case LegacyNagBlockReason::DlcShort:
+        return "dlc_short";
+    case LegacyNagBlockReason::TxFailed:
+        return "tx_failed";
+    case LegacyNagBlockReason::Detected:
+        return "detected";
+    case LegacyNagBlockReason::Degraded:
+        return "degraded";
+    case LegacyNagBlockReason::OwnEcho:
+        return "own_echo";
+    case LegacyNagBlockReason::CounterCollision:
+        return "counter_collision";
+    case LegacyNagBlockReason::DasSatisfied:
+        return "das_satisfied";
+    case LegacyNagBlockReason::SteeringMissing:
+        return "steering_missing";
+    case LegacyNagBlockReason::SteeringStale:
+        return "steering_stale";
+    case LegacyNagBlockReason::SteeringInvalid:
+        return "steering_invalid";
+    case LegacyNagBlockReason::CenterNoDirection:
+        return "center_no_direction";
+    case LegacyNagBlockReason::StateDelay:
+        return "state_delay";
+    case LegacyNagBlockReason::StateStopped:
+        return "state_stopped";
+    case LegacyNagBlockReason::AbortGuard:
+        return "abort_guard";
     }
     return "unknown";
 }
@@ -200,7 +224,7 @@ struct DashNagBusLock
 
         uint8_t forwardDelta = static_cast<uint8_t>((counter - lastCounter) & 0x0F);
         bool sequential = hasCounter && candidateBus == bus &&
-            forwardDelta >= 1 && forwardDelta <= 3;
+                          forwardDelta >= 1 && forwardDelta <= 3;
         if (sequential)
         {
             if (candidateFrames < 0xFF)
@@ -301,8 +325,8 @@ struct DashReactiveNagBurst
     unsigned long nextProactiveIn(unsigned long nowMs) const
     {
         return currentMode == NagMode::Proactive && nextProactiveMs > nowMs
-            ? nextProactiveMs - nowMs
-            : 0;
+                   ? nextProactiveMs - nowMs
+                   : 0;
     }
 
     void startBurst(bool proactive, unsigned long nowMs)

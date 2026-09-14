@@ -47,16 +47,26 @@ static inline const char *dashLegacyWheel045StateName(DashLegacyWheel045State st
 {
     switch (state)
     {
-    case DashLegacyWheel045State::Idle: return "idle";
-    case DashLegacyWheel045State::WaitingSource: return "waiting_source";
-    case DashLegacyWheel045State::PositiveTxPending: return "positive_tx_pending";
-    case DashLegacyWheel045State::WaitingIdleAfterPositive: return "wait_native_idle";
-    case DashLegacyWheel045State::RetryWait: return "retry_wait";
-    case DashLegacyWheel045State::NegativeTxReady: return "compensation_ready";
-    case DashLegacyWheel045State::NegativeTxPending: return "compensation_tx_pending";
-    case DashLegacyWheel045State::WaitingIdleAfterNegative: return "wait_compensation_idle";
-    case DashLegacyWheel045State::Aborted: return "aborted";
-    case DashLegacyWheel045State::AutoDisarmed: return "auto_disarmed";
+    case DashLegacyWheel045State::Idle:
+        return "idle";
+    case DashLegacyWheel045State::WaitingSource:
+        return "waiting_source";
+    case DashLegacyWheel045State::PositiveTxPending:
+        return "positive_tx_pending";
+    case DashLegacyWheel045State::WaitingIdleAfterPositive:
+        return "wait_native_idle";
+    case DashLegacyWheel045State::RetryWait:
+        return "retry_wait";
+    case DashLegacyWheel045State::NegativeTxReady:
+        return "compensation_ready";
+    case DashLegacyWheel045State::NegativeTxPending:
+        return "compensation_tx_pending";
+    case DashLegacyWheel045State::WaitingIdleAfterNegative:
+        return "wait_compensation_idle";
+    case DashLegacyWheel045State::Aborted:
+        return "aborted";
+    case DashLegacyWheel045State::AutoDisarmed:
+        return "auto_disarmed";
     }
     return "unknown";
 }
@@ -65,25 +75,44 @@ static inline const char *dashLegacyWheel045BlockName(DashLegacyWheel045Block re
 {
     switch (reason)
     {
-    case DashLegacyWheel045Block::None: return "none";
-    case DashLegacyWheel045Block::Disabled: return "disabled";
-    case DashLegacyWheel045Block::NotLegacy: return "not_legacy";
-    case DashLegacyWheel045Block::ApInactive: return "ap_inactive";
-    case DashLegacyWheel045Block::WarningClear: return "warning_clear";
-    case DashLegacyWheel045Block::NoNative: return "no_native";
-    case DashLegacyWheel045Block::StaleNative: return "stale_native";
-    case DashLegacyWheel045Block::InvalidNative: return "invalid_native";
-    case DashLegacyWheel045Block::OtaGuard: return "ota_guard";
-    case DashLegacyWheel045Block::TwaiUnavailable: return "twai_unavailable";
-    case DashLegacyWheel045Block::ContextStale: return "context_stale";
-    case DashLegacyWheel045Block::PhysicalInput: return "physical_input";
-    case DashLegacyWheel045Block::CounterConflict: return "counter_conflict";
-    case DashLegacyWheel045Block::ReleaseTimeout: return "release_timeout";
-    case DashLegacyWheel045Block::TxFailed: return "tx_failed";
-    case DashLegacyWheel045Block::AutoDisarmed: return "auto_disarmed";
-    case DashLegacyWheel045Block::EpisodeLimit: return "episode_limit";
-    case DashLegacyWheel045Block::AbortGuard: return "abort_guard";
-    case DashLegacyWheel045Block::StalkOwnedByJitter: return "stalk_owned_by_jitter";
+    case DashLegacyWheel045Block::None:
+        return "none";
+    case DashLegacyWheel045Block::Disabled:
+        return "disabled";
+    case DashLegacyWheel045Block::NotLegacy:
+        return "not_legacy";
+    case DashLegacyWheel045Block::ApInactive:
+        return "ap_inactive";
+    case DashLegacyWheel045Block::WarningClear:
+        return "warning_clear";
+    case DashLegacyWheel045Block::NoNative:
+        return "no_native";
+    case DashLegacyWheel045Block::StaleNative:
+        return "stale_native";
+    case DashLegacyWheel045Block::InvalidNative:
+        return "invalid_native";
+    case DashLegacyWheel045Block::OtaGuard:
+        return "ota_guard";
+    case DashLegacyWheel045Block::TwaiUnavailable:
+        return "twai_unavailable";
+    case DashLegacyWheel045Block::ContextStale:
+        return "context_stale";
+    case DashLegacyWheel045Block::PhysicalInput:
+        return "physical_input";
+    case DashLegacyWheel045Block::CounterConflict:
+        return "counter_conflict";
+    case DashLegacyWheel045Block::ReleaseTimeout:
+        return "release_timeout";
+    case DashLegacyWheel045Block::TxFailed:
+        return "tx_failed";
+    case DashLegacyWheel045Block::AutoDisarmed:
+        return "auto_disarmed";
+    case DashLegacyWheel045Block::EpisodeLimit:
+        return "episode_limit";
+    case DashLegacyWheel045Block::AbortGuard:
+        return "abort_guard";
+    case DashLegacyWheel045Block::StalkOwnedByJitter:
+        return "stalk_owned_by_jitter";
     }
     return "unknown";
 }

@@ -19,12 +19,19 @@ inline const char *dashAbortGuardBlockPathName(DashAbortGuardBlockPath path)
 {
     switch (path)
     {
-    case DashAbortGuardBlockPath::LegacyFsdMux0: return "legacy_fsd_mux0";
-    case DashAbortGuardBlockPath::LegacyFsdMux1: return "legacy_fsd_mux1";
-    case DashAbortGuardBlockPath::LegacyVisionSlider0x438: return "legacy_vision_slider_0x438";
-    case DashAbortGuardBlockPath::LegacyNag370: return "legacy_nag_0x370";
-    case DashAbortGuardBlockPath::LegacyWheel045Dnd: return "legacy_wheel_0x045";
-    case DashAbortGuardBlockPath::None: default: return "none";
+    case DashAbortGuardBlockPath::LegacyFsdMux0:
+        return "legacy_fsd_mux0";
+    case DashAbortGuardBlockPath::LegacyFsdMux1:
+        return "legacy_fsd_mux1";
+    case DashAbortGuardBlockPath::LegacyVisionSlider0x438:
+        return "legacy_vision_slider_0x438";
+    case DashAbortGuardBlockPath::LegacyNag370:
+        return "legacy_nag_0x370";
+    case DashAbortGuardBlockPath::LegacyWheel045Dnd:
+        return "legacy_wheel_0x045";
+    case DashAbortGuardBlockPath::None:
+    default:
+        return "none";
     }
 }
 

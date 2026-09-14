@@ -17,24 +17,29 @@ static constexpr uint32_t kDash3eeLongGapMs = 2000; // >2s 计一次 longGap
 
 struct Dash3eeCadence
 {
-    uint32_t total = 0;      // 观测到的 mux0 帧总数
-    uint32_t lastMs = 0;     // 最近一帧时刻（0=开机以来从未见过）
-    uint32_t lastGapMs = 0;  // 最近一次相邻帧间隔
-    uint32_t maxGapMs = 0;   // 最大相邻帧间隔
-    uint32_t longGaps = 0;   // 超 kDash3eeLongGapMs 的间隙累计次数
+    uint32_t total = 0;     // 观测到的 mux0 帧总数
+    uint32_t lastMs = 0;    // 最近一帧时刻（0=开机以来从未见过）
+    uint32_t lastGapMs = 0; // 最近一次相邻帧间隔
+    uint32_t maxGapMs = 0;  // 最大相邻帧间隔
+    uint32_t longGaps = 0;  // 超 kDash3eeLongGapMs 的间隙累计次数
 
     void observe(const CanFrame &frame, uint32_t nowMs)
     {
-        if (frame.id != 0x3EE || frame.dlc == 0) return;
-        if ((frame.data[0] & 0x07) != 0) return; // mux0 only
-        if (frame.bus != CAN_BUS_VEH) return;    // coordinator source bus
+        if (frame.id != 0x3EE || frame.dlc == 0)
+            return;
+        if ((frame.data[0] & 0x07) != 0)
+            return; // mux0 only
+        if (frame.bus != CAN_BUS_VEH)
+            return; // coordinator source bus
         ++total;
         if (lastMs != 0 && nowMs > lastMs)
         {
             const uint32_t gap = nowMs - lastMs;
             lastGapMs = gap;
-            if (gap > maxGapMs) maxGapMs = gap;
-            if (gap > kDash3eeLongGapMs) ++longGaps;
+            if (gap > maxGapMs)
+                maxGapMs = gap;
+            if (gap > kDash3eeLongGapMs)
+                ++longGaps;
         }
         lastMs = nowMs;
     }

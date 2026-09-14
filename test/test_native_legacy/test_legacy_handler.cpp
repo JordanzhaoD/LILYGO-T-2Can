@@ -731,10 +731,10 @@ void test_legacy_filter_ids_values()
     TEST_ASSERT_EQUAL_UINT32(280, ids[1]);
     TEST_ASSERT_EQUAL_UINT32(390, ids[2]);
     TEST_ASSERT_EQUAL_UINT32(760, ids[3]);
-    TEST_ASSERT_EQUAL_UINT32(880, ids[4]);   // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
+    TEST_ASSERT_EQUAL_UINT32(880, ids[4]); // 0x370 EPAS3P_sysStatus (EPAS-faithful nag)
     TEST_ASSERT_EQUAL_UINT32(920, ids[5]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[6]);
-    TEST_ASSERT_EQUAL_UINT32(962, ids[7]);   // 0x3C2 dual-input recorder evidence
+    TEST_ASSERT_EQUAL_UINT32(962, ids[7]); // 0x3C2 dual-input recorder evidence
     TEST_ASSERT_EQUAL_UINT32(1006, ids[8]);
     TEST_ASSERT_EQUAL_UINT32(1080, ids[9]);
     TEST_ASSERT_EQUAL_UINT32(1160, ids[10]); // 0x488 steering direction source
