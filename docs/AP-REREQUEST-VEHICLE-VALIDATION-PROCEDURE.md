@@ -1,3 +1,8 @@
+> **⚠️ 已被取代（4.5.0-beta15，2026-09-15）**：本文验证的协调器已整体移除，由单 CAN
+> v1.19.2 实车冻结的 8.3.6 JITTER 防甩程序逐字移植取代。JITTER 无轮次/重武装/锁定
+> 概念（失败即静默复位），验证口径以 JITTER 22 键诊断（cycles/cancels/requests/
+> reengagedFsd/reengagedEap/bit46Shots/bit46Refreshes 等）为准。本文留史。
+
 # 8.3.6防甩机制（AP 取消重请求协调器）实车验证规程（两级，2026-09-14，适配 v4.5.0-beta14）
 
 ## 决定与前提

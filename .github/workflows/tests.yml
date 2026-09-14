@@ -55,21 +55,27 @@ jobs:
       matrix:
         env:
           - native
+          - native_reactive_nag
+          - native_legacy_nag_v4
+          - native_legacy_speed
           - native_dashboard
-          - native_bypass_tlssc_requirement
+          - native_single_can_dashboard
           - native_log_buffer
           - native_mcp2515_recovery
           - native_nag
           - native_injection_after_ap
-          - native_plugin_engine
-          - native_plugin_engine_custom_key
           - native_hw3
           - native_hw4
           - native_legacy
           - native_helpers
           - native_twai
+          - native_plugin_engine
           - native_bionic_steer
           - native_wheel_dnd
+          - native_legacy_wheel_045_dnd
+          - native_jitter
+          - native_ota_guard
+          - native_3ee_cadence
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
