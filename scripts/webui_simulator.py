@@ -75,7 +75,7 @@ class SimState:
         self.dnd_speed = True
         self.ap_eap_compatible = False
         self.abort_guard = False
-        self.ap_re_request = False
+        self.jitter = False
         self.ap_gate = False
         # ap_delay_ms removed in 4.5.0-beta06 (AP-settle delay deleted).
         self.ap_auto_restore = True
@@ -570,7 +570,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ap_eap_compatible": STATE.ap_eap_compatible,
                     "abort_guard": STATE.abort_guard,
                     "ota_guard_override": STATE.ota_guard_override,
-                    "ap_re_request": STATE.ap_re_request,
+                    "jitter": STATE.jitter,
                     "legacyInjectionSafety": {
                         "abortGuard": {
                             "enabled": STATE.abort_guard,
@@ -581,118 +581,70 @@ class Handler(BaseHTTPRequestHandler):
                         },
                         # minimalInject / steerDefense removed with the #108
                         # steer-jerk defense (4.5.0-beta02); the 8.3.6
-                        # cancel/re-request coordinator replaced the chain.
-                        "apReRequest": {
-                            "requested": STATE.ap_re_request,
-                            "effective": STATE.ap_re_request and STATE.ap_gate,
-                            "profileReady": STATE.ap_re_request,
+                        # cancel/re-request coordinator was itself replaced
+                        # in 4.5.0-beta15 by the JITTER procedure (verbatim
+                        # port of the single-CAN v1.19.2 field-frozen code).
+                        # Static standby mirror of appendJitterDiagJson's 22
+                        # keys; the procedure stays inert (no CAN traffic in
+                        # the simulator), apGateOpen tracks the gate toggle.
+                        "jitter": {
+                            "requested": STATE.jitter,
+                            "effective": STATE.jitter and STATE.ap_gate,
                             "apGateOpen": STATE.ap_gate,
-                            "unavailableReason": (
-                                None if STATE.ap_gate else "apGateOff"
-                            ),
-                            "permit": False,
-                            "phase": (
-                                "disabled"
-                                if not STATE.ap_re_request or not STATE.ap_gate
-                                else "wait_driver_intent"
-                            ),
-                            "step": "idle",
-                            "reason": (
-                                "apGateOff"
-                                if STATE.ap_re_request and not STATE.ap_gate
-                                else "disabled"
-                                if not STATE.ap_re_request
-                                else "waitIntent"
-                            ),
-                            "round": 0,
-                            "epoch": 1,
+                            "permit": True,
+                            "phase": "inert",
+                            "reason": "apGateOff" if STATE.jitter else "off",
                             "apState": 0,
-                            "intentPresent": False,
-                            "windowMs": 2400,
-                            "cancelAccepted": 0,
-                            "cancelAttempts": 0,
-                            "requestAccepted": 0,
-                            "requestAttempts": 0,
-                            "ownEchoRx": 0,
-                            "counterConflicts": 0,
-                            # 4.5.0-beta14 retry diagnostics (mirrors the
-                            # firmware chain after counterConflicts).
-                            "counterSkips": 0,
-                            "cancelRetries": 0,
-                            "requestRetries": 0,
-                            "physicalInputRx": 0,
-                            "lastEndedReason": "none",
-                            "autoRearms": 0,
-                            # 4.5.0-beta09 P1/P2 (observational): vehicle
-                            # refusal watch + 0x399 flag tally, mirroring the
-                            # firmware /status shape.
-                            "vehicleRefusal": False,
-                            "rwdPressPending": False,
-                            "vehicleRefusals": 0,
-                            "rwdPressMs": 0,
-                            "lastApFlag": 0,
-                            "lastApFlagMs": 0,
-                            "apFlagCounts": [0] * 16,
-                            # 4.5.0-beta10 P1 (pure observation): permit
-                            # decomposition, tick liveness, NVS blackbox and
-                            # the OTA-watch counters, mirroring the firmware
-                            # /status shape.
-                            "permitInputs": {
-                                "canActive": True,
-                                "legacyHandler": True,
-                                "driver": True,
-                                "otaGuardClear": not STATE.vehicle_ota,
-                                "abortGuardOk": True,
-                            },
-                            "permitBits": 31 if not STATE.vehicle_ota else 23,
-                            "tickHeartbeat": {
-                                "count": 1,
-                                "lastMs": 1000,
-                                "ageMs": 0,
-                            },
-                            "blackbox": [
-                                {
-                                    "seq": 1,
-                                    "kind": "boot",
-                                    "ms": 0,
-                                    "tick": 0,
-                                    "phase": 0,
-                                    "permitBits": 31,
-                                    "apState": 0,
-                                    "reason": "",
-                                }
-                            ],
-                            "otaWatch": {
-                                "seen318": 0,
-                                "last318Ms": 0,
-                                "confirm": STATE.ota_confirm_count,
-                                "clear": STATE.ota_clear_count,
-                                "active": STATE.vehicle_ota,
-                                # 4.5.0-beta12 (LittleGong port 1): guard
-                                # degradation bookkeeping.
-                                "staleClears": STATE.ota_stale_clears,
-                                "override": STATE.ota_guard_override,
-                                "blockedMs": 0,
-                            },
-                            # 4.5.0-beta12 (LittleGong port 2): 0x3EE mux0
-                            # carrier cadence (static mirror).
-                            "carrier3ee": {
-                                "lastGapMs": 1000,
-                                "maxGapMs": 2000,
-                                "longGaps": 0,
-                                "total": 42,
-                                "lastMs": 1000,
-                                "ageMs": 0,
-                            },
-                            # 4.5.0-beta12 (LittleGong port 3): 0x3EE mux0
-                            # injection TX accounting (static mirror).
-                            "txAccounting": {
-                                "attempts": 0,
-                                "ok": 0,
-                                "fails": 0,
-                                "consecutiveFails": 0,
-                                "lastOkAgeMs": 0,
-                            },
+                            "cycles": 0,
+                            "cancels": 0,
+                            "requests": 0,
+                            "reengagedFsd": 0,
+                            "reengagedEap": 0,
+                            "bit46Shots": 0,
+                            "bit46Refreshes": 0,
+                            "pumpFrames": 0,
+                            "txOk": 0,
+                            "txFail": 0,
+                            "steerAborts": 0,
+                            "steerResets": 0,
+                            "apErrorResets": 0,
+                            "timeoutResets": 0,
+                            "failedCycles": 0,
+                        },
+                        # otaWatch / carrier3ee / txAccounting were nested
+                        # inside the coordinator object before beta15; the
+                        # firmware always emitted them as jitter's siblings
+                        # inside legacyInjectionSafety — hoisted to match.
+                        "otaWatch": {
+                            "seen318": 0,
+                            "last318Ms": 0,
+                            "confirm": STATE.ota_confirm_count,
+                            "clear": STATE.ota_clear_count,
+                            "active": STATE.vehicle_ota,
+                            # 4.5.0-beta12 (LittleGong port 1): guard
+                            # degradation bookkeeping.
+                            "staleClears": STATE.ota_stale_clears,
+                            "override": STATE.ota_guard_override,
+                            "blockedMs": 0,
+                        },
+                        # 4.5.0-beta12 (LittleGong port 2): 0x3EE mux0
+                        # carrier cadence (static mirror).
+                        "carrier3ee": {
+                            "lastGapMs": 1000,
+                            "maxGapMs": 2000,
+                            "longGaps": 0,
+                            "total": 42,
+                            "lastMs": 1000,
+                            "ageMs": 0,
+                        },
+                        # 4.5.0-beta12 (LittleGong port 3): 0x3EE mux0
+                        # injection TX accounting (static mirror).
+                        "txAccounting": {
+                            "attempts": 0,
+                            "ok": 0,
+                            "fails": 0,
+                            "consecutiveFails": 0,
+                            "lastOkAgeMs": 0,
                         },
                     },
                 }
@@ -1141,8 +1093,8 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.ota_guard_override = self.form_bool(form["ota_guard_override"])
                 if STATE.ota_guard_override:
                     STATE.vehicle_ota = False
-            if "ap_re_request" in form:
-                STATE.ap_re_request = self.form_bool(form["ap_re_request"])
+            if "jitter" in form:
+                STATE.jitter = self.form_bool(form["jitter"])
             self.send_obj({"ok": True})
         elif path == "/fog_light":
             if "fogStrategy" in form:

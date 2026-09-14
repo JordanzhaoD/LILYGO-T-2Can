@@ -36,6 +36,7 @@ DEFINES = {"DRIVER_T2CAN_DUAL", "ESP32_DASHBOARD"}
 FUNCS = [
     "handleStatus",
     "dashAppendLegacySafetyControlsJson",
+    "appendJitterDiagJson",
     "dashDefenseConfigJson",
     "appendLegacyNagDiagJson",
     "handleVehicleOtaStatus",

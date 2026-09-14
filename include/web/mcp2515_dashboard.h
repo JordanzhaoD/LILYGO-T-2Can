@@ -3965,6 +3965,90 @@ static void handleLightingConfig()
     server.send(200, "application/json", dashLightingConfigJson());
 }
 
+static const char *dashJitterPhaseName(JitterPhase p)
+{
+    switch (p)
+    {
+    case JitterPhase::Inert:
+        return "inert";
+    case JitterPhase::Idle:
+        return "idle";
+    case JitterPhase::Normal:
+        return "monitoring";
+    case JitterPhase::Arming:
+        return "arming";
+    case JitterPhase::Disengaging:
+        return "disengaging";
+    }
+    return "unknown";
+}
+
+// v1.19 JITTER diag — ported verbatim from the single-CAN
+// appendJitterDiagJson (v1.19.2, field-frozen). Dual-CAN placement
+// difference only: the object opens INSIDE legacyInjectionSafety at the old
+// apReRequest slot, so the first literal is `},"jitter":{` (it closes the
+// abortGuard sibling) instead of the single-CAN top-level `,"jitter":{`.
+// Chain rule: after a string value use `","key":`; after a numeric/bool
+// value use `,"key":`. Every literal below leads accordingly.
+static void appendJitterDiagJson(String &j)
+{
+    // `requested` is the persisted switch; `effective` stays false while the
+    // AP gate is closed or the permit cascade is down (fail-closed).
+    const DashJitterDiag jt = dashJitterCtrl.diag();
+    j += R"JSON("},"jitter":{"requested":)JSON";
+    j += jt.requested ? "true" : "false";
+    j += R"JSON(,"effective":)JSON";
+    j += jt.effective ? "true" : "false";
+    j += R"JSON(,"apGateOpen":)JSON";
+    j += jt.apGateOpen ? "true" : "false";
+    // apGateOpen above is BOOLEAN — the next literal must NOT lead with the
+    // string-close quote (chain rule; see the function header comment).
+    j += R"JSON(,"permit":)JSON";
+    j += jt.permit ? "true" : "false";
+    j += R"JSON(,"phase":")JSON";
+    j += dashJitterPhaseName(jt.phase);
+    j += R"JSON(","reason":")JSON";
+    j += jt.reason;
+    j += R"JSON(","apState":)JSON";
+    j += jt.apState;
+    j += R"JSON(,"cycles":)JSON";
+    j += jt.cycles;
+    j += R"JSON(,"cancels":)JSON";
+    j += jt.cancels;
+    j += R"JSON(,"requests":)JSON";
+    j += jt.requests;
+    // v1.19.2 landing split: state 6 after our 0x42 is the FSD landing this
+    // procedure exists for; state 3 is the EAP landing (no-landing count is
+    // requests - reengagedFsd - reengagedEap).
+    j += R"JSON(,"reengagedFsd":)JSON";
+    j += jt.reengagedFsd;
+    j += R"JSON(,"reengagedEap":)JSON";
+    j += jt.reengagedEap;
+    j += R"JSON(,"bit46Shots":)JSON";
+    j += jt.bit46Shots;
+    // v1.19.2 pre-re-request refresh frames (distinct from arming shots so
+    // a field session can verify refreshes ~= requests directly).
+    j += R"JSON(,"bit46Refreshes":)JSON";
+    j += jt.bit46Refreshes;
+    j += R"JSON(,"pumpFrames":)JSON";
+    j += jt.pumpFrames;
+    j += R"JSON(,"txOk":)JSON";
+    j += jt.txOk;
+    j += R"JSON(,"txFail":)JSON";
+    j += jt.txFail;
+    j += R"JSON(,"steerAborts":)JSON";
+    j += jt.steerAborts;
+    j += R"JSON(,"steerResets":)JSON";
+    j += jt.steerResets;
+    j += R"JSON(,"apErrorResets":)JSON";
+    j += jt.apErrorResets;
+    j += R"JSON(,"timeoutResets":)JSON";
+    j += jt.timeoutResets;
+    j += R"JSON(,"failedCycles":)JSON";
+    j += jt.failedCycles;
+    j += R"JSON(})JSON";
+}
+
 static void dashAppendLegacySafetyControlsJson(String &j)
 {
     const DashAbortGuardDiag abort = dashHandler ? dashHandler->abortGuard.diag()
@@ -3991,12 +4075,12 @@ static void dashAppendLegacySafetyControlsJson(String &j)
     // The apReRequest coordinator object (incl. the beta10 permitInputs /
     // tickHeartbeat / blackbox observation layers) was removed with the
     // beta09..beta14 coordinator in 4.5.0-beta15, replaced by the v1.19
-    // JITTER procedure — its diag object lands in this same slot (see
-    // appendJitterDiagJson below). otaWatch / carrier3ee / txAccounting
-    // survive as direct children of legacyInjectionSafety.
-    // Chain rule: the leading `"` closes lastBlockedPath's string value, the
-    // `}` closes abortGuard (the coordinator's opener used to carry both).
-    j += R"JSON("})JSON";
+    // JITTER procedure — its diag object lands in this same slot. The
+    // appendJitterDiagJson opener carries the string-close of
+    // lastBlockedPath and the abortGuard object close. otaWatch /
+    // carrier3ee / txAccounting survive as direct children of
+    // legacyInjectionSafety.
+    appendJitterDiagJson(j);
     // otaWatch from dashboard statics (available wherever this dispatcher
     // compiles, not dual-driver-specific). confirm/clear are the guard's own
     // threshold counters (dash_ota_guard.h); active is the raw flag.

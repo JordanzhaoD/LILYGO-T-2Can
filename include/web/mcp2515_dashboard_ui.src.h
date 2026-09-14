@@ -1343,22 +1343,20 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">8.3.6防甩机制 <span class="exp-badge">实验 · 未验证实车防甩</span></div>
-      <div class="setting-desc" id="ap-rr-desc">AP 激活边沿自动先模拟 0x045 取消，等车回到可用状态（0x399=2，实车约 1s）再重请求；2.4s 窗口内读到原生 0x3EE 且 AP∈{2,3} 立即注入 bit46。车辆侧异常（窗口过期/AP 退出/故障态）自动重新武装（连续 3 次后锁定），无需拨开关恢复。编码/时序已按 2026-09-10/11 实车抓包标定。需先开启上方「AP 注入门控」——门控关闭时本开关仅记忆状态、机制不运行，Legacy 走原始直通路径。实验·防甩效果未验证</div>
+      <div class="setting-desc" id="jitter-desc">0x399 事件驱动：AP 啮合（事件3）进入武装期并单发一次 bit46 解锁帧；检测到 FSD 车道捕捉（事件6）立即合成 CAN1 原生 0x045 取消（提前约 200ms 打断甩动窗），等 AP 可用（事件2）后自动重挂；重挂前补发一次 bit46 刷新以提高 FSD 落地率。失败无重试、无锁定——程序静默复位，人工再开一轮。机制逐字移植自单 CAN v1.19.2 实车冻结版。需先开启上方「AP 注入门控」——门控关闭时本开关仅记忆状态、机制不运行，Legacy 走原始直通路径。</div>
     </div>
-    <label class="tgl"><input type="checkbox" id="def-ap-rerequest-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+    <label class="tgl"><input type="checkbox" id="def-jitter-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
   <div class="diag-grid" style="margin:6px 0 4px">
-    <div class="diag-item"><span class="lbl">生效状态</span><span class="v-dim" id="ap-rr-effective">关闭</span></div>
-    <div class="diag-item"><span class="lbl">阶段 / 原因</span><span class="v-dim" id="ap-rr-phase">-- / --</span></div>
-    <div class="diag-item"><span class="lbl">轮次 / 纪元</span><span class="v-dim" id="ap-rr-round">0 / 1</span></div>
-    <div class="diag-item"><span class="lbl">AP / 意图</span><span class="v-dim" id="ap-rr-ap">-- / --</span></div>
-    <div class="diag-item"><span class="lbl">车辆响应</span><span class="v-dim" id="ap-rr-vehicle">--</span></div>
-    <div class="diag-item"><span class="lbl">取消 / 请求（成/试）</span><span class="v-dim" id="ap-rr-gestures">0·0 / 0·0</span></div>
-    <div class="diag-item"><span class="lbl">回声 / 冲突</span><span class="v-dim" id="ap-rr-echo">0 / 0</span></div>
-    <div class="diag-item"><span class="lbl">上次结束原因</span><span class="v-dim" id="ap-rr-lastend">--</span></div>
-    <div class="diag-item"><span class="lbl">自动重武装</span><span class="v-dim" id="ap-rr-rearm">0</span></div>
-    <div class="diag-item"><span class="lbl">许可链</span><span class="v-dim" id="ap-rr-permit">--</span></div>
-    <div class="diag-item"><span class="lbl">心跳</span><span class="v-dim" id="ap-rr-tick">--</span></div>
+    <div class="diag-item"><span class="lbl">生效状态</span><span class="v-dim" id="jitter-effective">关闭</span></div>
+    <div class="diag-item"><span class="lbl">阶段 / 原因</span><span class="v-dim" id="jitter-phase">-- / --</span></div>
+    <div class="diag-item"><span class="lbl">AP / 周期数</span><span class="v-dim" id="jitter-ap">-- / 0</span></div>
+    <div class="diag-item"><span class="lbl">取消 / 重挂</span><span class="v-dim" id="jitter-bursts">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">FSD落地 / EAP落地</span><span class="v-dim" id="jitter-landing">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">bit46 / 刷新</span><span class="v-dim" id="jitter-frames">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">TX 成/败</span><span class="v-dim" id="jitter-tx">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">转向中止/复位</span><span class="v-dim" id="jitter-steer">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">超时/故障复位</span><span class="v-dim" id="jitter-resets">0 / 0</span></div>
   </div>
   <div class="diag-grid" style="margin:6px 0 4px">
     <div class="diag-item"><span class="lbl">Abort Guard</span><span class="v-dim" id="def-abort-state">关闭</span></div>
@@ -2549,54 +2547,31 @@ async function loadDefenseConfig(){
   var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
   var abortTgl=$('def-abort-guard-tgl');if(abortTgl)abortTgl.checked=!!d.abort_guard;
   var otaOvr=$('def-ota-ovr-tgl');if(otaOvr)otaOvr.checked=!!d.ota_guard_override;
-  var rrTgl=$('def-ap-rerequest-tgl');if(rrTgl)rrTgl.checked=!!d.ap_re_request;
+  var jtTgl=$('def-jitter-tgl');if(jtTgl)jtTgl.checked=!!d.jitter;
   var safety=d.legacyInjectionSafety||{};
   var abort=safety.abortGuard||{};
-  var rr=safety.apReRequest||{};
-  var rrReasonMap={apGateOff:'AP 门控未开启'};
-  var rrPhaseMap={
-    disabled:'已关闭',apGateOff:'AP 门控未开启',
-    waitIntent:'等待拨杆意图',waitExit:'等待 AP 退出',waitApActive:'等待 AP 激活',
-    cancelArmed:'取消序列进行',cancelPressAccepted:'取消按压已发',
-    waitCancelEvidence:'等待取消生效',waitAvailable:'等待车辆可用(状态2)',
-    requestArmed:'重请求就绪',requestPressAccepted:'重请求已发',
-    waitQualification:'等待资格窗口',qualified:'资格达成·注入中',
-    intentWithdrawn:'意图撤回·轮次完成',apLeftInjectionSet:'离开注入集·轮次完成',
-    physicalInput:'物理拨杆介入·锁定',otaGuard:'OTA 更新保护·锁定',
-    cancelSeqTimeout:'取消序列超时·锁定',cancelEvidenceTimeout:'取消证据超时·锁定',
-    availableWaitTimeout:'等待可用超时·锁定',apActiveDuringWait:'等待中 AP 自恢复·已自动重武装',
-    apExitedBeforeRequest:'请求前 AP 退出·锁定',apExitedDuringRequest:'请求被拒·已自动重武装',
-    requestRetryWait:'请求被拒·轮内重试等待',cancelRetryArmed:'取消被无视·重发已武装',
-    cancelIgnored:'车辆无视取消·已自动重武装',
-    apExitedDuringWindow:'窗口内 AP 退出·已自动重武装',apOutsideWindowSet:'窗口内状态异常·锁定',
-    windowExpired:'资格窗口超时·已自动重武装',counterConflict:'计数器冲突·锁定',
-    txFailed:'发送失败·锁定',permitLost:'许可丢失·锁定',
-    apFaultState:'AP 故障状态·已自动重武装',dasStale:'DAS 数据过期·锁定',
-    invalidNative045:'原生 0x045 无效·锁定',
-    autoRearmLimit:'连续车辆侧异常·锁定(开关关→开重置)'};
-  setText('ap-rr-effective',rr.effective?(rr.permit?'生效 / 运行':'生效 / 等待许可'):(rr.requested?('不可用 · '+(rrReasonMap[rr.unavailableReason]||rr.unavailableReason||'profile 未配置')):'关闭'));
-  setText('ap-rr-phase',(rr.phase||'disabled')+' / '+(rrPhaseMap[rr.reason]||rr.reason||'--'));
-  setText('ap-rr-round',(rr.round||0)+' / '+(rr.epoch||1));
-  setText('ap-rr-ap',(rr.apState!=null?rr.apState:'--')+' / '+(rr.intentPresent?'有':'无'));
-  // beta09 P1: 拨杆后车侧是否接受激活（等待中→拒绝→被下一次按压/激活边沿清除）。
-  // 只在 WaitDriverIntent 观测；「--」= 拨杆未被设备看到或车已正常响应。
-  setText('ap-rr-vehicle',rr.vehicleRefusal?('未接受激活 · 车侧拒绝'+((rr.vehicleRefusals||0)>1?(' ×'+rr.vehicleRefusals):'')):(rr.rwdPressPending?'等待车辆响应…':'--'));
-  setText('ap-rr-gestures',(rr.cancelAccepted||0)+'·'+(rr.cancelAttempts||0)+' / '+(rr.requestAccepted||0)+'·'+(rr.requestAttempts||0));
-  setText('ap-rr-echo',(rr.ownEchoRx||0)+' / '+(rr.counterConflicts||0));
-  setText('ap-rr-lastend',(rr.lastEndedReason&&rr.lastEndedReason!=='none')?(rrPhaseMap[rr.lastEndedReason]||rr.lastEndedReason):'--');
-  setText('ap-rr-rearm',String(rr.autoRearms||0));
-  // beta10 P1：许可链五输入分解 + tick 心跳（纯观测）。permit 任一输入死亡 =
-  // 静默无法注入（开关循环无效，拔插才恢复）——此处直接点名死掉的输入。
-  var pi=rr.permitInputs||{};
-  var dead=[];
-  if(pi.canActive===false)dead.push('总开关');
-  if(pi.legacyHandler===false)dead.push('处理器');
-  if(pi.driver===false)dead.push('驱动');
-  if(pi.otaGuardClear===false)dead.push('OTA守卫');
-  if(pi.abortGuardOk===false)dead.push('AbortGuard');
-  setText('ap-rr-permit',dead.length?('断: '+dead.join('/')):'正常');
-  var th=rr.tickHeartbeat;
-  setText('ap-rr-tick',th?(String(th.count)+' · '+((th.ageMs!=null&&th.ageMs<5000)?'活跃':('停滞'+Math.round((th.ageMs||0)/1000)+'s'))):'--');
+  // v1.19 8.3.6 JITTER 诊断：legacyInjectionSafety.jitter 对象（逐字移植自
+  // 单 CAN v1.19.2 顶层 jitter；LittleGong 对齐精简版——一个阶段、一个原因、一组计数器）。
+  var jt=safety.jitter||{};
+  var jtReasonMap={off:'关闭',idle:'待机',monitoring:'监控 AP 状态',
+    arming:'武装期(5s)',cancel:'取消已发',cancelSeen:'取消生效',reRequest:'重挂已发',
+    reEngagedFsd:'FSD 落地',reEngagedEap:'EAP 落地',
+    sessionCap:'本行车段已站下',parked:'P 档·已复位',
+    apGateOff:'AP 门控未开启',permitLost:'许可丢失·已复位',
+    timeout:'超时·已复位',apError:'AP 故障·已复位',
+    steerAbort:'转向>45°·中止突发',steerReset:'转向>90°·全复位'};
+  var jtPhaseMap={inert:'未生效',idle:'待机',monitoring:'监控',arming:'武装',disengaging:'取消/重挂'};
+  setText('jitter-effective',jt.effective?(jt.permit?'生效 / 运行':'生效 / 等待许可'):(jt.requested?'不可用 · AP 门控未开启':'关闭'));
+  setText('jitter-phase',(jtPhaseMap[jt.phase]||jt.phase||'--')+' / '+(jtReasonMap[jt.reason]||jt.reason||'--'));
+  setText('jitter-ap',(jt.apState!=null?jt.apState:'--')+' / '+(jt.cycles||0));
+  setText('jitter-bursts',(jt.cancels||0)+' / '+(jt.requests||0));
+  // v1.19.2: landing split — FSD(state6)/EAP(state3) after our 0x42;
+  // bit46 cell shows arming shots / pre-re-request refreshes.
+  setText('jitter-landing',(jt.reengagedFsd||0)+' / '+(jt.reengagedEap||0));
+  setText('jitter-frames',(jt.bit46Shots||0)+' / '+(jt.bit46Refreshes||0));
+  setText('jitter-tx',(jt.txOk||0)+' / '+(jt.txFail||0));
+  setText('jitter-steer',(jt.steerAborts||0)+' / '+(jt.steerResets||0));
+  setText('jitter-resets',(jt.timeoutResets||0)+' / '+(jt.apErrorResets||0));
   setText('def-abort-state',abort.enabled?(abort.latched?('锁止 / AP '+(abort.lastAbortState??'--')):('就绪 / 阻断 '+(abort.blocks||0))):'关闭');
   setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
   var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
@@ -2978,7 +2953,7 @@ async function saveDefenseConfig(){
   var apeap=$('def-apeap-tgl');
   var abortTgl=$('def-abort-guard-tgl');
   var otaOvr=$('def-ota-ovr-tgl');
-  var rrTgl=$('def-ap-rerequest-tgl');
+  var jtTgl=$('def-jitter-tgl');
   var data={
     enabled:master&&master.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
@@ -2989,7 +2964,7 @@ async function saveDefenseConfig(){
     ap_eap_compatible:apeap&&apeap.checked?'1':'0',
     abort_guard:abortTgl&&abortTgl.checked?'1':'0',
     ota_guard_override:otaOvr&&otaOvr.checked?'1':'0',
-    ap_re_request:rrTgl&&rrTgl.checked?'1':'0'
+    jitter:jtTgl&&jtTgl.checked?'1':'0'
   };
   if(dndSpd)data.dnd_speed=dndSpd.checked?'1':'0';
   try{await postForm('/defense_config',data);}
