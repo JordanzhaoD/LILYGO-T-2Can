@@ -44,10 +44,13 @@
 #endif
 #include "web/mcp2515_dashboard_ui.h"
 #include "dash_ota_guard.h"
+#include "dash_3ee_cadence.h"
 #include "dash_power_mgmt.h"
 #include "dash_fog_light.h"
 #include "dash_wheel_dnd.h"
 #include "dash_legacy_wheel_045_dnd.h"
+#include "dash_ap_rerequest_activation.h"
+#include "dash_ap_blackbox.h"
 #include "dash_tx_evidence.h"
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
@@ -167,16 +170,14 @@ static bool apAutoRestore = false;
 // 上一次 dashPostProcessFrame 实际发送成功的时间戳，便于 /status 区分"在持续发"与
 // "发了几次就停"，与 framesSent 单调累计计数互补。跨 CAN 任务 / dashboard 任务读写。
 static volatile uint32_t lastInjectMs = 0;
-// Legacy FSD diagnostics retain the historical settle fields for API
-// compatibility. When the optional AP gate is enabled, Legacy 0x3EE waits for
-// 0x399 AP active. This is intentionally fail-closed: a first activation cannot
-// bootstrap AP while this experimental gate is enabled.
-static constexpr uint32_t kLegacyFsdActivationSettleDefaultMs = 2000;
-static constexpr uint32_t kLegacyFsdActivationSettleMinMs = 0;
-static constexpr uint32_t kLegacyFsdActivationSettleMaxMs = 3000;
-static uint32_t legacyFsdApActiveSinceMs = 0;
-static bool legacyFsdApSettleTiming = false;
-static uint32_t legacyFsdRequiredStableMs = kLegacyFsdActivationSettleDefaultMs;
+// Legacy FSD diagnostics retain the historical lastAllowed/blocked fields for
+// API compatibility. When the optional AP gate is enabled, Legacy 0x3EE waits
+// for 0x399 AP active. This is intentionally fail-closed: a first activation
+// cannot bootstrap AP while this experimental gate is enabled. The
+// configurable AP-settle DELAY (0/1/2/3 s "延迟注入") was removed in
+// 4.5.0-beta06: it was a pre-coordinator anti-jerk measure, superseded by the
+// 8.3.6 cancel/re-request coordinator (and pointless on the direct path,
+// which exists for non-8.3.6 vehicles that do not jerk).
 static uint32_t legacyFsdLastBlockedMs = 0;
 static bool legacyFsdLastAllowed = false;
 static bool dashSpeedProfileAuto = true;
@@ -191,6 +192,24 @@ static DashFogLight dashFogCtrl;           // Phase 4 fog light controller insta
 static bool dashFogOffRequested = false;   // one-shot fail-off/stop command owned by CAN task
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static DashLegacyWheel045Dnd dashLegacyWheel045DndCtrl;
+// 4.5.0-beta01 AP cancel + re-request coordinator (design/4.5.0-beta01).
+// Default off AND compiled profile empty: configure() refuses to arm until a
+// vehicle-validated ApReRequestProfile exists (fail-closed).
+static DashApReRequestActivation dashApReRequestCtrl;
+// beta10 P1 otaWatch (pure observation): 0x318 sighting counters feeding the
+// /status otaWatch object. vehicleOtaActive (set by dashOtaGuardProcessFrame
+// below) is a coordinator permit input AND a legacy injection gate — if it
+// ever wedges true while 0x318 stops flowing (clear needs 6 consecutive
+// non-OTA 0x318 frames), injection dies silently until reboot. These counters
+// make that visible: seen318/last318Ms show whether the bus carries 0x318 at
+// all; confirm/clear are the guard's own threshold counters.
+static uint32_t dashOta318Seen = 0;
+static uint32_t dashOta318LastMs = 0;
+// beta12 (LittleGong port 2): 0x3EE mux0 carrier cadence (pure observation)
+// — same observation-only contract as the counters above; fed from the frame
+// dispatcher, emitted as the carrier3ee object in /status.
+static Dash3eeCadence dash3eeCadence;
+static bool dashApReRequestEnabled = false;
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
 static bool dashSpeedNoDisturb = false;
@@ -198,19 +217,9 @@ static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行
 static bool dashDndSpeed = false;       // 速度滚轮DND（Phase 3实现执行逻辑）
 static bool dashBionicDisabled = false; // bionic auto-disabled after 3 failures
 static bool dashApEapCompatible = true;
-// Experimental Legacy-only safety controls. Both default off so existing
+// Experimental Legacy-only safety controls. Default off so existing
 // continuous activation behavior remains unchanged until explicitly armed.
 static bool dashAbortGuardEnabled = false;
-static bool dashMinimalInjectEnabled = false;
-static bool dashInstantEngageEnabled = false; // #108 Instant Engage (ap_first_edge)
-// Soft Engage (#108 sibling, upstream v2.16-beta.10): once the settle/edge
-// verdict allows the frame, hold Legacy 0x3EE bit46 off until the wheel nears
-// centre. Default off (zero-regression); single-CAN defaults it on, dual-CAN
-// keeps it opt-in like the other experimental gates.
-static constexpr int SOFT_ENGAGE_ANGLE_THRESH_X10 = 50;  // ±5.0° (on-car tune)
-static constexpr uint32_t SOFT_ENGAGE_TIMEOUT_MS = 5000; // long-curve fallback
-static bool dashSoftEngageEnabled = false;
-static bool legacySoftEngageSent = false; // per-episode latch: first bit46 release
 static LegacyFsdPolicy dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
 static bool dashLegacyFsdMux1Enable = false;
 static bool dashLegacyFsdProfileWriteEnable = false;
@@ -1074,15 +1083,38 @@ static void mcpDashOnFrame(const CanFrame &f)
              f.bus == CAN_BUS_PARTY)
         dashLegacyWheel045DndCtrl.observeGatewayMirror(f.data, f.dlc,
                                                        static_cast<uint32_t>(now));
+    // 4.5.0 re-request coordinator sees the raw 0x045 stream from every bus;
+    // the module itself filters to the profile's bound source bus and handles
+    // CRC / own-echo / physical-input detection.
+    if (f.id == 0x045)
+        dashApReRequestCtrl.observeNative045(f.data, f.dlc, f.bus,
+                                             static_cast<uint32_t>(now));
     if (f.id == 0x399 && f.dlc >= 6 && dashLegacyHandlerActive())
     {
         const uint8_t apState = static_cast<uint8_t>(f.data[0] & 0x0F);
+        // beta09 P2: the HIGH nibble of byte0 is vehicle-side flags
+        // (semantics undecoded; 1/4/5 seen across the two Tier 1 CSVs). It
+        // used to be masked away here — now forwarded for the coordinator's
+        // observational tally (no behavioral role).
+        const uint8_t dasFlags = static_cast<uint8_t>(f.data[0] >> 4);
         const uint8_t handsState = static_cast<uint8_t>((f.data[5] >> 2) & 0x0F);
         dashLegacyWheel045DndCtrl.onDasStatus(apState, handsState, f.bus,
                                               static_cast<uint32_t>(now));
+        dashApReRequestCtrl.observeDasStatus(apState, f.bus,
+                                             static_cast<uint32_t>(now), dasFlags);
     }
-    // Phase 1: OTA guard 检测 0x318 帧
-    dashOtaGuardProcessFrame(f);
+    // Phase 1: OTA guard 检测 0x318 帧（beta12 起带时间戳：停流超时降级需要）
+    dashOtaGuardProcessFrame(f, static_cast<uint32_t>(now));
+    // beta10 P1 otaWatch (pure observation, no behavior): every 0x318
+    // sighting is counted and stamped here regardless of the guard verdict.
+    if (f.id == CAN_ID_OTA_STATUS)
+    {
+        ++dashOta318Seen;
+        dashOta318LastMs = static_cast<uint32_t>(now);
+    }
+    // beta12 (LittleGong port 2): 0x3EE mux0 carrier cadence observation —
+    // the qualification window lives or dies by this rhythm (no behavior).
+    dash3eeCadence.observe(f, static_cast<uint32_t>(now));
     // Phase 1: 功耗管理 — 记录 CAN 活动
     dashPowerMgmtTouchCan();
     if (dashWriteProbe.active && dashWriteProbe.state != kDashWriteProbeFailed && dashWriteProbeMatches(f))
@@ -1189,73 +1221,50 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
 {
     if (!canActive)
     {
-        legacyFsdApActiveSinceMs = 0;
-        legacyFsdApSettleTiming = false;
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
     if (!dashOtaGuardAllowInjection())
     {
-        legacyFsdApActiveSinceMs = 0;
-        legacyFsdApSettleTiming = false;
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
+    // 4.5.0 re-request mode: while enabled with a valid profile AND the AP
+    // injection gate open (apGateOpen is part of active() since 4.5.0-beta03 —
+    // the gate is the coordinator's arm-level precondition) the coordinator is
+    // the SOLE activation authority. This REPLACES the settle / steer-defense
+    // / soft-engage chain below — never chained after it, because the old
+    // chain's APActive(3..6)+settle verdict would veto the user-frozen AP=2
+    // qualification set. With the gate closed active() is false, so the
+    // early-true below takes over: that is the LEGAL normal mode for
+    // non-8.3.6 vehicles (gate off = legacy direct path, coordinator inert).
+    if (dashApReRequestCtrl.active())
+    {
+        const bool allowed = dashApReRequestCtrl.activationAllowed(nowMs);
+        legacyFsdLastAllowed = allowed;
+        if (!allowed)
+            legacyFsdLastBlockedMs = nowMs;
+        return allowed;
+    }
     if (!apInjectionGate)
     {
-        legacyFsdApActiveSinceMs = 0;
-        legacyFsdApSettleTiming = false;
         legacyFsdLastAllowed = true;
         return true;
     }
     if (!dashLegacyApInjectionAllowed())
     {
-        legacyFsdApActiveSinceMs = 0;
-        legacyFsdApSettleTiming = false;
         legacyFsdLastAllowed = false;
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
-    // Steer-jerk defense (#108): the settle/instant/minimal verdict is owned by
-    // DashLegacySteerDefense::decide(), fed once per primary 921 frame by
-    // observe(). With both Instant and Minimal off, decide() reduces to the
-    // same debounce/settle (debounceMs mirrors legacyFsdRequiredStableMs). Keep
-    // the legacy settle-timer state in sync for the UI stable-ms display.
-    if (!legacyFsdApSettleTiming)
-    {
-        legacyFsdApActiveSinceMs = nowMs;
-        legacyFsdApSettleTiming = true;
-        legacySoftEngageSent = false; // new settle period -> re-arm Soft Engage
-    }
-    const bool allowed = (dashHandler)
-                             ? dashHandler->legacySteerDefense.decide(nowMs).allowed
-                             : ((nowMs - legacyFsdApActiveSinceMs) >= legacyFsdRequiredStableMs);
-    if (!allowed)
-    {
-        legacyFsdLastAllowed = false;
-        legacyFsdLastBlockedMs = nowMs;
-        return false;
-    }
-    // Soft Engage (#108 sibling): the settle/edge verdict already allows the
-    // frame; now hold bit46 off until the wheel nears centre (or the timeout
-    // elapses, so a long curve never strands the driver). Once released this
-    // episode, stop gating (legacySoftEngageSent).
-    const bool timeout = (nowMs - legacyFsdApActiveSinceMs) >=
-                         (legacyFsdRequiredStableMs + SOFT_ENGAGE_TIMEOUT_MS);
-    const bool release = dashSoftEngageRelease(dashSoftEngageEnabled, legacySoftEngageSent,
-                                               apRestoreState.steerSeen,
-                                               apRestoreState.steerValidity,
-                                               apRestoreState.steerAngleX10,
-                                               true, timeout, SOFT_ENGAGE_ANGLE_THRESH_X10);
-    if (!release)
-    {
-        legacyFsdLastAllowed = false;
-        legacyFsdLastBlockedMs = nowMs;
-        return false;
-    }
-    legacySoftEngageSent = true;
+    // 4.5.0-beta06: the configurable AP-settle delay ("延迟注入", 0/1/2/3 s)
+    // was removed — a pre-coordinator anti-jerk measure the 8.3.6
+    // cancel/re-request coordinator replaces (see the sole-authority branch
+    // above). With the gate open and the coordinator off, admission is now
+    // immediate once 0x399 confirms AP active; the gate's fail-closed
+    // bootstrap rule (no bit46 before AP is seen active) is unchanged.
     legacyFsdLastAllowed = true;
     return true;
 }
@@ -1266,7 +1275,15 @@ static FsdGateBlockReason dashCurrentGateBlockReason()
         return FsdGateBlockReason::CanActive;
     if (!dashOtaGuardAllowInjection())
         return FsdGateBlockReason::Ota;
-    if (dashLegacyHandlerActive() && !dashLegacyApInjectionAllowed())
+    if (dashApReRequestCtrl.active())
+    {
+        // Sole authority: while a handshake round runs every Legacy FSD write
+        // is barrier-A blocked; the APActive(3..6) ApGate check below would
+        // misleadingly fire at AP=2, which the frozen qualification set allows.
+        if (!dashApReRequestCtrl.activationAllowed(millis()))
+            return FsdGateBlockReason::ReRequestHandshake;
+    }
+    else if (dashLegacyHandlerActive() && !dashLegacyApInjectionAllowed())
         return FsdGateBlockReason::ApGate;
     if (dashLegacyHandlerActive() && !dashLegacyFsdActivationAllowed(millis()))
         return FsdGateBlockReason::LegacyFsdSettle;
@@ -1414,17 +1431,8 @@ static bool dashArgTruthy(const String &v)
     return v == "1" || v == "true" || v == "on" || v == "yes";
 }
 
-// Clamp an AP settle delay (ms) parsed from /config into the valid range so a
-// bad or out-of-range request can never disable the legacy FSD activation gate
-// accidentally. Mirrors dashClampSpeedProfileForHw / dashClampHw3SlewRate style.
-static uint32_t dashClampApDelayMs(int value)
-{
-    if (value < static_cast<int>(kLegacyFsdActivationSettleMinMs))
-        return kLegacyFsdActivationSettleMinMs;
-    if (value > static_cast<int>(kLegacyFsdActivationSettleMaxMs))
-        return kLegacyFsdActivationSettleMaxMs;
-    return static_cast<uint32_t>(value);
-}
+// (dashClampApDelayMs removed in 4.5.0-beta06 together with the AP-settle
+// delay feature itself — see the legacyFsdLastAllowed declaration comment.)
 
 static uint8_t dashClampSpeedCustomPct(int v)
 {
@@ -1625,6 +1633,19 @@ static void dashApplyLegacySmartSpeedState(CarManagerBase *handler)
 // can be shared between HW3Handler (in handlers.h, parsed first) and the
 // dashboard HW3 send path below.
 
+// 4.5.0 re-request mode hooks installed on the Legacy handler. The observe
+// wrapper feeds the coordinator from the real mux0 branch (intent + bus before
+// any gate); the inhibit wrapper is barrier A for every device 0x3EE write.
+static void dashApReRequestObserve3ee(bool intentPresent, uint8_t bus, uint32_t nowMs)
+{
+    dashApReRequestCtrl.observeNative3ee(intentPresent, bus, nowMs);
+}
+
+static bool dashApReRequestInhibit3ee()
+{
+    return dashApReRequestCtrl.inhibitDevice3ee(millis());
+}
+
 static void dashApplyRuntimeState()
 {
     forceActivateRuntime = canActive && forceActivate;
@@ -1644,17 +1665,11 @@ static void dashApplyRuntimeState()
         dashHandler->gateBlockReason = dashCurrentGateBlockReason;
         dashHandler->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
+        dashHandler->reRequestObserve3ee = dashApReRequestObserve3ee;
+        dashHandler->reRequestInhibit3ee = dashApReRequestInhibit3ee;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
         dashHandler->abortGuard.setEnabled(dashAbortGuardEnabled);
-        dashHandler->minimalInject.setEnabled(dashMinimalInjectEnabled);
-        // #108 steer-jerk defense: debounce mirrors the Legacy settle window so
-        // that with Instant/Minimal off, decide() == the verified settle path.
-        // def_mininj now drives the steer defense edge burst; the base
-        // DashMinimalInject is retained but no longer gates Legacy mux0.
-        dashHandler->legacySteerDefense.setDebounceMs(legacyFsdRequiredStableMs);
-        dashHandler->legacySteerDefense.setInstantEnabled(dashInstantEngageEnabled);
-        dashHandler->legacySteerDefense.setMinimalEnabled(dashMinimalInjectEnabled);
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->isaOverride = nvsIsaOverride;
         dashHandler->banShieldEnable = nvsBanShieldEnable;
@@ -1669,6 +1684,16 @@ static void dashApplyRuntimeState()
         dashHandler->legacyFsdDiag.mux1Enable = dashLegacyFsdMux1Enable;
         dashHandler->legacyFsdDiag.profileWriteEnable = dashLegacyFsdProfileWriteEnable;
         dashHandler->legacyFsdDiag.visionLimitClearEnable = dashLegacyFsdVisionLimitClearEnable;
+        // 4.5.0 re-request coordinator: armed only when the runtime flag is on,
+        // the compiled profile is valid, AND the AP injection gate is open
+        // (since 4.5.0-beta03 the gate is the coordinator's arm-level
+        // precondition). Gate closed -> Disabled/"apGateOff": fully inert (no
+        // rounds, no interception) and the legacy direct path below is the
+        // legal normal mode. Passing apInjectionGate explicitly (not relying
+        // on the default) keeps this single production call site auditable.
+        dashApReRequestCtrl.configure(dashApReRequestEnabled,
+                                      compiledApReRequestProfile(),
+                                      apInjectionGate);
         dashApplyLegacySmartSpeedState(dashHandler);
         dashApplySpeedProfileState();
         if (!canActive)
@@ -1694,7 +1719,8 @@ static void dashSavePrefs()
     prefs.putBool("boot_can", bootCanActive);
     prefs.putBool("ap_gate", apInjectionGate);
     prefs.putBool("ap_rst", apAutoRestore);
-    prefs.putUInt("ap_dly", legacyFsdRequiredStableMs);
+    // ("ap_dly" not written since 4.5.0-beta06 — the AP-settle delay feature
+    // was removed; the stale key is wiped on load.)
     prefs.putBool("sp_auto", dashSpeedProfileAuto);
     prefs.putUChar("sp_sel", dashManualSpeedProfile);
     prefs.putUChar("drv_prof", dashDriveProfile);
@@ -1725,9 +1751,10 @@ static void dashSavePrefs()
     prefs.putBool("def_ds", dashDndSpeed);
     prefs.putBool("def_apeap", dashApEapCompatible);
     prefs.putBool("def_abort", dashAbortGuardEnabled);
-    prefs.putBool("def_mininj", dashMinimalInjectEnabled);
-    prefs.putBool("def_instant", dashInstantEngageEnabled);
-    prefs.putBool("def_se", dashSoftEngageEnabled);
+    prefs.putBool("otg_ovr", dashOtaGuardOverrideEnabled());
+    // def_mininj / def_instant / def_se writes removed with the #108
+    // steer-jerk defense in 4.5.0-beta02; stale NVS values are ignored.
+    prefs.putBool("apr_on", dashApReRequestEnabled);
     prefs.putUChar("lfsd_pol", dashLegacyFsdPolicy == LegacyFsdPolicy::TeslaParity ? 2 : (dashLegacyFsdPolicy == LegacyFsdPolicy::Experimental ? 1 : 0));
     prefs.putBool("lfsd_m1", dashLegacyFsdMux1Enable);
     prefs.putBool("lfsd_prof", dashLegacyFsdProfileWriteEnable);
@@ -1896,7 +1923,7 @@ static void dashLoadPrefs()
     // 默认 false：复刻 2.5.2 真车固件行为（apInjectionGate=false 注入无条件放行）。
     apInjectionGate = prefs.getBool("ap_gate", DASH_AP_GATE_DEFAULT);
     apAutoRestore = prefs.getBool("ap_rst", false);
-    legacyFsdRequiredStableMs = dashClampApDelayMs(static_cast<int>(prefs.getUInt("ap_dly", kLegacyFsdActivationSettleDefaultMs)));
+    prefs.remove("ap_dly"); // AP-settle delay removed in 4.5.0-beta06
     dashSpeedProfileAuto = prefs.getBool("sp_auto", true);
     dashManualSpeedProfile = dashClampSpeedProfileForHw(hwMode, prefs.getUChar("sp_sel", 1));
     dashDriveProfile = prefs.getUChar("drv_prof", dashSpeedProfileAuto ? 0 : 3);
@@ -1952,9 +1979,15 @@ static void dashLoadPrefs()
     dashDndSpeed = prefs.getBool("def_ds", false);
     dashApEapCompatible = prefs.getBool("def_apeap", true);
     dashAbortGuardEnabled = prefs.getBool("def_abort", false);
-    dashMinimalInjectEnabled = prefs.getBool("def_mininj", false);
-    dashInstantEngageEnabled = prefs.getBool("def_instant", false);
-    dashSoftEngageEnabled = prefs.getBool("def_se", false);
+    // beta12 OTA guard user override (LittleGong port 1, path C): default
+    // false — the guard blocks injection exactly as before until the user
+    // flips the「忽略车辆 OTA 守卫」toggle on the FSD defense page.
+    dashOtaGuardSetOverride(prefs.getBool("otg_ovr", false));
+    // def_mininj / def_instant / def_se loads removed with the #108 defense.
+    // 4.5.0-beta01: the re-request request flag alone never arms the
+    // coordinator — dashApplyRuntimeState() still refuses an invalid compiled
+    // profile, so a stale NVS "on" from a future build stays fail-closed here.
+    dashApReRequestEnabled = prefs.getBool("apr_on", false);
     {
         uint8_t lfsdPolicy = prefs.getUChar("lfsd_pol", 0);
         dashLegacyFsdPolicy = lfsdPolicy == 2 ? LegacyFsdPolicy::TeslaParity : (lfsdPolicy == 1 ? LegacyFsdPolicy::Experimental : LegacyFsdPolicy::Stable);
@@ -2264,6 +2297,14 @@ const DashTxEvidence &t2canServiceTxEvidence(void);
 uint8_t t2canServiceLastCommand(void);
 uint8_t t2canServiceBurstRemaining(void);
 bool t2canGetServiceMode(void);
+// beta10 P1 observation bridges — defined in main.cpp next to the tick
+// wiring: tick liveness, permit snapshot bits, NVS blackbox ring.
+uint8_t t2canApReRequestDriverPresent(void);
+uint32_t t2canApReRequestTickCount(void);
+uint32_t t2canApReRequestLastTickMs(void);
+uint8_t t2canApReRequestPermitBits(void);
+uint8_t t2canApBlackboxCount(void);
+const DashApBbEntry *t2canApBlackboxEntries(void);
 #endif
 
 static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxValue, uint8_t &out)
@@ -2792,6 +2833,7 @@ static void appendFsdMuxDiagJson(String &j, const char *name, const FsdMuxDiag &
 }
 
 // Human-readable summary of the active FSD injection state machine.
+// ("settling" removed in 4.5.0-beta06 with the AP-settle delay feature.)
 static const char *dashApInjectionStateName()
 {
     if (!canActive)
@@ -2800,16 +2842,12 @@ static const char *dashApInjectionStateName()
         return "blocked";
     if (dashLegacyHandlerActive() && apInjectionGate && !dashLegacyApInjectionAllowed())
         return "waiting_ap";
-    if (dashLegacyHandlerActive() && apInjectionGate && !legacyFsdLastAllowed)
-        return "settling";
     if (dashLegacyHandlerActive())
         return legacyFsdLastAllowed || (lastInjectMs && millis() - lastInjectMs < 1000)
                    ? "injecting"
                    : "armed";
     if (apInjectionGate && !(dashHandler && (bool)dashHandler->APActive))
         return "waiting_ap";
-    if (apInjectionGate && !legacyFsdLastAllowed)
-        return "settling";
     if (legacyFsdLastAllowed || (lastInjectMs && millis() - lastInjectMs < 1000))
         return "injecting";
     return "blocked";
@@ -2863,15 +2901,9 @@ static void appendFsdDiagJson(String &j, unsigned long now)
     j += parked ? "true" : "false";
     j += ",\"apActive\":";
     j += apActive ? "true" : "false";
-    j += ",\"apStableMs\":";
-    j += (apActive && legacyFsdApSettleTiming) ? String(now - legacyFsdApActiveSinceMs) : String(0);
-    j += ",\"requiredStableMs\":";
-    j += legacyFsdRequiredStableMs;
     j += ",\"activationGateMode\":\"";
     j += dashLegacyHandlerActive()
-             ? (apInjectionGate
-                    ? (legacyFsdRequiredStableMs ? "legacy_ap_state_delay_gate" : "legacy_ap_state_gate")
-                    : "explicit_trigger_can_ota")
+             ? (apInjectionGate ? "legacy_ap_state_gate" : "explicit_trigger_can_ota")
              : "ap_gate";
     j += "\"";
     j += ",\"legacyIgnoresApGate\":";
@@ -2971,8 +3003,6 @@ static void handleStatus()
     j += apInjectionGate ? "true" : "false";
     j += ",\"apAutoRestore\":";
     j += apAutoRestore ? "true" : "false";
-    j += ",\"apDelayMs\":";
-    j += legacyFsdRequiredStableMs;
     j += ",\"apInjectionState\":\"";
     j += dashApInjectionStateName();
     j += "\"";
@@ -3347,15 +3377,8 @@ static void handleConfig()
             dashLog("[CFG] AP injection gate " + String(v ? "ON" : "OFF"));
         }
     }
-    if (server.hasArg("ap_delay_ms"))
-    {
-        uint32_t v = dashClampApDelayMs(server.arg("ap_delay_ms").toInt());
-        if (v != legacyFsdRequiredStableMs)
-        {
-            legacyFsdRequiredStableMs = v;
-            dashLog("[CFG] AP settle delay " + String(v) + " ms");
-        }
-    }
+    // ("ap_delay_ms" POST param removed in 4.5.0-beta06 with the AP-settle
+    // delay feature; old clients sending it are silently ignored.)
     if (server.hasArg("ap_auto_restore"))
         apAutoRestore = dashArgTruthy(server.arg("ap_auto_restore"));
     // ap_rst kept as a stable alias for older clients / backup-restore payloads.
@@ -3933,12 +3956,44 @@ static void handleLightingConfig()
     server.send(200, "application/json", dashLightingConfigJson());
 }
 
+static const char *dashApReRequestPhaseName(ApReRequestPhase p)
+{
+    switch (p)
+    {
+    case ApReRequestPhase::Disabled: return "disabled";
+    case ApReRequestPhase::WaitDriverIntent: return "waitDriverIntent";
+    case ApReRequestPhase::CancelSequence: return "cancelSequence";
+    case ApReRequestPhase::WaitCancelEvidence: return "waitCancelEvidence";
+    case ApReRequestPhase::RequestSequence: return "requestSequence";
+    case ApReRequestPhase::WaitQualification: return "waitQualification";
+    case ApReRequestPhase::ActiveInjection: return "activeInjection";
+    case ApReRequestPhase::Complete: return "complete";
+    case ApReRequestPhase::FailedLocked: return "failedLocked";
+    }
+    return "unknown";
+}
+
+static const char *dashApReRequestStepName(ApReRequestStep s)
+{
+    switch (s)
+    {
+    case ApReRequestStep::Idle: return "idle";
+    case ApReRequestStep::PressPending: return "pressPending";
+    case ApReRequestStep::PressAccepted: return "pressAccepted";
+    case ApReRequestStep::ReleasePending: return "releasePending";
+    case ApReRequestStep::ReleaseAccepted: return "releaseAccepted";
+    }
+    return "unknown";
+}
+
+// beta10 P1: blackbox record-kind names for the /status JSON below.
+// (blackbox entry JSON + kind names live in dash_ap_blackbox.h since
+// 4.5.0-beta12 — dashApBbEntryToJson / dashApBbKindName, native-testable.)
+
 static void dashAppendLegacySafetyControlsJson(String &j)
 {
     const DashAbortGuardDiag abort = dashHandler ? dashHandler->abortGuard.diag()
                                                   : DashAbortGuardDiag{};
-    const DashMinimalInjectDiag minimal = dashHandler ? dashHandler->minimalInject.diag()
-                                                       : DashMinimalInjectDiag{};
     j += R"JSON(,"legacyInjectionSafety":{"abortGuard":{"enabled":)JSON";
     j += dashHandler ? (abort.enabled ? "true" : "false") : (dashAbortGuardEnabled ? "true" : "false");
     j += R"JSON(,"latched":)JSON";
@@ -3955,51 +4010,265 @@ static void dashAppendLegacySafetyControlsJson(String &j)
     j += abort.blocks;
     j += R"JSON(,"lastBlockedPath":")JSON";
     j += abort.lastBlockedPath;
-    j += R"JSON("},"minimalInject":{"enabled":)JSON";
-    j += dashHandler ? (minimal.enabled ? "true" : "false") : (dashMinimalInjectEnabled ? "true" : "false");
-    j += R"JSON(,"apEngaged":)JSON";
-    j += minimal.apEngaged ? "true" : "false";
-    j += R"JSON(,"lastApState":)JSON";
-    j += minimal.lastApState;
-    j += R"JSON(,"successfulMux0":)JSON";
-    j += minimal.successfulMux0;
-    j += R"JSON(,"quota":)JSON";
-    j += minimal.quota;
-    j += R"JSON(,"engagementCount":)JSON";
-    j += minimal.engagementCount;
-    j += R"JSON(,"blocked":)JSON";
-    j += minimal.blocked;
-    j += R"JSON(,"lastBlockReason":")JSON";
-    j += minimal.lastBlockReason;
-    // #108 steer-jerk defense diagnostics (engagement edges, Instant fires,
-    // Minimal burst budget). Mirrors DashLegacySteerDiag.
-    const DashLegacySteerDiag steer = dashHandler ? dashHandler->legacySteerDefense.diag((uint32_t)millis())
-                                                   : DashLegacySteerDiag{};
-    j += R"JSON("},"steerDefense":{"instantEnabled":)JSON";
-    j += steer.instantEnabled ? "true" : "false";
-    j += R"JSON(,"minimalEnabled":)JSON";
-    j += steer.minimalEnabled ? "true" : "false";
-    j += R"JSON(,"apEngaged":)JSON";
-    j += steer.apEngaged ? "true" : "false";
-    j += R"JSON(,"edgePending":)JSON";
-    j += steer.edgePending ? "true" : "false";
-    j += R"JSON(,"apEdgeCount":)JSON";
-    j += steer.apEdgeCount;
-    j += R"JSON(,"instantBypassCount":)JSON";
-    j += steer.instantBypassCount;
-    j += R"JSON(,"instantBypassLast":)JSON";
-    j += steer.instantBypassLast ? "true" : "false";
-    j += R"JSON(,"minimalBudget":)JSON";
-    j += steer.minimalBudget;
-    j += R"JSON(,"minimalUsed":)JSON";
-    j += steer.minimalUsed;
-    j += R"JSON(,"minimalBlocks":)JSON";
-    j += steer.minimalBlocks;
-    j += R"JSON(,"lastMinimalBlockPath":")JSON";
-    j += steer.lastMinimalBlockPath;
-    j += R"JSON(","lastResetReason":")JSON";
-    j += steer.lastResetReason;
-    j += R"JSON("}})JSON";
+    // minimalInject / steerDefense JSON objects removed with the #108
+    // steer-jerk defense in 4.5.0-beta02 (Instant/Minimal/Soft Engage all
+    // proved unable to stop the 2026.8.3.6 activation jerk).
+    // 4.5.0-beta01 AP cancel + re-request coordinator. `requested` is the
+    // persisted switch; `effective` stays false while the compiled profile is
+    // invalid (fail-closed by design).
+    const ApReRequestDiag rr = dashApReRequestCtrl.diag();
+    const ApReRequestProfile rrProfile = compiledApReRequestProfile();
+    const char *rrProfileError = apReRequestProfileError(rrProfile);
+    j += R"JSON("},"apReRequest":{"requested":)JSON";
+    j += dashApReRequestEnabled ? "true" : "false";
+    j += R"JSON(,"effective":)JSON";
+    j += (rr.enabled && rr.profileReady && rr.apGateOpen) ? "true" : "false";
+    j += R"JSON(,"profileReady":)JSON";
+    j += rr.profileReady ? "true" : "false";
+    j += R"JSON(,"apGateOpen":)JSON";
+    j += rr.apGateOpen ? "true" : "false";
+    // Unavailable reason priority: profile error first (the switch cannot work
+    // at all), then the AP gate precondition (4.5.0-beta03: gate closed ->
+    // coordinator inert, legacy direct path is the legal normal mode).
+    if (rrProfileError)
+    {
+        j += R"JSON(,"unavailableReason":")JSON";
+        j += rrProfileError;
+        j += R"JSON(")JSON";
+    }
+    else if (!rr.apGateOpen)
+    {
+        j += R"JSON(,"unavailableReason":"apGateOff")JSON";
+    }
+    j += R"JSON(,"permit":)JSON";
+    j += rr.permit ? "true" : "false";
+    j += R"JSON(,"phase":")JSON";
+    j += dashApReRequestPhaseName(rr.phase);
+    j += R"JSON(","step":")JSON";
+    j += dashApReRequestStepName(rr.step);
+    j += R"JSON(","reason":")JSON";
+    j += rr.reason;
+    j += R"JSON(","lastAction":")JSON";
+    j += rr.lastAction;
+    // 4.5.0-beta06: the reason the last round ENDED survives re-arms and
+    // state changes (cleared only by configure()); autoRearms counts the
+    // vehicle-side locks that re-armed automatically instead of locking.
+    j += R"JSON(","lastEndedReason":")JSON";
+    j += rr.lastEndedReason;
+    j += R"JSON(","autoRearms":)JSON";
+    j += rr.autoRearms;
+    // autoRearms above is NUMERIC — the next literal must NOT lead with the
+    // string-close quote. beta06 shipped `","round":` here, emitting
+    // `..."autoRearms":0","round":0...` which broke /status and
+    // /defense_config JSON parsing device-wide (UI: every switch rendered
+    // OFF after re-entry, top badge "未连接"). Chain rule: after a string
+    // value use `","key":`/`","key":"`; after a numeric/bool value use
+    // `,"key":`.
+    j += R"JSON(,"round":)JSON";
+    j += rr.round;
+    j += R"JSON(,"epoch":)JSON";
+    j += rr.epoch;
+    j += R"JSON(,"apState":)JSON";
+    j += rr.apState;
+    j += R"JSON(,"exitSeen":)JSON";
+    j += rr.exitSeen ? "true" : "false";
+    j += R"JSON(,"intentPresent":)JSON";
+    j += rr.intentPresent ? "true" : "false";
+    j += R"JSON(,"roundStartMs":)JSON";
+    j += rr.roundStartMs;
+    j += R"JSON(,"evidenceMs":)JSON";
+    j += rr.evidenceMs;
+    j += R"JSON(,"requestMs":)JSON";
+    j += rr.requestMs;
+    j += R"JSON(,"windowMs":)JSON";
+    j += rrProfile.qualificationWindowMs;
+    j += R"JSON(,"cancelAttempts":)JSON";
+    j += rr.cancelAttempts;
+    j += R"JSON(,"cancelAccepted":)JSON";
+    j += rr.cancelAccepted;
+    j += R"JSON(,"requestAttempts":)JSON";
+    j += rr.requestAttempts;
+    j += R"JSON(,"requestAccepted":)JSON";
+    j += rr.requestAccepted;
+    j += R"JSON(,"templateSeen":)JSON";
+    j += rr.templateSeen ? "true" : "false";
+    j += R"JSON(,"lastTxCounter":)JSON";
+    j += rr.lastTxCounter;
+    j += R"JSON(,"ownEchoRx":)JSON";
+    j += rr.ownEchoRx;
+    j += R"JSON(,"otherBusObs":)JSON";
+    j += rr.otherBusObs;
+    j += R"JSON(,"physicalInputRx":)JSON";
+    j += rr.physicalInputRx;
+    j += R"JSON(,"counterConflicts":)JSON";
+    j += rr.counterConflicts;
+    // beta14 retry diagnostics: benign post-TX counter skips (tolerated +2)
+    // and the per-round in-round retries used (cancel re-send / request
+    // retries after a vehicle refusal). Numeric keys, same chain.
+    j += R"JSON(,"counterSkips":)JSON";
+    j += rr.counterSkips;
+    j += R"JSON(,"cancelRetries":)JSON";
+    j += rr.cancelRetries;
+    j += R"JSON(,"requestRetries":)JSON";
+    j += rr.requestRetries;
+    j += R"JSON(,"native3eeRx":)JSON";
+    j += rr.native3eeRx;
+    // beta09 P1 (all observational; vehicleRefusal latches the last watched
+    // WaitDriverIntent RWD press that got no activation edge within
+    // kVehicleRefusalMs). rwdPressMs is a RAW stamp — the UI computes age
+    // from its own clock, same convention as the ms fields above.
+    j += R"JSON(,"vehicleRefusal":)JSON";
+    j += rr.vehicleRefusal ? "true" : "false";
+    j += R"JSON(,"rwdPressPending":)JSON";
+    j += rr.rwdPressPending ? "true" : "false";
+    j += R"JSON(,"vehicleRefusals":)JSON";
+    j += rr.vehicleRefusals;
+    j += R"JSON(,"rwdPressMs":)JSON";
+    j += rr.rwdPressMs;
+    // beta09 P2: 0x399 high-nibble flag histogram (index = flag value,
+    // value = frame count since configure()) plus the newest flag value and
+    // the raw stamp of its last change. For CSV-driven decoding later.
+    j += R"JSON(,"lastApFlag":)JSON";
+    j += rr.lastApFlag;
+    j += R"JSON(,"lastApFlagMs":)JSON";
+    j += rr.lastApFlagMs;
+    j += R"JSON(,"apFlagCounts":[)JSON";
+    for (uint8_t i = 0; i < 16; ++i)
+    {
+        if (i) j += ',';
+        j += rr.apFlagCounts[i];
+    }
+    j += ']';
+    // ── beta10 P1 (pure observation; zero 8.3.6 semantics) ────────────────
+    // Permit input decomposition: the coordinator permit is a 5-input AND
+    // (see t2canApReRequestTick in main.cpp). A wedge in ANY input kills
+    // injection with no lock and no UI hint — switch cycling cannot recover
+    // it (2026-09-13 field feedback, symptoms 2/3). These fields decompose
+    // the AND at JSON time so one /status read names the dead input.
+    // Chain rule: after the numeric array close, keys continue with `,"k":`.
+    j += R"JSON(,"permitInputs":{"canActive":)JSON";
+    j += canActive ? "true" : "false";
+    j += R"JSON(,"legacyHandler":)JSON";
+    j += dashLegacyHandlerActive() ? "true" : "false";
+    j += R"JSON(,"otaGuardClear":)JSON";
+    j += vehicleOtaActive ? "false" : "true";
+    j += R"JSON(,"abortGuardOk":)JSON";
+    j += (dashHandler && !dashHandler->abortGuard.allowsInjection()) ? "false" : "true";
+#ifdef DRIVER_T2CAN_DUAL
+    j += R"JSON(,"driver":)JSON";
+    j += t2canApReRequestDriverPresent() ? "true" : "false";
+#endif
+    // Close permitInputs here: the five permit inputs are the object, and
+    // permitBits / tickHeartbeat / blackbox / otaWatch below are SIBLINGS at
+    // the apReRequest level (mirrors webui_simulator + UI readers). This
+    // brace was missing in beta10-beta12 -> legacyInjectionSafety never
+    // closed -> /status AND /defense_config unparseable end-to-end (fifth
+    // quote/brace incident; pinned mechanically by
+    // scripts/reconstruct_status_json.py, wired into the pytest suite).
+    j += '}';
+#ifdef DRIVER_T2CAN_DUAL
+    // Tick liveness: count/lastMs come from the tick site; ageMs is computed
+    // JSON-side (millis() - lastMs). A frozen count/age across two /status
+    // reads = tick starvation (main-loop wedge), independent evidence from
+    // the permit inputs.
+    j += R"JSON(,"permitBits":)JSON";
+    j += t2canApReRequestPermitBits();
+    j += R"JSON(,"tickHeartbeat":{"count":)JSON";
+    j += t2canApReRequestTickCount();
+    j += R"JSON(,"lastMs":)JSON";
+    j += t2canApReRequestLastTickMs();
+    j += R"JSON(,"ageMs":)JSON";
+    j += static_cast<uint32_t>(millis() - t2canApReRequestLastTickMs());
+    j += '}';
+    // NVS blackbox (dash_ap_blackbox.h): chronological oldest -> newest.
+    // Survives power cycles by design — the entries BELOW the newest "boot"
+    // record are what the previous boot recorded before it was unplugged.
+    {
+        const DashApBbEntry *bb = t2canApBlackboxEntries();
+        const uint8_t n = t2canApBlackboxCount();
+        j += R"JSON(,"blackbox":[)JSON";
+        // beta12 (LittleGong port 5): per-entry JSON comes from the pure
+        // function in dash_ap_blackbox.h — native golden-string tests pin
+        // every kind × reason combination character-by-character, so the
+        // beta06/beta07/beta10 quote-closure class can no longer ship green
+        // (the dashboard header is not compiled by native tests).
+        {
+            char entryJson[kDashApBbEntryJsonCap];
+            bool firstEntry = true;
+            for (uint8_t k = n; k > 0; --k)
+            {
+                if (dashApBbEntryToJson(entryJson, sizeof(entryJson), bb[k - 1]) == 0)
+                    continue;
+                if (!firstEntry) j += ',';
+                firstEntry = false;
+                j += entryJson;
+            }
+        }
+        j += ']';
+    }
+#endif
+    // otaWatch from dashboard statics (available wherever this dispatcher
+    // compiles, not dual-driver-specific). confirm/clear are the guard's own
+    // threshold counters (dash_ota_guard.h); active is the raw flag.
+    j += R"JSON(,"otaWatch":{"seen318":)JSON";
+    j += dashOta318Seen;
+    j += R"JSON(,"last318Ms":)JSON";
+    j += dashOta318LastMs;
+    j += R"JSON(,"confirm":)JSON";
+    j += otaConfirmCount;
+    j += R"JSON(,"clear":)JSON";
+    j += otaClearCount;
+    j += R"JSON(,"active":)JSON";
+    j += vehicleOtaActive ? "true" : "false";
+    // beta12 (LittleGong port 1): the guard's own degradation bookkeeping —
+    // staleClears counts timeout-downgrade clears (0x318 stopped flowing for
+    // 10 min while the flag was set), override mirrors the user switch,
+    // blockedMs is how long the current block has lasted.
+    j += R"JSON(,"staleClears":)JSON";
+    j += dashOtaGuardStaleClears();
+    j += R"JSON(,"override":)JSON";
+    j += dashOtaGuardOverrideEnabled() ? "true" : "false";
+    j += R"JSON(,"blockedMs":)JSON";
+    {
+        const uint32_t since = dashOtaGuardActiveSinceMs();
+        j += since ? static_cast<uint32_t>(millis() - since) : 0;
+    }
+    j += '}';
+    // beta12 (LittleGong port 2): 0x3EE mux0 carrier rhythm (pure
+    // observation; approved scope is JSON-only — no UI cell).
+    j += R"JSON(,"carrier3ee":{"lastGapMs":)JSON";
+    j += dash3eeCadence.lastGapMs;
+    j += R"JSON(,"maxGapMs":)JSON";
+    j += dash3eeCadence.maxGapMs;
+    j += R"JSON(,"longGaps":)JSON";
+    j += dash3eeCadence.longGaps;
+    j += R"JSON(,"total":)JSON";
+    j += dash3eeCadence.total;
+    j += R"JSON(,"lastMs":)JSON";
+    j += dash3eeCadence.lastMs;
+    j += R"JSON(,"ageMs":)JSON";
+    j += dash3eeCadence.lastMs ? static_cast<uint32_t>(millis() - dash3eeCadence.lastMs) : 0;
+    j += '}';
+    // beta12 (LittleGong port 3): 0x3EE injection TX accounting (pure
+    // observation). legacyFsdDiag.mux0 is fed by recordMuxTx on the mux0
+    // activation-allowed path only (bit46 injection frames; speed-offset-only
+    // writes are tallied separately and excluded here), so these counters are
+    // the injection send ledger: attempts/ok/fails/consecutiveFails.
+    {
+        const FsdMuxDiag m0 = dashHandler ? dashHandler->legacyFsdDiag.mux0 : FsdMuxDiag{};
+        j += R"JSON(,"txAccounting":{"attempts":)JSON";
+        j += m0.attempts;
+        j += R"JSON(,"ok":)JSON";
+        j += m0.tx;
+        j += R"JSON(,"fails":)JSON";
+        j += m0.err;
+        j += R"JSON(,"consecutiveFails":)JSON";
+        j += m0.consecutiveFails;
+        j += R"JSON(,"lastOkAgeMs":)JSON";
+        j += m0.lastOkMs ? static_cast<uint32_t>(millis() - m0.lastOkMs) : 0;
+        j += '}';
+    }
+    j += "}}";
 }
 
 static String dashDefenseConfigJson()
@@ -4032,12 +4301,16 @@ static String dashDefenseConfigJson()
     j += dashApEapCompatible ? "true" : "false";
     j += ",\"abort_guard\":";
     j += dashAbortGuardEnabled ? "true" : "false";
-    j += ",\"minimal_inject\":";
-    j += dashMinimalInjectEnabled ? "true" : "false";
-    j += ",\"instant_engage\":";
-    j += dashInstantEngageEnabled ? "true" : "false";
-    j += ",\"soft_engage\":";
-    j += dashSoftEngageEnabled ? "true" : "false";
+    // beta12 OTA guard override (requested state; the live guard counters
+    // live in otaWatch and /vehicle_ota_status).
+    j += ",\"ota_guard_override\":";
+    j += dashOtaGuardOverrideEnabled() ? "true" : "false";
+    // minimal_inject / instant_engage / soft_engage keys removed with the
+    // #108 steer-jerk defense in 4.5.0-beta02.
+    // 4.5.0-beta01 re-request switch (requested state; effective state and the
+    // unavailable reason live in legacyInjectionSafety.apReRequest).
+    j += ",\"ap_re_request\":";
+    j += dashApReRequestEnabled ? "true" : "false";
     j += ",\"slew_rate_enabled\":";
     j += hw3OffsetSlew ? "true" : "false";
     j += ",\"ban_shield\":";
@@ -4055,8 +4328,9 @@ static void handleDefenseConfig()
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
         server.hasArg("legacy_scroll_dnd") ||
         server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
-        server.hasArg("abort_guard") || server.hasArg("minimal_inject") ||
-        server.hasArg("instant_engage") || server.hasArg("soft_engage"))
+        server.hasArg("abort_guard") ||
+        server.hasArg("ota_guard_override") ||
+        server.hasArg("ap_re_request"))
     {
         bool prevDndVolume = dashDndVolume;
         bool prevDndSpeed = dashDndSpeed;
@@ -4105,12 +4379,16 @@ static void handleDefenseConfig()
             dashApEapCompatible = dashArgTruthy(server.arg("ap_eap_compatible"));
         if (server.hasArg("abort_guard"))
             dashAbortGuardEnabled = dashArgTruthy(server.arg("abort_guard"));
-        if (server.hasArg("minimal_inject"))
-            dashMinimalInjectEnabled = dashArgTruthy(server.arg("minimal_inject"));
-        if (server.hasArg("instant_engage"))
-            dashInstantEngageEnabled = dashArgTruthy(server.arg("instant_engage"));
-        if (server.hasArg("soft_engage"))
-            dashSoftEngageEnabled = dashArgTruthy(server.arg("soft_engage"));
+        // beta12 OTA guard override: applies immediately inside the guard
+        // state machine (path C — clears the flag and suspends re-arming
+        // while on; the permit expression itself is untouched).
+        if (server.hasArg("ota_guard_override"))
+            dashOtaGuardSetOverride(dashArgTruthy(server.arg("ota_guard_override")));
+        // Persisted request only. dashApplyRuntimeState() reconfigures the
+        // coordinator below; with the empty compiled profile it stays Disabled
+        // (effective=false) and the response reports unavailableReason.
+        if (server.hasArg("ap_re_request"))
+            dashApReRequestEnabled = dashArgTruthy(server.arg("ap_re_request"));
         nvsBanShieldEnable = dashDefenseEnabled;
         if (dashHandler)
             dashHandler->banShieldEnable = dashDefenseEnabled;
@@ -4193,6 +4471,18 @@ static void handleVehicleOtaStatus() {
     json += String(otaConfirmCount);
     json += ",\"otaClearCount\":";
     json += String(otaClearCount);
+    // beta12: degradation bookkeeping synced with otaWatch (staleClears /
+    // override / blockedMs) so the P0 field triage has one complete picture
+    // from either endpoint.
+    json += ",\"staleClears\":";
+    json += String(dashOtaGuardStaleClears());
+    json += ",\"override\":";
+    json += dashOtaGuardOverrideEnabled() ? "true" : "false";
+    json += ",\"blockedMs\":";
+    {
+        const uint32_t since = dashOtaGuardActiveSinceMs();
+        json += String(since ? static_cast<uint32_t>(millis() - since) : 0);
+    }
     json += "}";
     server.send(200, "application/json", json);
 }
@@ -7926,7 +8216,6 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->banShieldEnable = nvsBanShieldEnable;
         handlerPool[i]->bionicSteering = dashBionicSteering;
         handlerPool[i]->abortGuard.setEnabled(dashAbortGuardEnabled);
-        handlerPool[i]->minimalInject.setEnabled(dashMinimalInjectEnabled);
         handlerPool[i]->legacyOffset = nvsLegacyOffset;
         handlerPool[i]->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;
         handlerPool[i]->overrideSpeedLimit = nvsOverrideSpeedLimit;

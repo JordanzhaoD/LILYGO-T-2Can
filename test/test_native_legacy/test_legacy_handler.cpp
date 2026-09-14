@@ -463,21 +463,10 @@ void test_abort_guard_blocks_legacy_mux0_before_transmit()
 }
 
 // --- Minimal Inject (Legacy mux0 quota) ---
-// The old level-triggered DashMinimalInject quota on the Legacy mux0 path has
-// been superseded by the edge-gated DashLegacySteerDefense Minimal burst (#108,
-// v2.16-beta.17/.19 parity). The handler no longer consults minimalInject on
-// mux0, so the prior "exactly five mux0 activations" and "quota reset on
-// engagement" assertions describe retired behavior. Equivalent coverage of the
-// 5-frame edge burst (armed at engagement edge, hard stop, reset on disengage)
-// lives in test/test_native_legacy_steer_defense/.
-void test_minimal_inject_superseded_by_steer_defense_placeholder()
-{
-    // Sentinel: the base DashMinimalInject module still compiles and its diag
-    // reflects an idle state when not consulted on the Legacy mux0 path.
-    handler.minimalInject.setEnabled(true);
-    TEST_ASSERT_TRUE(handler.minimalInject.diag().enabled);
-    TEST_ASSERT_EQUAL_UINT8(0, handler.minimalInject.diag().successfulMux0);
-}
+// Removed in 4.5.0-beta02 together with DashMinimalInject/DashLegacySteerDefense:
+// the #108 Instant/Minimal/Soft Engage family never eliminated the 2026.8.3.6
+// activation jerk. The 8.3.6 cancel/re-request coordinator replaced the whole
+// chain; its coverage lives in test/test_native_ap_rerequest/.
 
 // --- 视觉限速 clear 独立于 policy (spec Task 1) ---
 // NOTE: Stable policy short-circuits mux-1 at handlers.h:431 (DisabledInStable),
@@ -1240,8 +1229,6 @@ int main()
     RUN_TEST(test_legacy_gate_block_uses_resolver_reason);
     RUN_TEST(test_abort_guard_latches_on_abort_and_only_clears_after_clean_disengage);
     RUN_TEST(test_abort_guard_blocks_legacy_mux0_before_transmit);
-    RUN_TEST(test_minimal_inject_superseded_by_steer_defense_placeholder);
-
     RUN_TEST(test_legacy_can760_is_read_only);
     RUN_TEST(test_legacy_can921_captures_fused_speed_limit);
     RUN_TEST(test_legacy_3ee_manual_writes_offset_after_bus_lock);

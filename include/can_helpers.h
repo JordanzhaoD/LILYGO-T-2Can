@@ -48,27 +48,6 @@ inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionD
 inline Shared<bool> enhancedAutopilotRuntime{kEnhancedAutopilotDefaultEnabled};
 inline Shared<bool> nagKillerRuntime{kNagKillerDefaultEnabled};
 
-// Pure Soft Engage angle-gate decision (native-testable; no state).
-// Mirrors upstream flipper-tesla-fsd v2.16-beta.10 Soft Engage. The Legacy
-// activation gate calls this once the settle/edge verdict has allowed the
-// frame. Returns true iff the Legacy 0x3EE bit46 activation may fire NOW;
-// false means hold bit46 off until the wheel nears centre (|steerAngleX10| <=
-// angleThreshX10 AND steerValidity==0) or the timeout elapses.
-// enabled=false or alreadySent=true or settled=false -> true (not our job).
-inline bool dashSoftEngageRelease(bool enabled, bool alreadySent,
-                                  bool steerSeen, uint8_t steerValidity,
-                                  int16_t steerAngleX10,
-                                  bool settled, bool timeout,
-                                  int angleThreshX10)
-{
-    if (!enabled) return true;    // toggle OFF -> passthrough
-    if (alreadySent) return true; // latched this episode -> ignore angle
-    if (!settled) return true;    // settle/edge gate hasn't passed (not our job)
-    const bool centred = steerSeen && steerValidity == 0 &&
-                         abs(static_cast<int>(steerAngleX10)) <= angleThreshX10;
-    return centred || timeout;
-}
-
 inline bool enhancedAutopilotInjectionAllowed(bool adEnabled)
 {
     return !kInjectionAfterApBuildEnabled || adEnabled;

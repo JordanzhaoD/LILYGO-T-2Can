@@ -373,6 +373,39 @@ void Preferences::putString(const char *key, const String &value)
     }
 }
 
+// beta10 P1: blob access for the NVS blackbox ring (Arduino-Preferences API
+// shape). Same write-through-commit discipline as the scalar setters.
+size_t Preferences::putBytes(const char *key, const void *value, size_t len)
+{
+    if (open_ && !readOnly_ && value != nullptr &&
+        nvs_set_blob(handle_, key, value, len) == ESP_OK)
+    {
+        nvs_commit(handle_);
+        return len;
+    }
+    return 0;
+}
+
+size_t Preferences::getBytesLength(const char *key)
+{
+    if (!open_)
+        return 0;
+    size_t len = 0;
+    if (nvs_get_blob(handle_, key, nullptr, &len) == ESP_OK)
+        return len;
+    return 0;
+}
+
+size_t Preferences::getBytes(const char *key, void *buf, size_t maxLen)
+{
+    if (!open_ || buf == nullptr || maxLen == 0)
+        return 0;
+    size_t len = maxLen;
+    if (nvs_get_blob(handle_, key, buf, &len) == ESP_OK)
+        return len;
+    return 0;
+}
+
 void Preferences::remove(const char *key)
 {
     if (open_ && !readOnly_)

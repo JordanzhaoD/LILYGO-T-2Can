@@ -60,18 +60,21 @@ class ApInjectionRedesignTests(UiV11RedesignTests):
 
     def test_controls_chinese(self):
         self.assert_present("AP 门控")
-        self.assert_present("延迟注入")
         self.assert_present("AP 自动恢复")
+        # 4.5.0-beta06: 延迟注入 select removed with the AP-settle delay.
+        self.assert_absent("延迟注入")
 
     def test_failclosed_note_present(self):
         self.assert_present("Fail-closed")           # 安全条
 
     def test_original_ids_preserved(self):
-        # 硬要求：原 id 全保留（review 会查）
+        # 硬要求：原 id 全保留（review 会查）——ap-delay-select removed in
+        # 4.5.0-beta06 with the settle-delay feature.
         for i in ["ap-core-card", "ap-core-state-pill", "ap-core-gate-tgl",
-                  "ap-delay-select", "ap-auto-restore-tgl", "injection-source",
+                  "ap-auto-restore-tgl", "injection-source",
                   "ap-core-state-detail"]:
             self.assert_id_present(i)
+        self.assert_absent('id="ap-delay-select"')
 
 
 class PluginRedesignTests(UiV11RedesignTests):
@@ -113,12 +116,14 @@ class PluginRedesignTests(UiV11RedesignTests):
 
 class MobileNavTests(UiV11RedesignTests):
     def _standalone_tabs_block(self) -> str:
-        match = re.search(r'<div class="mob-tabs" id="mob-tabs">[\s\S]*?</div>\s*<div class="mob-more-panel" id="mob-more-single"', SRC)
+        # 4.5.0-beta08: #mob-tabs carries its own data-dual-hide (hoisted to
+        # <body> at load by hoistMobileChrome, no wrapper div anymore).
+        match = re.search(r'<div class="mob-tabs" id="mob-tabs" data-dual-hide="1">[\s\S]*?</div>\s*<div class="mob-more-panel" id="mob-more-single"', SRC)
         self.assertIsNotNone(match, "缺少 #mob-tabs 单 CAN 导航块")
         return match.group(0) if match else ""
 
     def _standalone_more_block(self) -> str:
-        match = re.search(r'<div class="mob-more-panel" id="mob-more-single"[\s\S]*?</div>\s*</div>\s*<!-- Mobile Dual-CAN Nav', SRC)
+        match = re.search(r'<div class="mob-more-panel" id="mob-more-single"[\s\S]*?</div>\s*<!-- Mobile Dual-CAN Nav', SRC)
         self.assertIsNotNone(match, "缺少 #mob-more-single 单 CAN 更多面板")
         return match.group(0) if match else ""
 

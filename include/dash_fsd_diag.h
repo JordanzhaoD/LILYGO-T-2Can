@@ -48,7 +48,9 @@ enum class FsdGateBlockReason : uint8_t
     CompileGate = 5,
     LegacyFsdSettle = 6,
     AbortGuard = 7,
-    MinimalInject = 8,
+    // 8 was MinimalInject — removed with the #108 steer-jerk defense in
+    // 4.5.0-beta02; value kept unused so persisted diag numbering stays stable.
+    ReRequestHandshake = 9,
 };
 
 enum class FsdHealthState : uint8_t
@@ -142,7 +144,7 @@ static inline const char *fsdGateBlockReasonName(FsdGateBlockReason reason)
     case FsdGateBlockReason::CompileGate: return "compile_gate";
     case FsdGateBlockReason::LegacyFsdSettle: return "legacy_fsd_settle";
     case FsdGateBlockReason::AbortGuard: return "abort_guard";
-    case FsdGateBlockReason::MinimalInject: return "minimal_inject";
+    case FsdGateBlockReason::ReRequestHandshake: return "ap_re_request_handshake";
     }
     return "none";
 }
@@ -192,6 +194,13 @@ struct FsdMuxDiag
     uint32_t lastRxMs = 0;
     uint32_t lastTxMs = 0;
     uint32_t lastTxSeq = 0;
+    // 4.5.0-beta12 (LittleGong port 3): TX accounting for the injection
+    // path — attempts counts every send try, consecutiveFails/lastFailMs
+    // surface a wedged bus (symptom 3 class), lastOkMs feeds lastOkAgeMs.
+    uint32_t attempts = 0;
+    uint32_t consecutiveFails = 0;
+    uint32_t lastFailMs = 0;
+    uint32_t lastOkMs = 0;
     FsdSkipReason lastSkip = FsdSkipReason::None;
     FsdDiagBus bus = FsdDiagBus::Unknown;
     FsdDiagDriver driver = FsdDiagDriver::Unknown;
@@ -222,14 +231,19 @@ struct FsdMuxDiag
 
     void recordTx(bool ok, uint32_t nowMs)
     {
+        attempts++;
         if (ok)
         {
             tx++;
+            consecutiveFails = 0;
+            lastOkMs = nowMs;
             lastSkip = FsdSkipReason::Sent;
         }
         else
         {
             err++;
+            ++consecutiveFails;
+            lastFailMs = nowMs;
             lastSkip = FsdSkipReason::TxFail;
         }
         lastTxMs = nowMs;

@@ -814,12 +814,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           </div>
           <div class="src-row"><span>注入来源</span><b id="injection-source">Disabled</b></div>
           <div class="ctl-section">注入门控（服务端强制）</div>
-          <div class="ctl-row"><div><div class="cn">AP 门控</div><div class="cd">Legacy 仅在 0x399 AP 活动后注入</div></div>
-            <label class="tgl"><input id="ap-core-gate-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
-          <div class="ctl-row"><div><div class="cn">延迟注入</div><div class="cd">AP 连续激活后等待再注入</div></div>
-            <label class="field"><select id="ap-delay-select" onchange="saveApGateControls()"><option value="0">0 ms</option><option value="1000">1000 ms</option><option value="2000">2000 ms</option><option value="3000">3000 ms</option></select></label></div>
-          <div class="ctl-row"><div><div class="cn">AP 自动恢复</div><div class="cd">重启后恢复上次 AP 配置</div></div>
-            <label class="tgl"><input id="ap-auto-restore-tgl" type="checkbox" onchange="saveApGateControls()"><div class="tgl-track"></div></label></div>
+          <div class="ctl-row"><div><div class="cn">控制位置</div><div class="cd">设置已收拢到「FSD 防护」页：总开关 → AP 注入门控 → 8.3.6防甩机制</div></div></div>
           <div class="safety-strip">⚠️ <b>Fail-closed（不变）：</b>未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。</div>
         </div>
           </div>
@@ -893,16 +888,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <label class="tgl">
       <input type="checkbox" id="hw-ap-restore" onchange="saveConfig()">
-      <div class="tgl-track"></div>
-    </label>
-  </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">AP 注入门控</div>
-      <div class="setting-desc">Legacy 仅在 0x399 AP 活动后才允许注入</div>
-    </div>
-    <label class="tgl">
-      <input type="checkbox" id="ap-gate-tgl" onchange="saveApGate()">
       <div class="tgl-track"></div>
     </label>
   </div>
@@ -1334,12 +1319,49 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">FSD 防御总开关</div>
-      <div class="setting-desc">控制通用防御策略；Legacy 0x370 NAG 与左滚轮免打扰不受此开关联动</div>
+      <div class="setting-desc">仅联动 Ban Shield 通用防御；Legacy 0x370 NAG、左滚轮免打扰与 8.3.6防甩机制不受此开关联动</div>
     </div>
     <label class="tgl">
       <input type="checkbox" id="def-master-tgl" onchange="saveDefenseConfig()">
       <div class="tgl-track"></div>
     </label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">AP 注入门控</div>
+      <div class="setting-desc">Legacy 仅在 0x399 AP 活动后才允许注入（服务端强制，fail-closed）</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="ap-core-gate-tgl" onchange="saveApGateControls()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">AP 自动恢复</div>
+      <div class="setting-desc">重启后恢复上次 AP 配置</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="ap-auto-restore-tgl" onchange="saveApGateControls()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">8.3.6防甩机制 <span class="exp-badge">实验 · 未验证实车防甩</span></div>
+      <div class="setting-desc" id="ap-rr-desc">AP 激活边沿自动先模拟 0x045 取消，等车回到可用状态（0x399=2，实车约 1s）再重请求；2.4s 窗口内读到原生 0x3EE 且 AP∈{2,3} 立即注入 bit46。车辆侧异常（窗口过期/AP 退出/故障态）自动重新武装（连续 3 次后锁定），无需拨开关恢复。编码/时序已按 2026-09-10/11 实车抓包标定。需先开启上方「AP 注入门控」——门控关闭时本开关仅记忆状态、机制不运行，Legacy 走原始直通路径。实验·防甩效果未验证</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-ap-rerequest-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="diag-grid" style="margin:6px 0 4px">
+    <div class="diag-item"><span class="lbl">生效状态</span><span class="v-dim" id="ap-rr-effective">关闭</span></div>
+    <div class="diag-item"><span class="lbl">阶段 / 原因</span><span class="v-dim" id="ap-rr-phase">-- / --</span></div>
+    <div class="diag-item"><span class="lbl">轮次 / 纪元</span><span class="v-dim" id="ap-rr-round">0 / 1</span></div>
+    <div class="diag-item"><span class="lbl">AP / 意图</span><span class="v-dim" id="ap-rr-ap">-- / --</span></div>
+    <div class="diag-item"><span class="lbl">车辆响应</span><span class="v-dim" id="ap-rr-vehicle">--</span></div>
+    <div class="diag-item"><span class="lbl">取消 / 请求（成/试）</span><span class="v-dim" id="ap-rr-gestures">0·0 / 0·0</span></div>
+    <div class="diag-item"><span class="lbl">回声 / 冲突</span><span class="v-dim" id="ap-rr-echo">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl">上次结束原因</span><span class="v-dim" id="ap-rr-lastend">--</span></div>
+    <div class="diag-item"><span class="lbl">自动重武装</span><span class="v-dim" id="ap-rr-rearm">0</span></div>
+    <div class="diag-item"><span class="lbl">许可链</span><span class="v-dim" id="ap-rr-permit">--</span></div>
+    <div class="diag-item"><span class="lbl">心跳</span><span class="v-dim" id="ap-rr-tick">--</span></div>
+  </div>
+  <div class="diag-grid" style="margin:6px 0 4px">
+    <div class="diag-item"><span class="lbl">Abort Guard</span><span class="v-dim" id="def-abort-state">关闭</span></div>
   </div>
   <div class="setting-row">
     <div>
@@ -1412,28 +1434,10 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
-      <div class="setting-name">Minimal Inject <span class="exp-badge">实验</span></div>
-      <div class="setting-desc">AP 接管边沿仅注入 5 帧 burst，随后停止（远离 6→8/9 中止窗口）</div>
+      <div class="setting-name">忽略车辆 OTA 守卫 <span class="exp-badge">诊断</span></div>
+      <div class="setting-desc">OTA 守卫置位后若 0x318 停发会永久封锁注入（10 分钟后已自动解除）；开启=立即忽略守卫恢复注入，真 OTA 进行中有风险，仅诊断用</div>
     </div>
-    <label class="tgl"><input type="checkbox" id="def-minimal-inject-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">Instant Engage <span class="exp-badge">实验</span></div>
-      <div class="setting-desc">AP 真接合瞬间注入，跳过稳定等待（ap_first_edge，#108）</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="def-instant-engage-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">Soft Engage <span class="exp-badge">实验</span></div>
-      <div class="setting-desc">方向盘近居中（±5°）才注入 bit46，避免转弯中激活（#108）</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="def-soft-engage-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
-  <div class="diag-grid" style="margin:6px 0 4px">
-    <div class="diag-item"><span class="lbl">Abort Guard</span><span class="v-dim" id="def-abort-state">关闭</span></div>
-    <div class="diag-item"><span class="lbl">Steer Defense</span><span class="v-dim" id="def-steer-state">关闭</span></div>
+    <label class="tgl"><input type="checkbox" id="def-ota-ovr-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
 </div>
 
@@ -2270,12 +2274,12 @@ async function poll(){
   setText('ov-can', d.can ? 'CAN1 Online' : 'CAN1 Offline');
   // AP 激活状态（问题2：替换 CAN2，与 ap-core-state-pill 同源字段 d.apInjectionState）
   var apState = d.apInjectionState || 'blocked';
-  var apActive = (apState === 'injecting' || apState === 'settling' || apState === 'armed');
+  var apActive = (apState === 'injecting' || apState === 'armed');
   setText('ov-ap', apActive ? '激活' : '等待');
   var apMetric = $('ov-ap-metric');
   if (apMetric) apMetric.style.borderColor = apActive ? 'rgba(52,211,153,.45)' : '';
   var apHint = $('ov-ap-hint');
-  if (apHint) apHint.textContent = (apState==='settling') ? ('Gate ' + (d.apDelayMs || 2000) + 'ms · 已就绪') : (apState==='injecting' ? '正在注入' : (apState==='armed' ? 'Legacy 已就绪' : '门控未触发'));
+  if (apHint) apHint.textContent = (apState==='injecting' ? '正在注入' : (apState==='armed' ? 'Legacy 已就绪' : '门控未触发'));
   setText('ov-up',fmtUp(uptime));
   var mCan=$('m-can');
   if(mCan){mCan.className=(mCan.classList&&mCan.classList.contains('val')?'val ':'stat-val ')+(d.can?'v-ok':'v-err');mCan.textContent=d.can?'Online':'Offline';}
@@ -2350,7 +2354,6 @@ async function poll(){
   // AP restore / injection gate
   var apR=$('hw-ap-restore');
   if(apR)apR.checked=!!d.apAutoRestore;
-  updateApGateControl(d);
 
   // Speed page
   updateSpeedPage(d);
@@ -2545,14 +2548,56 @@ async function loadDefenseConfig(){
   var dndSpd=$('def-dnd-spd-tgl');if(dndSpd)dndSpd.checked=!!d.dnd_speed;
   var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
   var abortTgl=$('def-abort-guard-tgl');if(abortTgl)abortTgl.checked=!!d.abort_guard;
-  var minimalTgl=$('def-minimal-inject-tgl');if(minimalTgl)minimalTgl.checked=!!d.minimal_inject;
-  var instantTgl=$('def-instant-engage-tgl');if(instantTgl)instantTgl.checked=!!d.instant_engage;
-  var softTgl=$('def-soft-engage-tgl');if(softTgl)softTgl.checked=!!d.soft_engage;
+  var otaOvr=$('def-ota-ovr-tgl');if(otaOvr)otaOvr.checked=!!d.ota_guard_override;
+  var rrTgl=$('def-ap-rerequest-tgl');if(rrTgl)rrTgl.checked=!!d.ap_re_request;
   var safety=d.legacyInjectionSafety||{};
   var abort=safety.abortGuard||{};
-  var steer=safety.steerDefense||{};
+  var rr=safety.apReRequest||{};
+  var rrReasonMap={apGateOff:'AP 门控未开启'};
+  var rrPhaseMap={
+    disabled:'已关闭',apGateOff:'AP 门控未开启',
+    waitIntent:'等待拨杆意图',waitExit:'等待 AP 退出',waitApActive:'等待 AP 激活',
+    cancelArmed:'取消序列进行',cancelPressAccepted:'取消按压已发',
+    waitCancelEvidence:'等待取消生效',waitAvailable:'等待车辆可用(状态2)',
+    requestArmed:'重请求就绪',requestPressAccepted:'重请求已发',
+    waitQualification:'等待资格窗口',qualified:'资格达成·注入中',
+    intentWithdrawn:'意图撤回·轮次完成',apLeftInjectionSet:'离开注入集·轮次完成',
+    physicalInput:'物理拨杆介入·锁定',otaGuard:'OTA 更新保护·锁定',
+    cancelSeqTimeout:'取消序列超时·锁定',cancelEvidenceTimeout:'取消证据超时·锁定',
+    availableWaitTimeout:'等待可用超时·锁定',apActiveDuringWait:'等待中 AP 自恢复·已自动重武装',
+    apExitedBeforeRequest:'请求前 AP 退出·锁定',apExitedDuringRequest:'请求被拒·已自动重武装',
+    requestRetryWait:'请求被拒·轮内重试等待',cancelRetryArmed:'取消被无视·重发已武装',
+    cancelIgnored:'车辆无视取消·已自动重武装',
+    apExitedDuringWindow:'窗口内 AP 退出·已自动重武装',apOutsideWindowSet:'窗口内状态异常·锁定',
+    windowExpired:'资格窗口超时·已自动重武装',counterConflict:'计数器冲突·锁定',
+    txFailed:'发送失败·锁定',permitLost:'许可丢失·锁定',
+    apFaultState:'AP 故障状态·已自动重武装',dasStale:'DAS 数据过期·锁定',
+    invalidNative045:'原生 0x045 无效·锁定',
+    autoRearmLimit:'连续车辆侧异常·锁定(开关关→开重置)'};
+  setText('ap-rr-effective',rr.effective?(rr.permit?'生效 / 运行':'生效 / 等待许可'):(rr.requested?('不可用 · '+(rrReasonMap[rr.unavailableReason]||rr.unavailableReason||'profile 未配置')):'关闭'));
+  setText('ap-rr-phase',(rr.phase||'disabled')+' / '+(rrPhaseMap[rr.reason]||rr.reason||'--'));
+  setText('ap-rr-round',(rr.round||0)+' / '+(rr.epoch||1));
+  setText('ap-rr-ap',(rr.apState!=null?rr.apState:'--')+' / '+(rr.intentPresent?'有':'无'));
+  // beta09 P1: 拨杆后车侧是否接受激活（等待中→拒绝→被下一次按压/激活边沿清除）。
+  // 只在 WaitDriverIntent 观测；「--」= 拨杆未被设备看到或车已正常响应。
+  setText('ap-rr-vehicle',rr.vehicleRefusal?('未接受激活 · 车侧拒绝'+((rr.vehicleRefusals||0)>1?(' ×'+rr.vehicleRefusals):'')):(rr.rwdPressPending?'等待车辆响应…':'--'));
+  setText('ap-rr-gestures',(rr.cancelAccepted||0)+'·'+(rr.cancelAttempts||0)+' / '+(rr.requestAccepted||0)+'·'+(rr.requestAttempts||0));
+  setText('ap-rr-echo',(rr.ownEchoRx||0)+' / '+(rr.counterConflicts||0));
+  setText('ap-rr-lastend',(rr.lastEndedReason&&rr.lastEndedReason!=='none')?(rrPhaseMap[rr.lastEndedReason]||rr.lastEndedReason):'--');
+  setText('ap-rr-rearm',String(rr.autoRearms||0));
+  // beta10 P1：许可链五输入分解 + tick 心跳（纯观测）。permit 任一输入死亡 =
+  // 静默无法注入（开关循环无效，拔插才恢复）——此处直接点名死掉的输入。
+  var pi=rr.permitInputs||{};
+  var dead=[];
+  if(pi.canActive===false)dead.push('总开关');
+  if(pi.legacyHandler===false)dead.push('处理器');
+  if(pi.driver===false)dead.push('驱动');
+  if(pi.otaGuardClear===false)dead.push('OTA守卫');
+  if(pi.abortGuardOk===false)dead.push('AbortGuard');
+  setText('ap-rr-permit',dead.length?('断: '+dead.join('/')):'正常');
+  var th=rr.tickHeartbeat;
+  setText('ap-rr-tick',th?(String(th.count)+' · '+((th.ageMs!=null&&th.ageMs<5000)?'活跃':('停滞'+Math.round((th.ageMs||0)/1000)+'s'))):'--');
   setText('def-abort-state',abort.enabled?(abort.latched?('锁止 / AP '+(abort.lastAbortState??'--')):('就绪 / 阻断 '+(abort.blocks||0))):'关闭');
-  setText('def-steer-state',steer.minimalEnabled?((steer.minimalUsed||0)+'/'+(steer.minimalBudget||5)+' 帧 · Instant '+(steer.instantBypassCount||0)+' 次'):(steer.instantEnabled?('Instant '+(steer.instantBypassCount||0)+' 次'):'关闭'));
   setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
   var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
   var exp=(d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
@@ -2799,25 +2844,18 @@ async function saveConfig(){
   if(bt)data.bootCan=bt.checked?'1':'0';
   try{await postForm('/config',data);}catch(e){}
 }
-function updateApGateControl(d){
-  var gate=$('ap-gate-tgl');
-  if(gate&&d)gate.checked=!!d.apGateEnabled;
-}
-async function saveApGate(){
-  var gate=$('ap-gate-tgl');
-  try{await postForm('/config',{apg:gate&&gate.checked?'1':'0'});}
-  catch(e){if(gate)gate.checked=!gate.checked}
-}
+// ap-gate-tgl (hardware page) removed: the gate toggle now lives on the
+// FSD-defense page as ap-core-gate-tgl, refreshed by renderApInjectionState().
 
 // ── AP injection core controls (standalone driving status) ────────────
+// AP-settle delay options removed in 4.5.0-beta06 (the 8.3.6 coordinator
+// now owns injection timing; the legacy settle timer is gone).
 async function saveApGateControls(){
   var gate=document.getElementById('ap-core-gate-tgl');
-  var delay=document.getElementById('ap-delay-select');
   var restore=document.getElementById('ap-auto-restore-tgl');
   try{
     await postForm('/config',{
       apg:gate&&gate.checked?'1':'0',
-      ap_delay_ms:delay?delay.value:'2000',
       ap_auto_restore:restore&&restore.checked?'1':'0'
     });
     showToast(T('已保存'));
@@ -2827,22 +2865,20 @@ function renderApInjectionState(d){
   if(!d)return;
   var gate=(d.fsdDiag&&d.fsdDiag.gate)?d.fsdDiag.gate:{};
   var state=d.apInjectionState||'blocked';
-  var label=state==='waiting_ap'?'等待 AP':state==='settling'?'稳定计时中':state==='injecting'?'正在注入':state==='armed'?'Legacy 已就绪':'已阻断';
+  var label=state==='waiting_ap'?'等待 AP':state==='injecting'?'正在注入':state==='armed'?'Legacy 已就绪':'已阻断';
   setText('ap-core-state-pill',label);
   // 驾驶舱状态主区 + Gate 进度条（仅显示层，不读新后端字段）
-  var apActive = (state==='injecting'||state==='settling'||state==='armed');
+  var apActive = (state==='injecting'||state==='armed');
   var apBig = document.getElementById('ap-core-state-big');
   var apPanel = document.getElementById('ap-state-panel');
   var apFill = document.getElementById('ap-gate-fill');
   if (apBig) apBig.textContent = apActive ? '激活' : '等待';
   if (apPanel) apPanel.classList.toggle('active', apActive);
   if (apFill) apFill.style.width = (apActive ? '100%' : '0%');
-  var stable=gate.apStableMs||0, req=gate.requiredStableMs||d.apDelayMs||2000;
   var reason=gate.lastBlockedBy||gate.gateReason||'';
-  setText('ap-core-state-detail',label+' · AP '+stable+'/'+req+' ms'+(reason?' · '+reason:''));
+  setText('ap-core-state-detail',label+(reason?' · '+reason:''));
   setText('injection-source',d.injectionSource||'Disabled');
   var apg=document.getElementById('ap-core-gate-tgl'); if(apg)apg.checked=!!d.apGateEnabled;
-  var dly=document.getElementById('ap-delay-select'); if(dly)dly.value=String(d.apDelayMs||req||2000);
   var rst=document.getElementById('ap-auto-restore-tgl'); if(rst)rst.checked=!!d.apAutoRestore;
 }
 // ── 插件管理（JSON 插件） ──────────────────────────────────────
@@ -2941,9 +2977,8 @@ async function saveDefenseConfig(){
   var dndSpd=$('def-dnd-spd-tgl');
   var apeap=$('def-apeap-tgl');
   var abortTgl=$('def-abort-guard-tgl');
-  var minimalTgl=$('def-minimal-inject-tgl');
-  var instantTgl=$('def-instant-engage-tgl');
-  var softTgl=$('def-soft-engage-tgl');
+  var otaOvr=$('def-ota-ovr-tgl');
+  var rrTgl=$('def-ap-rerequest-tgl');
   var data={
     enabled:master&&master.checked?'1':'0',
     bionic_steering:bio&&bio.checked?'1':'0',
@@ -2953,9 +2988,8 @@ async function saveDefenseConfig(){
     speed_no_disturb:nd&&nd.checked?'1':'0',
     ap_eap_compatible:apeap&&apeap.checked?'1':'0',
     abort_guard:abortTgl&&abortTgl.checked?'1':'0',
-    minimal_inject:minimalTgl&&minimalTgl.checked?'1':'0',
-    instant_engage:instantTgl&&instantTgl.checked?'1':'0',
-    soft_engage:softTgl&&softTgl.checked?'1':'0'
+    ota_guard_override:otaOvr&&otaOvr.checked?'1':'0',
+    ap_re_request:rrTgl&&rrTgl.checked?'1':'0'
   };
   if(dndSpd)data.dnd_speed=dndSpd.checked?'1':'0';
   try{await postForm('/defense_config',data);}
@@ -4038,7 +4072,24 @@ function showStandaloneMorePage(name){
   showMobilePage(name);
 }
 
+// === Hoist fixed mobile chrome to <body> ===
+// The bottom tab bars and "more" panels use position:fixed but are emitted at
+// the end of .content (overflow-y:auto scroll container). On mobile browsers
+// (notably iOS Safari), a position:fixed element nested inside a scroll
+// container fails to repaint during momentum scroll on long pages, so the tab
+// bar renders blank/disappears after scrolling (ported from single-CAN
+// v1.0.7 hoistMobileChrome fix). Moving them to be direct children of <body>
+// anchors position:fixed to the viewport reliably. #mob-tabs carries its own
+// data-dual-hide because it no longer sits inside the data-dual-hide wrapper.
+function hoistMobileChrome(){
+  ['mob-tabs','mob-more-single','mob-tabs-dual','mob-more'].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el&&el.parentNode!==document.body)document.body.appendChild(el);
+  });
+}
+
 document.addEventListener('DOMContentLoaded',function(){
+  hoistMobileChrome();
   // Desktop sidebar nav
   var navs=document.querySelectorAll('.nav-item');
   for(var i=0;i<navs.length;i++){
@@ -4099,9 +4150,9 @@ function restartPoll(ms){
 }
 </script>
 <!-- Mobile Standalone Pages (single-CAN product) -->
-<div data-dual-hide="1">
-<!-- Mobile Bottom Tab Bar (standalone) -->
-<div class="mob-tabs" id="mob-tabs">
+<!-- Mobile Bottom Tab Bar (standalone); data-dual-hide stays on the element
+     itself because hoistMobileChrome() re-parents it to <body> at load. -->
+<div class="mob-tabs" id="mob-tabs" data-dual-hide="1">
   <button class="mob-tab active" data-mobile-page="driving" onclick="showMobilePage('driving')"><div class="mob-icon">▣</div><div>驾驶</div></button>
   <button class="mob-tab" data-mobile-page="hardware" onclick="showMobilePage('hardware')"><div class="mob-icon">◇</div><div>硬件</div></button>
   <button class="mob-tab" data-mobile-page="speed" onclick="showMobilePage('speed')"><div class="mob-icon">↗</div><div>速度</div></button>
@@ -4114,7 +4165,6 @@ function restartPoll(ms){
   <div class="mob-more-item" onclick="showStandaloneMorePage('defense')">◈ FSD 防护</div>
   <div class="mob-more-item" onclick="showStandaloneMorePage('ota')">⇧ OTA 升级</div>
   <div class="mob-more-item" onclick="showStandaloneMorePage('can')">⌘ CAN 诊断</div>
-</div>
 </div>
 <!-- Mobile Dual-CAN Nav (hidden in standalone) -->
 <div class="mob-tabs" id="mob-tabs-dual" data-single-hide="1">

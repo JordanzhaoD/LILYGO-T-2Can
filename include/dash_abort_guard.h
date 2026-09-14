@@ -5,13 +5,6 @@
 // Legacy Abort Guard is intentionally a local safety latch. It observes the
 // native 0x399 AP state but never creates or changes a vehicle CAN frame.
 
-// v2.16-beta.19 parity: single source of truth for the Legacy steer-jerk
-// defense Minimal burst budget (DashLegacySteerDefense). Separate from Abort
-// Guard's abort latch: it keeps optional activation injection away from the
-// later 6 -> 8/9 abort window by sending only a short burst at the real
-// engagement edge.
-static constexpr uint8_t kDashMinimalInjectBudget = 5;
-
 enum class DashAbortGuardBlockPath : uint8_t
 {
     None = 0,

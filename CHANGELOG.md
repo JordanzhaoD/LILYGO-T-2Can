@@ -1,5 +1,519 @@
 # Changelog
 
+## [4.5.0-beta14] - 2026-09-14
+
+### Changed
+
+- **8.3.6 防甩协调器实车健壮性三方案（beta13 实车分析定案；2026-09-13
+  四份 CSV、~30 轮 70% 成功、9 失败全为车辆侧瞬态 + 1 自检误判，一次
+  修到位；预期失败率 31%→<10%）**：
+  - **计数器 +2 容差（方案一）**：取消 release TX 后原生模块广播暂停
+    213-290ms、恢复时跳一号，被旧「∈{lastTx, lastTx+1}」检查误判为
+    counterConflict 硬锁（104 手势 3 例 +2 跳变全良性）。现环形比较
+    `ahead=(native-lastTx)&0x0F`：+2 容忍并计 `counterSkips`（诊断新键）；
+    冲突=原生落后（ahead=15，beta04 真冲突形态）或跳前超 2，仍硬锁。
+  - **车辆侧失败重分类（方案二）**：请求被拒（`apExitedDuringRequest`，
+    重试预算耗尽后）与车无视取消（`cancelIgnored`，state3 持续到证据
+    超时）纳入 `vehicleSideRearmReason` 自动重武装集合（beta06 四成员
+    扩为六成员，`kVehicleAutoRearmMax=3` 上限不变）——实车「报错退出」
+    硬锁体感消失。证据超时分类精化：`cancelEvidenceDeadlineLocked()`
+    超时时车仍 active → `cancelIgnored`（重武装）；否则维持
+    `cancelEvidenceTimeout` 硬锁。
+  - **轮内重试（方案三）**：①请求重试——请求被拒（2→1）回等 state2
+    （车需 ~940ms 回可用态）自动重发请求手势，每轮 ≤2 次（profile
+    `requestRetries`，预算按已用计，0=beta13 行为严格不变）；覆盖
+    RequestSequence 与 WaitQualification 两相位（0x399 2Hz 量化使拒绝
+    多在 release 后才被检出）。②取消重发——取消 700ms
+    （`cancelRetryDelayMs`）无证据且车仍 state3 → 重发一次取消手势
+    （`kCancelRetryMax=1`），证据超时延至 2200ms
+    （`cancelRetryTimeoutMs`）。LittleGong 固件的「稳定」本质是人肉
+    重试，这三项把那份耐心装进自动化。
+  - **安全不变式全部保持**：Barrier A、物理拨杆锁、8/9 故障态锁、
+    permit 链零改动；profile 新字段默认 0 严格等于 beta13 行为。
+- **profile 结构体去填充（memcmp 保留路径守卫）**：新增 retry 字段在
+  原布局打开对齐填充孔，`configure()` 的同 profile memcmp 比较读到
+  旧栈字节 → 意外全重置（native 测试显形）。字段按 4→2→1 字节降序
+  重排为无填充布局，`static_assert(sizeof(ApReRequestProfile)==40)` 钉死。
+
+### Added
+
+- **重试诊断三键**（`/status` 与 `/defense_config` 的 apReRequest 块）：
+  `counterSkips`（良性 +2 跳变计数）、`cancelRetries`（取消重发已用
+  次数）、`requestRetries`（请求轮内重试已用次数）；UI rrPhaseMap 补
+  `requestRetryWait`（请求被拒·轮内重试等待）、`cancelRetryArmed`
+  （取消被无视·重发已武装）、`cancelIgnored`（车辆无视取消·已自动
+  重武装）三条中文条目；simulator 镜像同步。验证规程判读表新增对应
+  四行并区分 `cancelIgnored` 与 `cancelEvidenceTimeout`。
+
+## [4.5.0-beta13] - 2026-09-13
+
+### Fixed
+
+- **permitInputs 缺失闭合花括号（第五次 JSON 破损事故；beta12 实车
+  「未连接 + 配置全灰 + RX/TX 0/0」的根因）**：beta10 观测层新增的
+  `,"permitInputs":{` 五输入分解对象从未闭合——legacyInjectionSafety
+  永不闭合、root `}` 被错位消费，`/status` 与 `/defense_config` 从
+  首次 boot 起整体不可解析（页面顶栏「未连接」、配置复选框全回 HTML
+  默认灰 OFF、RX/TX 停 0/0——静态页走 gzip rodata 通道正常送达，故
+  页面能开而数据全死；症状与车/CAN/WiFi 无关，模块插不插车一样）。
+  beta10 实车时发现的 reason 收尾引号（beta11 单字符热修）是同一
+  增量内的**另一个** bug，修完它本 bug 仍在并随 beta12 发布。修复 =
+  在（双驱动构建独有的）`driver` 键后补 `j += '}'` 并拆分
+  `#ifdef DRIVER_T2CAN_DUAL`（非双驱动构建 4 输入同样闭合）；
+  permitBits/tickHeartbeat/blackbox/otaWatch 维持 apReRequest 层的
+  兄弟键位置（与模拟器镜像及 UI 读取一致）。**8.3.6 防甩语义零改动，
+  LittleGong 四项移植本体无恙（全部经重建器机械验证）。**
+
+### Added
+
+- **JSON 发射机械重建验证器 + pytest 常驻守卫（此类事故的结构闭合）**：
+  `scripts/reconstruct_status_json.py` 按源序逐语句重建
+  handleStatus / dashDefenseConfigJson / handleVehicleOtaStatus（含全部
+  内联 builder、宏三明治/顶层三目/String() 调用占位建模）并对字面量
+  骨架做 json.loads 整体验析——本 bug 修前在两处精确报出 EOF 截断，
+  修后 ALL PARSE CLEAN（93/21/6 顶层键，permitInputs 恰五输入、
+  四观测块兄弟形状与意图对齐）。合约新增
+  `test_beta13_permitinputs_close_reconstruction_guard`（闭合位置
+  order-pin + 模拟器兄弟形状 + 子进程跑重建器断言退出码）。dashboard
+  头 native 不编译，此前无任何自动化整解析门。
+
+## [4.5.0-beta12] - 2026-09-13
+
+### Changed
+
+- **OTA 守卫三路径改造（LittleGong 逆向移植 1；beta08 症状 2/3 头号
+  嫌疑的行为修复）**：原清除条件是「连续 6 帧非 OTA 的 0x318」——若
+  车辆侧 0x318 停发（bus 静默 / 网关降级），标志永久卡 true、permit
+  静默死亡、仅拔插可恢复。三条清除路径（permit 表达式**逐字不动**，
+  全部实现在守卫状态机内部 vehicleOtaActive 的清除条件上）：A. 原
+  6 帧清除路径保留；B. **停流超时降级**——置位持续满 10 分钟且期间
+  零 0x318 帧（任意 dlc 都算载波存活）自动清除 + `staleClears` 计数
+  + CAN 任务日志；C. **用户覆盖开关**——`/defense_config` POST
+  `ota_guard_override`（NVS 短键 `otg_ovr`）+ UI「忽略车辆 OTA 守卫」
+  （诊断徽标），开启=立即清除并暂停置位，关闭=干净重来（真 OTA 仍会
+  被 3 帧确认重新捕获）。`otaWatch` 与 `/vehicle_ota_status` 扩
+  `staleClears` / `override` / `blockedMs` 三键。
+- **黑匣子条目 JSON 发射挪入纯函数（LittleGong 移植 5，结构加固）**：
+  条目 JSON 由 dashboard 头内联 String 拼接（native 测试不编译该头，
+  beta06 / beta07 / beta10 三次同类引号事故全部从这里漏网）改为
+  `dash_ap_blackbox.h` 内 `dashApBbEntryToJson` 纯函数发射，native
+  golden-string 测试逐字符钉死全部 7 种 kind × 有/无 reason 的精确
+  输出；buffer 不足返回 0（条目跳过，绝不产生截断 JSON）。合约改钉
+  dashboard 调用形式并负向钉死旧内联形式。
+
+### Added
+
+- **0x3EE 载波节奏观测（LittleGong 移植 2；症状 1「只出现 EAP」= 资格
+  窗内载波缺失的判读依据）**：`/status` 新增 `carrier3ee` 块
+  （lastGapMs / maxGapMs / longGaps / total / lastMs / ageMs），过滤
+  口径与资格注入看到的流完全一致（0x3EE mux0 CAN_BUS_VEH），
+  longGap 阈值 2000ms 严格大于。纯观测，批准形态=只 JSON 不加 UI 格。
+  新增 native `3ee_cadence` 测试环境（12 用例：过滤口径 + 间隔统计 +
+  2000ms 边界）。
+- **注入 TX 会计（LittleGong 移植 3；症状 3「长时间运行后无法注入」
+  的鉴别数据）**：`/status` 新增 `txAccounting` 块（attempts / ok /
+  fails / consecutiveFails / lastOkAgeMs），账本 = legacyFsdDiag.mux0
+  （recordMuxTx 仅在 activation-allowed 路径调用，即 bit46 注入帧专用，
+  速度偏移-only 写入另计不混入）。
+- native `ota_guard` 测试环境（20 用例：三路径 + 599999/600000 边界 +
+  任意 dlc 盖章 + override 全行为），`ap_blackbox` 扩 6 个 golden-string
+  用例；模拟器镜像全部新键与 override 清 vehicle_ota 行为；合约新增
+  `test_beta12_littlegong_port_ota_guard_carrier_tx` 双向钉（permit
+  逐字钉保持 + 新键裸形式正向 / 游离引号负向 + NVS/POST/UI/模拟器全
+  链）。
+
+## [4.5.0-beta11] - 2026-09-13
+
+### Fixed
+
+- **黑匣子 reason 字符串收尾引号热修（实车 beta10 配置保存与页面显示
+  全面异常的根因）**：beta10 新增的 NVS 黑匣子条目发射段中，
+  `"reason":"` 打开后拼接 `e.reason` 便直接连接 `'}'`——每条 entry 产出
+  `"reason":"xxx}` 的未闭合字符串，吞掉其后所有 JSON 内容；boot 条目
+  开机即写入、黑匣子永不为空，故**首次 boot 起 /status 与
+  /defense_config 整体不可解析**（保存链本身未坏，与 beta06→beta07
+  同签名）。修复 = 收尾块补一行 `j += '"';`（单字符级改动，8.3.6
+  语义与 beta10 观测层零改动）。合约新增 5b「字符串值收尾纪律」双向
+  钉测：kind 值经 `","ms":` 字面量收尾、reason 值经显式 `j += '"';`
+  收尾的精确形式正向钉 + `e.reason;` 直连 `'}'` 的坏形式负向钉——
+  钉测盲区（历来的键前缀钉从未覆盖字符串值**收尾**）在第三次复发
+  （beta06 散引号 / beta07 数值后字符串收尾形 / beta10 缺收尾引号）
+  后终于闭合。
+
+## [4.5.0-beta10] - 2026-09-13
+
+### Added
+
+- **P1 观测层（纯观测，8.3.6 防甩语义零改动，permit 表达式逐字钉死）**：
+  2026-09-13 实车反馈三症状中，症状 2/3（强退 FSD 后 / 长时间运行后
+  注入失效）开关循环无效、仅拔插断电可恢复——挂死态在协调器**之外**
+  的 RAM 里，重启恰好销毁证据。beta10 只加观测不加行为，四处埋点：
+  ① `/status` 诊断新增 `permitInputs`（canActive / legacyHandler /
+  otaGuardClear / abortGuardOk / driver 五输入逐项分解）与
+  `permitBits` 位图——下次再「无法注入」，一眼看出五个输入哪个断了；
+  ② 新增 `tickHeartbeat`（count / lastMs / ageMs）——协调器 tick
+  心跳，停滞即说明 CAN 任务层饿死；③ 新增 `otaWatch`
+  （seen318 / last318Ms / confirm / clear）——观测 OTA 守卫的 0x318
+  输入流。**重要更正**：OTA 守卫并非此前误报的"死代码"，它实际接线
+  于 CAN 帧分发器（dashOtaGuardProcessFrame），且其清除逻辑要求连续
+  6 帧非 OTA 的 0x318——若置位后 0x318 停发则守卫**永久卡 true**、
+  permit 静默死亡、无任何 UI 提示，与症状 2/3 完美吻合，列为头号
+  嫌疑（现有 `/vehicle_ota_status` 端点即可查证）；
+  ④ **NVS 黑匣子**（`blackbox[8]` 环形，跨断电存活）：记录
+  Boot / 心跳(5min) / RoundStart / RoundEnd / Lock / PermitChange /
+  IntentChange（flappy 种类 5s 限速），每条含 seq / 时刻 / tick /
+  phase / permitBits / apState / reason；开机 NVS 恢复并打 Boot 标记
+  ——意外断电后第一次 `/status` 即显示断电前最后的证据。
+  UI 防护页诊断网格新增「许可链」「心跳」两格（许可链断时直接中文
+  点名断的输入）。协调器模块 dash_ap_rerequest_activation.h 零改动
+  （合约钉死无 Blackbox 字样）；新增 native 套件
+  test_native_ap_blackbox（15 用例：栈序/容量/限速/往返/截断/续号）。
+
+## [4.5.0-beta09] - 2026-09-12
+
+### Added
+
+- **「车辆响应」观测（P1，纯观测零注入改动）**：第二份 Tier 1 CSV
+  （162535.907）定位「有时开启失败」的根因为车侧拒激活——一次原生
+  RWD 按杆后车 6ms 内翻起 flag1、2.3s 才回 state2、永不进 state3，
+  设备全程正确静默（无激活边沿=无轮次），但驾驶者无从区分"车拒绝
+  了"与"盒子坏了"。现在 WaitDriverIntent 期观测到原生 RWD 按压
+  边沿后 2.5s 内无 state3-6 激活边沿，UI 诊断网格新增的「车辆响应」
+  格显示「未接受激活 · 车侧拒绝」（等待期显示「等待车辆响应…」），
+  `/status` 诊断新增 `vehicleRefusal` / `rwdPressPending` /
+  `vehicleRefusals` / `rwdPressMs`。按住保持期间的 10Hz 滚计数器帧
+  只计一次按压；FWD 不追踪（取消总是可观测的 6→1）；轮次进行中的
+  按杆走既有 physicalInput 路径不触发本观测；下一次按压或激活边沿
+  清除拒绝态。不改任何门控/超时/注入逻辑——8.3.6 防甩语义零改动。
+- **0x399 高半字节 flag 位计数（P2，纯观测）**：`/status` 诊断新增
+  `apFlagCounts[16]` 直方图 + `lastApFlag` / `lastApFlagMs`，统计
+  0x399 byte0 高半字节每个值的帧数（此前在 dashboard 层被剥掉丢弃）。
+  跨两份 Tier 1 CSV 的假说：flag1=驾驶员手力/扭矩、flag4=停车/不可
+  用、flag5=剧烈捕捉后瞬态——语义未破译，计数为后续实车 CSV 对照
+  破译铺路。Disabled（含门控关）也计数。
+
+## [4.5.0-beta08] - 2026-09-12
+
+### Fixed
+
+- **手机底部标签栏滚动后消失（iOS Safari）**：两条底部标签栏
+  （`#mob-tabs` / `#mob-tabs-dual`）与两个"更多"面板是
+  `position:fixed` 元素，却嵌套在 `.content`（`overflow-y:auto`
+  滚动容器）内。iOS Safari 在长页面惯性滚动期间不重绘滚动容器内
+  的 fixed 元素，滚动后标签栏渲染空白——即现场"标签栏消失"
+  （截图 4376/4377 滚动到底部时栏消失、4378 浅位置正常）。
+  移植单 CAN v1.0.7 的 `hoistMobileChrome()` 修复：DOM 加载时把
+  4 个 fixed chrome 重新挂到 `<body>` 直接子级，`position:fixed`
+  稳定锚定视口。`#mob-tabs` 改为自带 `data-dual-hide`（原包装
+  div 删除），产品模式显隐行为不变。布局逐像素零变化
+  （430×932 探针：栏位置/尺寸/层级/预留与修复前一致）。
+
+## [4.5.0-beta07] - 2026-09-12
+
+### Fixed
+
+- **`/status` and `/defense_config` JSON was unparseable** (beta06
+  regression, confirmed on hardware): the new `autoRearms` diag field is
+  numeric, but the following `round` literal kept the string-close form
+  `","round":` — one stray quote emitted `..."autoRearms":0","round":...`,
+  breaking JSON parsing device-wide. UI impact matched the field reports:
+  every switch rendered OFF after re-entering a page (`loadDefenseConfig`
+  bailed on the parse, leaving checkboxes at their HTML defaults) and the
+  top-bar badge stuck on 未连接 (`poll()` got null from `/status`).
+  Config saves themselves were never broken — the device RAM/NVS state was
+  correct the whole time. Fix: bare `,"round":` after the numeric value;
+  contract test now pins both boundary forms (string-close after string
+  values, bare after numeric/bool) so the substring-shaped blind spot that
+  let this ship green cannot recur.
+
+## [4.5.0-beta06] - 2026-09-12
+
+### Changed
+
+- **Qualification window widened 1200 → 2400 ms** (beta05 Tier 1 CSV,
+  f2 round A): the only in-window mux0 carrier landed inside the
+  press→release gap and the next carrier arrived 2000 ms after t_request —
+  the 1200 ms window still expired on ~12% of rounds. 2400 ms covers the
+  observed worst case with margin; AP-exit races inside the longer window
+  stay fenced by the existing `apExitedDuringWindow` guard. Window
+  semantics (half-open, from t_request) unchanged.
+- **Vehicle-side locks auto re-arm** (fix 1): `windowExpired` /
+  `apExitedDuringWindow` / `apActiveDuringWait` / `apFaultState` now
+  re-arm to WaitDriverIntent with the same fence a completed round uses
+  (full AP exit + driver intent + activation edge before a new round) —
+  no more manual 8.3.6-switch cycling after every transient vehicle
+  hiccup. A cap of 3 consecutive vehicle-side locks without a completed
+  round between them degrades to a real FailedLocked
+  (`reason="autoRearmLimit"`) so a persistently unhappy vehicle cannot
+  loop the cancel/re-request chain forever. Hardware-class reasons
+  (`counterConflict`/`txFailed`/`permitLost`/`physicalInput`/
+  `invalidNative045`/`dasStale`/timeouts) still lock fail-closed.
+- **configure() preserves an ActiveInjection round** (fix 3):
+  dashApplyRuntimeState re-applies coordinator state on every /config
+  POST; the old unconditional reset killed the bit46 chain mid-injection
+  (prime suspect for the beta05 rounds where injection stopped while the
+  car still held state 6). Preservation is strict — same enable + same
+  gate + byte-identical valid profile, ActiveInjection phase only; every
+  real mode change still takes the full reset.
+- **AP-settle delay chain deleted end to end** (user request): the
+  0/1/2/3 s "延迟注入" select existed only to damp the wheel jerk on the
+  old direct path; with the 8.3.6 coordinator owning injection timing it
+  is dead weight. Removed from the UI (select + settling state + stable
+  timer readouts), `/config` POST param `ap_delay_ms`, NVS key `ap_dly`
+  (actively removed on load — one-way migration), the settle timer, the
+  `legacy_ap_state_delay_gate` variant, and the simulator mirror. With
+  the gate open + 8.3.6 switch off, the legacy direct path now allows
+  immediately once 0x399 confirms AP active.
+
+### Fixed
+
+- **Stale cancel-evidence latch could false-lock round 2+** (barrier B):
+  startRound did not clear the previous round's latch, so a stale seen=true
+  plus an active state observed during round 2's WaitCancelEvidence
+  (observed 22-526 ms before the cancel takes effect) fired a false
+  `apActiveDuringWait` lock. Each round now starts with a fresh latch.
+- Module State/Diag compile fix: the beta06 diagnostic fields were added
+  to Diag but State lacked `reason`/`lastEndedReason`/`lastAction`
+  initializers.
+
+### Added
+
+- **Diagnostics**: `lastEndedReason` (survives re-arms and state changes —
+  the field answer to "record the reason before touching any switch" from
+  the beta05 Tier 1 lesson) and `autoRearms` counters in /status +
+  /defense_config, the simulator, and two new UI diag cells
+  (上次结束原因 / 自动重武装); the four vehicle-side reasons localize with
+  a "已自动重武装" suffix and `autoRearmLimit` gets its own row.
+- Eight native tests: window-expired re-arm + round-2 full fence,
+  re-arm cap → autoRearmLimit, completed-round budget reset,
+  hardware-class locks still lock, round-2 latch freshness (barrier B),
+  configure preservation / reset conditions / handshake-phase
+  non-preservation.
+- Contract pins for the whole beta06 surface (module re-arm set + cap +
+  memcmp preservation, dashboard JSON keys, UI cells, simulator mirror)
+  and anti-regression pins for the deleted delay chain.
+
+## [4.5.0-beta05] - 2026-09-11
+
+### Fixed
+
+- **Stale last-TX anchor fixed** (beta04 Tier 1 CSV, round 2): the ring
+  comparison from beta04 had no time gating, so the previous round's
+  request-release counter (83 s old) still "led" the fresh native template by
+  1 on the 4-bit ring and the round-2 press skipped the counter the car was
+  waiting for (device sent 7 while the car echoed 6) — the car ignored the
+  frame and the await-native check locked the round `counterConflict` with
+  the release never sent. That ring relationship hits with ~56% probability
+  per subsequent round. The anchor is now a **time-recency rule**: anchor own
+  last TX only when it is newer than the last native template refresh (the
+  beta03 1 ms-collision shape, where the native bus has not spoken since our
+  TX); otherwise always anchor template+1 — the car accepts its own current
+  counter +1 (round 1's press/release/request echoes proved it three times).
+  `ringAhead` is deleted; time separates stale from current, the ring cannot.
+- New native regression: full round 1 completes, 83 s of native traffic, round
+  2's template ring-lags the stale last TX by 1 — the press must anchor
+  template+1, the car's echo must not read as a conflict, and the cancel
+  release (which the CSV round 2 never sent) must follow.
+
+## [4.5.0-beta04] - 2026-09-11
+
+### Changed
+
+- **Re-request now waits for the available state** (Tier 1 CSV root cause A):
+  the first real-vehicle round fired the request press 1 ms after the cancel
+  release while the car was still in DAS state 1 — it holds state 1 for
+  ~936-950 ms before returning to state 2, and all 17 calibrated successful
+  RWD engagements started from state 2. New profile fields
+  `requestApMask` (compiled `{2}`) + `availableWaitTimeoutMs` (3000 ms ≈ 3×
+  the observed recovery): the cancel evidence only latches the wait
+  (`reason="waitAvailable"`); the request gesture is emitted once the car
+  reports an available state. Locks fail-closed on
+  `availableWaitTimeout` (never came back available) and
+  `apActiveDuringWait` (cancel landed, then AP re-engaged on its own — the
+  re-request is pointless; pre-evidence state 3 still just means the cancel
+  has not taken effect and keeps waiting). The cancel timing itself is
+  unchanged (accepted by the vehicle at 22/31 ms in both rounds).
+- **Rolling-counter collision fixed** (root cause B): a fresh press anchored
+  its counter on the native template alone, so when the native bus cloned
+  our cancel press inside the release gap the request press repeated the
+  release counter (two frames 1 ms apart with the same counter, in both
+  failed rounds). A fresh press now anchors on whichever of
+  (template, own last TX) is ahead on the 4-bit ring (`ringAhead`), so our
+  own frames always advance.
+
+### Added
+
+- `rrPhaseMap`: the coordinator status row now localizes every
+  `phase/reason` into Chinese for Tier 1 field triage (including the three
+  new reasons above).
+- Four native tests: wait-for-available gating, `availableWaitTimeout`
+  half-open boundary, `apActiveDuringWait` (with the pre-evidence state-3
+  keep-waiting contrast), and the counter-collision regression.
+
+## [4.5.0-beta03] - 2026-09-11
+
+### Changed
+
+- **AP injection gate is now the coordinator's arm-level precondition**
+  (user-defined framework of 2026-09-11): gate closed → the 8.3.6防甩机制
+  coordinator is completely silent (`phase=disabled`, `reason="apGateOff"`,
+  zero `0x045` TX, no interception) and the Legacy **direct path is the legal
+  normal mode** for non-8.3.6 vehicles (force activation works, no jerk).
+  Gate open + switch on → coordinator remains the sole activation authority.
+  Closing/reopening the gate is a **mode switch, not a fault**: reopening
+  re-arms automatically via `configure()` (`WaitDriverIntent`), never
+  `FailedLocked`, no need to re-toggle the 8.3.6 switch. `permit` is
+  deliberately **not** gate-dependent (gate toggling must never trigger
+  `permitLost`).
+- **FSD 防护 page reordered** (zero id churn): FSD 防护总开关 (master, Ban
+  Shield only — does not govern the coordinator) → AP 注入门控/延迟/自动恢复
+  → 8.3.6防甩机制 + its diagnostics grid. Overview copy updated to the same
+  hierarchy.
+
+### Added
+
+- `ApReRequestDiag.apGateOpen` + `"apGateOpen"` JSON key +
+  `unavailableReason="apGateOff"` (profile errors keep priority); the 8.3.6
+  switch stays toggleable with the gate closed (remembers the choice, status
+  row shows 「不可用 · AP 门控未开启」, auto re-arms when the gate reopens).
+- Triple independent defense lines inside the coordinator (`active()`,
+  `activationAllowed()`/`inhibitDevice3ee()`, `ownsStalk()` /
+  `nextStalkFrame()` guard / `startRound()` edge) each check `apGateOpen` —
+  any single missed edit still fails closed.
+- Six native tests (gate-closed silence, reopen re-arm without lock,
+  mid-round clean reset, diag exposure, permit immunity, wiring-seam
+  denial) and contract assertions pinning the three-arg `configure()` call
+  site, the defense-page toggle order, and the sole-authority branch order
+  in `dashLegacyFsdActivationAllowed()`.
+- WebUI simulator: AP gate trio state (`apGateEnabled`/`apDelayMs`/
+  `apAutoRestore`/`apInjectionState`), POST `/config` parsing for
+  `apg`/`ap_delay_ms`/`ap_auto_restore`, and gate-aware `apReRequest`
+  diagnostics.
+
+## [4.5.0-beta02] - 2026-09-11
+
+### Changed
+
+- **UI rename**: the coordinator switch is now labeled **"8.3.6防甩机制"**
+  (was "AP 取消重请求"). Same backend key (`ap_re_request`), same wiring —
+  rename only; contract tests guard against the old label returning.
+
+### Removed
+
+- **#108 steer-jerk defense family deleted**: Instant Engage, Minimal Inject
+  and Soft Engage (`dash_legacy_steer_defense.h`, `dash_minimal_inject.h`,
+  `dashSoftEngageRelease`, UI cards, NVS keys, JSON objects, POST params,
+  `native_legacy_steer_defense` test env). Vehicle evidence showed they never
+  eliminated the 2026.8.3.6 activation jerk; the AP cancel + re-request
+  coordinator is the replacement and the sole activation authority.
+- **Abort Guard is retained on purpose**: it is not a jerk defense — it is the
+  safety fence that latches after `0x399` AP state 8/9 (driver abort) and
+  blocks every Legacy injection path (including the coordinator's) until a
+  clean disengage (<2). Deleting it would not remove any jerk logic.
+
+### Moved
+
+- **AP gate controls consolidated onto the FSD 防护 page** (top of the status
+  card): AP 注入门控 toggle, 延迟注入 (0/1000/2000/3000 ms) and AP 自动恢复
+  now live next to the 8.3.6防甩机制 switch and save through one
+  `saveApGateControls()` call. The hardware page keeps only the AP 状态恢复
+  card; the status page points to the new location. Old `ap-gate-tgl` id and
+  `saveApGate()`/`updateApGateControl()` helpers are gone (anti-regression
+  assertions added).
+
+### Fixed
+
+- Qualification window frozen at **1200 ms** (was a 500 ms candidate; 1 Hz
+  carrier evidence on the capture showed single-frame confirmation is not
+  guaranteed inside 500 ms — user approved 1200 on 2026-09-11).
+- WebUI simulator `/defense_config` aligned with the firmware response:
+  `minimal_inject` removed, `ap_re_request` + `legacyInjectionSafety.apReRequest`
+  added, so the renamed switch is testable offline.
+
+## [4.5.0-beta01] - 2026-09-10
+
+### Added
+
+- **AP cancel + re-request coordinator** (`include/dash_ap_rerequest_activation.h`)
+  for the Model X / 2026.8.3.6 activation steering-jerk hypothesis. When the
+  driver activates AP with FSD intent, the device first replays a synthetic
+  `0x045` stalk **cancel** (FWD) gesture, waits for DAS evidence that AP
+  actually ended, then replays a **request** (RWD) gesture; within the
+  qualification window after the request press (profile-driven; calibrated
+  1200 ms — see the calibration entry below), the first native `0x3EE mux0`
+  frame with the
+  FSD intent bit while `DAS_autopilotState ∈ {2 AVAILABLE, 3 ACTIVE_NOMINAL}`
+  (membership, no 2→3 edge) is modified to carry `bit46` **in that same
+  handler event**. User-frozen design contract of 2026-09-10; the
+  qualification-set membership, window semantics (half-open
+  `[t_request, t_request+window)`), and FWD/RWD mapping are frozen; the
+  window VALUE is profile-driven (frozen candidate was 500 ms).
+- Three hard barriers around the handshake: (A) **all** device `0x3EE` writes
+  (activation bit46, speed offset, mux1) are blocked while a round runs;
+  (B) a cancel *request* is never treated as cancel *completion* — only fresh
+  DAS evidence advances the round; (C) qualification requires the frozen AP
+  set + fresh DAS + driver intent bit on a native mux0 frame.
+- Safety rails: physical stalk input, counter conflicts, TX rejection, permit
+  loss (CAN off / OTA / abort-guard latch), fault states and window expiry all
+  lock the round `FailedLocked` until the mode is reconfigured; a completed
+  round re-arms only after a fresh full AP exit.
+- While the coordinator is armed it **replaces** (never chains after) the old
+  settle/defense/APActive(3..6) activation chain in
+  `dashLegacyFsdActivationAllowed()`, so the frozen AP=2 qualification path is
+  reachable. Wheel-DND `0x045` ownership is arbitrated
+  (`StalkOwnedByReRequest`) so both features never share the frame/counter.
+- Exposed via the `ap_re_request` toggle (NVS `apr_on`, `/defense_config`,
+  dashboard "AP 取消重请求" switch) and full diagnostics under
+  `legacyInjectionSafety.apReRequest` (phase/step/reason/round/epoch/gesture
+  counters/echo+conflict counters). **Default off.** The compiled profile
+  now carries the real-vehicle calibration below; before calibration it was
+  deliberately empty so the switch could be requested but never arm
+  (fail-closed), and an invalid profile still fails closed the same way.
+- **Calibrated the profile from real-vehicle 0x045 captures (2026-09-10,
+  Model X, 2026.8.3.6; four recorder CSVs — two static gesture passes, two
+  driving AP sessions; 3202/3202 CRC-valid frames, zero device 0x045 TX):**
+  the stalk field is **byte0 bits 0-1** (idle 0x40 → 0x41 FWD / 0x42 RWD) —
+  the wheel-DND byte3 guess is falsified (byte3 constant 0x30 throughout).
+  The frozen value mapping is confirmed on-vehicle: all 14 FWD presses
+  canceled (6→1, 161-526 ms) and all 17 RWD presses engaged (AP 2→3,
+  155-236 ms). Timings filled from observation: `cancelEvidenceTimeoutMs`
+  1500 (~3× observed max), `requestSeqTimeoutMs` 1000, `stalkReleaseGapMs`
+  100 (presses held 1-3 frames). AP masks: cancel evidence {1,2}, fault
+  {8,9} (observed 6→8→9 cascade), post-qualification continuation
+  {2,3,4,5,6} (observed 2→3→6). **Documented deviation:** the native
+  `0x3EE mux0` carrier is 1 Hz (gap median 1000 ms; 100% of observed gaps
+  exceed the frozen 500 ms candidate, only 2.6% exceed 1200 ms), so
+  `qualificationWindowMs` is compiled as **1200 ms instead of the frozen
+  candidate 500 ms** — window semantics (half-open from `t_request`) stay
+  frozen; the 500 ms candidate value is one profile edit away if rejected.
+- Added the calibration tooling for that profile:
+  `scripts/analyze_rerequest_045_calibration.py` derives the stalk
+  byte/mask/FWD/RWD values, release-gap timing, and AP-state sets from a
+  recorder CSV — assumption-free idle-baseline diffing plus 0x399
+  event correlation (window truncated at the next press so a rise after
+  the driver's next gesture is never misattributed; AP=2→3 request edges
+  classify as rearward) that separately tests the frozen
+  FWD=cancel/RWD=request mapping and the legacy wheel-DND byte-3
+  enumeration guess — with the capture procedure in
+  `docs/AP-REREQUEST-0X045-CALIBRATION-PROCEDURE.md` (existing recorder
+  unchanged; default NAG filter already covers 0x045/0x399/0x3EE).
+- 35 native tests (`native_ap_rerequest`): state-machine edges, 499/500 ms
+  window boundary, uint32 wrap, echo/counter-conflict, plus wiring-level tests
+  driving the real `LegacyHandler` + `MockDriver` through the dashboard seams
+  (barrier A, same-event injection, replace-not-chain at AP=2, deny when
+  inactive/out-of-set).
+
+### 未验证（Unverified）
+
+- The cancel/re-request hypothesis is **not validated on a real vehicle**. No
+  flash, no bench, no road test has been run; "stable, no steering jerk" on
+  2026.8.3.6 remains an open hypothesis. The 2026-09-10 captures validate the
+  stalk ENCODING and the cancel/engage CAUSALITY of the physical stalk only —
+  they say nothing about whether the coordinator's synthetic replay prevents
+  the steering jerk. The stalk field position was never exported by any known
+  DBC; it is now calibrated from those captures (byte0 bits 0-1) instead of
+  guessed.
+
 ## [4.3.0-beta.27] - 2026-08-04
 
 ### Added

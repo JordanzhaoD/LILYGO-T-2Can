@@ -362,6 +362,9 @@ public:
     void putUInt(const char *key, uint32_t value);
     void putBool(const char *key, bool value);
     void putString(const char *key, const String &value);
+    size_t putBytes(const char *key, const void *value, size_t len);
+    size_t getBytesLength(const char *key);
+    size_t getBytes(const char *key, void *buf, size_t maxLen);
     void remove(const char *key);
 
 private:

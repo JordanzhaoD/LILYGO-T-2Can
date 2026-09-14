@@ -139,12 +139,24 @@ class WifiSettingsRegressionTests(unittest.TestCase):
         self.assertIn('esp_log_level_set("httpd_txrx", ESP_LOG_ERROR);', self.runtime)
 
     def test_ap_injection_gate_setting_is_persisted_and_exposed(self) -> None:
-        expected_ui_ids = ["ap-gate-tgl"]
-        expected_ui_fields = ["saveApGate()", "updateApGateControl(d)"]
+        # 4.5.0-beta02: the AP gate controls moved to the top of the FSD
+        # 防护 page (ap-core-gate-tgl / ap-auto-restore-tgl, all saved through
+        # saveApGateControls()). The old hardware-page ap-gate-tgl and the
+        # retired saveApGate()/updateApGateControl() helpers must not come
+        # back. 4.5.0-beta06: the AP-settle delay select was removed with the
+        # settle feature (the 8.3.6 coordinator owns injection timing) — its
+        # NVS key/POST param/clamp helper are retired too (precise code forms
+        # only; the dashboard keeps tombstone comments naming the symbols).
+        expected_ui_ids = ["ap-core-gate-tgl", "ap-auto-restore-tgl"]
+        expected_ui_fields = ["saveApGateControls()"]
+        retired_ui_fields = ["ap-gate-tgl", "saveApGate()", "updateApGateControl(", "ap-delay-select"]
 
         for element_id in expected_ui_ids:
             with self.subTest(ui_id=element_id):
                 self.assertHasUiId(element_id)
+        for retired in retired_ui_fields:
+            with self.subTest(retired_ui=retired):
+                self.assertNotIn(retired, self.ui)
         expected_backend_fields = [
             "INJECTION_AFTER_AP",
             '"ap_gate"',
@@ -152,13 +164,12 @@ class WifiSettingsRegressionTests(unittest.TestCase):
             '\\"apGate\\"',
             '\\"ia\\"',
             'dashInjectionActive()',
-            # Task 5: configurable AP settle delay (0-3000 ms) + auto-restore alias.
-            # Regression guard so the prefs key and /config param stay wired even
-            # if a later refactor touches the legacy FSD activation gate.
-            '"ap_dly"',
-            'server.hasArg("ap_delay_ms")',
             'server.hasArg("ap_auto_restore")',
-            'dashClampApDelayMs',
+        ]
+        retired_backend_fields = [
+            'prefs.putUInt("ap_dly"',
+            'prefs.getUInt("ap_dly"',
+            'server.hasArg("ap_delay_ms")',
         ]
 
         for field in expected_ui_fields:
@@ -168,6 +179,9 @@ class WifiSettingsRegressionTests(unittest.TestCase):
         for field in expected_backend_fields:
             with self.subTest(backend_field=field):
                 self.assertIn(field, self.dash)
+        for retired in retired_backend_fields:
+            with self.subTest(retired_backend=retired):
+                self.assertNotIn(retired, self.dash)
 
         self.assertIn("INJECTION_AFTER_AP", self.sync)
 

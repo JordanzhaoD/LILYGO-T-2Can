@@ -40,6 +40,8 @@ class SimState:
         self.drive_profile = 0
         self.can = True
         self.injection = True
+        # Boot auto-enable preference mirrored from /config bootCan writes.
+        self.boot_can = True
         self.ad = False
         self.rx = 2480
         self.tx = 114
@@ -49,6 +51,9 @@ class SimState:
         self.vehicle_ota = False
         self.ota_confirm_count = 0
         self.ota_clear_count = 0
+        # 4.5.0-beta12 (LittleGong port 1): OTA guard override mirror.
+        self.ota_guard_override = False
+        self.ota_stale_clears = 0
         self.auto_shutdown = False
         self.wifi_auto_off = False
         self.speed_strategy = "auto"
@@ -70,7 +75,10 @@ class SimState:
         self.dnd_speed = True
         self.ap_eap_compatible = False
         self.abort_guard = False
-        self.minimal_inject = False
+        self.ap_re_request = False
+        self.ap_gate = False
+        # ap_delay_ms removed in 4.5.0-beta06 (AP-settle delay deleted).
+        self.ap_auto_restore = True
         self.legacy_fsd_policy = "legacy_stable"
         self.legacy_fsd_mux1 = False
         self.legacy_fsd_profile = False
@@ -194,6 +202,11 @@ class SimState:
             "strobeCont": False,
             "dndVolume": self.dnd_volume,
             "dndSpeed": self.dnd_speed,
+            # AP gate pair (renderApInjectionState reads these from /status).
+            # apDelayMs removed in 4.5.0-beta06 (AP-settle delay deleted).
+            "apGateEnabled": self.ap_gate,
+            "apAutoRestore": self.ap_auto_restore,
+            "apInjectionState": "armed" if self.ap_gate else "blocked",
             "wheelDndDiag": {
                 "enabled": self.dnd_volume,
                 "armed": self.dnd_volume and self.defense_enabled and self.hw == 0,
@@ -219,6 +232,14 @@ class SimState:
             "AD": self.ad,
             "eprn": self.enable_print,
             "ia": self.injection,
+            # Poll write-back fields the real firmware emits (handleStatus):
+            # updateDefensePage forces def-master-tgl from defenseEnabled and
+            # the boot toggle from bootCan — omitting them here makes every
+            # UI smoke test on the simulator look like the "switches revert
+            # to OFF" bug (checkbox forced false each poll).
+            "defenseEnabled": self.defense_enabled,
+            "bionicSteering": self.bionic_steering,
+            "bootCan": self.boot_can,
             "hw3OffsetSlew": self.hw3_offset_slew,
             "hw3SlewRate": self.hw3_slew_rate,
             "hw3OffsetTarget": self.hw3_offset_target,
@@ -548,7 +569,8 @@ class Handler(BaseHTTPRequestHandler):
                     "dnd_speed": STATE.dnd_speed,
                     "ap_eap_compatible": STATE.ap_eap_compatible,
                     "abort_guard": STATE.abort_guard,
-                    "minimal_inject": STATE.minimal_inject,
+                    "ota_guard_override": STATE.ota_guard_override,
+                    "ap_re_request": STATE.ap_re_request,
                     "legacyInjectionSafety": {
                         "abortGuard": {
                             "enabled": STATE.abort_guard,
@@ -557,11 +579,120 @@ class Handler(BaseHTTPRequestHandler):
                             "lastAbortState": 0,
                             "blocks": 0,
                         },
-                        "minimalInject": {
-                            "enabled": STATE.minimal_inject,
-                            "apEngaged": False,
-                            "successfulMux0": 0,
-                            "quota": 5,
+                        # minimalInject / steerDefense removed with the #108
+                        # steer-jerk defense (4.5.0-beta02); the 8.3.6
+                        # cancel/re-request coordinator replaced the chain.
+                        "apReRequest": {
+                            "requested": STATE.ap_re_request,
+                            "effective": STATE.ap_re_request and STATE.ap_gate,
+                            "profileReady": STATE.ap_re_request,
+                            "apGateOpen": STATE.ap_gate,
+                            "unavailableReason": (
+                                None if STATE.ap_gate else "apGateOff"
+                            ),
+                            "permit": False,
+                            "phase": (
+                                "disabled"
+                                if not STATE.ap_re_request or not STATE.ap_gate
+                                else "wait_driver_intent"
+                            ),
+                            "step": "idle",
+                            "reason": (
+                                "apGateOff"
+                                if STATE.ap_re_request and not STATE.ap_gate
+                                else "disabled"
+                                if not STATE.ap_re_request
+                                else "waitIntent"
+                            ),
+                            "round": 0,
+                            "epoch": 1,
+                            "apState": 0,
+                            "intentPresent": False,
+                            "windowMs": 2400,
+                            "cancelAccepted": 0,
+                            "cancelAttempts": 0,
+                            "requestAccepted": 0,
+                            "requestAttempts": 0,
+                            "ownEchoRx": 0,
+                            "counterConflicts": 0,
+                            # 4.5.0-beta14 retry diagnostics (mirrors the
+                            # firmware chain after counterConflicts).
+                            "counterSkips": 0,
+                            "cancelRetries": 0,
+                            "requestRetries": 0,
+                            "physicalInputRx": 0,
+                            "lastEndedReason": "none",
+                            "autoRearms": 0,
+                            # 4.5.0-beta09 P1/P2 (observational): vehicle
+                            # refusal watch + 0x399 flag tally, mirroring the
+                            # firmware /status shape.
+                            "vehicleRefusal": False,
+                            "rwdPressPending": False,
+                            "vehicleRefusals": 0,
+                            "rwdPressMs": 0,
+                            "lastApFlag": 0,
+                            "lastApFlagMs": 0,
+                            "apFlagCounts": [0] * 16,
+                            # 4.5.0-beta10 P1 (pure observation): permit
+                            # decomposition, tick liveness, NVS blackbox and
+                            # the OTA-watch counters, mirroring the firmware
+                            # /status shape.
+                            "permitInputs": {
+                                "canActive": True,
+                                "legacyHandler": True,
+                                "driver": True,
+                                "otaGuardClear": not STATE.vehicle_ota,
+                                "abortGuardOk": True,
+                            },
+                            "permitBits": 31 if not STATE.vehicle_ota else 23,
+                            "tickHeartbeat": {
+                                "count": 1,
+                                "lastMs": 1000,
+                                "ageMs": 0,
+                            },
+                            "blackbox": [
+                                {
+                                    "seq": 1,
+                                    "kind": "boot",
+                                    "ms": 0,
+                                    "tick": 0,
+                                    "phase": 0,
+                                    "permitBits": 31,
+                                    "apState": 0,
+                                    "reason": "",
+                                }
+                            ],
+                            "otaWatch": {
+                                "seen318": 0,
+                                "last318Ms": 0,
+                                "confirm": STATE.ota_confirm_count,
+                                "clear": STATE.ota_clear_count,
+                                "active": STATE.vehicle_ota,
+                                # 4.5.0-beta12 (LittleGong port 1): guard
+                                # degradation bookkeeping.
+                                "staleClears": STATE.ota_stale_clears,
+                                "override": STATE.ota_guard_override,
+                                "blockedMs": 0,
+                            },
+                            # 4.5.0-beta12 (LittleGong port 2): 0x3EE mux0
+                            # carrier cadence (static mirror).
+                            "carrier3ee": {
+                                "lastGapMs": 1000,
+                                "maxGapMs": 2000,
+                                "longGaps": 0,
+                                "total": 42,
+                                "lastMs": 1000,
+                                "ageMs": 0,
+                            },
+                            # 4.5.0-beta12 (LittleGong port 3): 0x3EE mux0
+                            # injection TX accounting (static mirror).
+                            "txAccounting": {
+                                "attempts": 0,
+                                "ok": 0,
+                                "fails": 0,
+                                "consecutiveFails": 0,
+                                "lastOkAgeMs": 0,
+                            },
                         },
                     },
                 }
@@ -574,6 +705,10 @@ class Handler(BaseHTTPRequestHandler):
                     "vehicleOta": STATE.vehicle_ota,
                     "otaConfirmCount": STATE.ota_confirm_count,
                     "otaClearCount": STATE.ota_clear_count,
+                    # 4.5.0-beta12: synced with otaWatch.
+                    "staleClears": STATE.ota_stale_clears,
+                    "override": STATE.ota_guard_override,
+                    "blockedMs": 0,
                 }
             )
         elif path == "/gear_assist_status":
@@ -855,10 +990,18 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.sp_auto = form["spa"] == "1"
             if "can" in form:
                 STATE.injection = form["can"] == "1"
+            if "bootCan" in form:
+                STATE.boot_can = form["bootCan"] == "1"
             if "hw3OffsetSlew" in form:
                 STATE.hw3_offset_slew = form["hw3OffsetSlew"] == "1"
             if "hw3SlewRate" in form:
                 STATE.hw3_slew_rate = max(1, min(25, int(form["hw3SlewRate"] or 5)))
+            # AP gate controls (saveApGateControls posts these to /config).
+            # ap_delay_ms silently ignored: removed in 4.5.0-beta06.
+            if "apg" in form:
+                STATE.ap_gate = self.form_bool(form["apg"])
+            if "ap_auto_restore" in form:
+                STATE.ap_auto_restore = self.form_bool(form["ap_auto_restore"])
             self.send_obj({"ok": True})
         elif path == "/legacy_fsd_config":
             if "policy" in form:
@@ -994,8 +1137,12 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.ap_eap_compatible = self.form_bool(form["ap_eap_compatible"])
             if "abort_guard" in form:
                 STATE.abort_guard = self.form_bool(form["abort_guard"])
-            if "minimal_inject" in form:
-                STATE.minimal_inject = self.form_bool(form["minimal_inject"])
+            if "ota_guard_override" in form:
+                STATE.ota_guard_override = self.form_bool(form["ota_guard_override"])
+                if STATE.ota_guard_override:
+                    STATE.vehicle_ota = False
+            if "ap_re_request" in form:
+                STATE.ap_re_request = self.form_bool(form["ap_re_request"])
             self.send_obj({"ok": True})
         elif path == "/fog_light":
             if "fogStrategy" in form:

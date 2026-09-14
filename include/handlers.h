@@ -10,8 +10,6 @@
 #include "dash_hw3_speed.h"
 #include "dash_legacy_speed.h"
 #include "dash_abort_guard.h"
-#include "dash_minimal_inject.h"
-#include "dash_legacy_steer_defense.h"
 #include "dash_bionic_steer.h"
 #include "dash_reactive_nag.h"
 #include "dash_fsd_diag.h"
@@ -106,8 +104,6 @@ struct CarManagerBase
     LegacySpeedRuntimeDiag legacySpeedDiag{};
     DashLegacySpeedBusLock legacySpeedBus{};
     DashAbortGuard abortGuard{};
-    DashMinimalInject minimalInject{};
-    DashLegacySteerDefense legacySteerDefense{}; // #108 steer-jerk defense (Legacy mux0 authority)
     Shared<bool> tlsscBypass{false};
     Shared<bool> emergencyVehicleDetection{true};
     Shared<bool> isaChimeSuppress{false};
@@ -182,6 +178,14 @@ struct CarManagerBase
     bool (*checkEvd)() = nullptr;
     FsdGateBlockReason (*gateBlockReason)() = nullptr;
     bool (*legacyFsdActivationAllowed)(uint32_t nowMs) = nullptr;
+    // 4.5.0 re-request mode hooks (dashboard installs both; nullptr = zero
+    // behavior change). observeReRequest3ee feeds the coordinator on EVERY
+    // native 0x3EE mux0 frame right after fsdTriggered is computed and BEFORE
+    // any gate decision, so a frame that qualifies can carry bit46 in the same
+    // event. reRequestInhibit3ee is barrier A: while a handshake round runs,
+    // every device 0x3EE write stops (bit46, shared speed-offset frames, mux1).
+    void (*reRequestObserve3ee)(bool intentPresent, uint8_t bus, uint32_t nowMs) = nullptr;
+    bool (*reRequestInhibit3ee)() = nullptr;
     // When set and returns true, an installed plugin owns the FSD activation
     // frames (1006/1021/2047) and the built-in handler must suppress its own
     // injection to avoid duplicate frames. Defaults to nullptr so the built-in
@@ -763,10 +767,6 @@ struct LegacyHandler : public CarManagerBase
             uint8_t apState = readDASAutopilotStatus(frame);
             const uint32_t nowMs = dashDiagNowMs();
             abortGuard.onApState(apState, nowMs);
-            minimalInject.onApState(apState);
-            // Steer-jerk defense (#108): observe engagement edges once per
-            // primary 921 frame. Bus2 never feeds this gate.
-            legacySteerDefense.observe(apState, nowMs);
             APActive = legacyNagApContextActive(apState);
             legacyNagState.apState = apState;
             legacyNagState.lastContextMs = nowMs;
@@ -812,6 +812,12 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.forceRuntime = forced;
                 legacyFsdDiag.triggerSource = forced ? FsdTriggerSource::Force : (uiSelected ? FsdTriggerSource::UiBit : FsdTriggerSource::FalseSource);
 
+                // 4.5.0 re-request mode: observe every native mux0 frame BEFORE
+                // any gate below can return, so qualification detection sees
+                // frames the gates would otherwise swallow.
+                if (reRequestObserve3ee)
+                    reRequestObserve3ee((bool)fsdTriggered, frame.bus, nowMs);
+
                 const bool speedRequested = legacySpeedOffsetRequested();
                 const bool speedBusAllowed = speedRequested && legacySpeedBus.accept(frame, nowMs);
                 if (speedRequested && legacySpeedBus.ambiguous)
@@ -840,6 +846,18 @@ struct LegacyHandler : public CarManagerBase
                         legacySpeedDiag.blockedReason = "abortGuard";
                     return;
                 }
+                // Barrier A: while a re-request handshake round runs, ALL device
+                // 0x3EE mux0 writes stop — activation bit46 AND the shared
+                // speed-offset frame. The vehicle's own frame passes untouched.
+                if (reRequestInhibit3ee && reRequestInhibit3ee())
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ReRequestHandshake;
+                    if (speedRequested)
+                        legacySpeedDiag.blockedReason = "apReRequestHandshake";
+                    return;
+                }
                 bool activationAllowed = false;
                 if ((bool)fsdTriggered)
                 {
@@ -861,10 +879,6 @@ struct LegacyHandler : public CarManagerBase
                                                                  : currentGateBlockReason());
                         return;
                     }
-                    // Minimal Inject burst verdict now lives inside the steer-jerk
-                    // defense decide() (consulted via the activation callback above).
-                    // The base DashMinimalInject is no longer consulted on the Legacy
-                    // mux0 path; burst accounting happens via recordMinimalInjection().
                 }
 
                 bool speedAllowed = speedRequested && speedBusAllowed && injectionAllowed();
@@ -925,8 +939,6 @@ struct LegacyHandler : public CarManagerBase
                 {
                     legacyFsdDiag.recordMuxTx(legacyFsdDiag.mux0, ok, nowMs);
                     legacyFsdDiag.markTxResult(ok, nowMs);
-                    if (ok)
-                        legacySteerDefense.recordMinimalInjection("legacy_fsd_mux0");
                 }
                 else if (ok)
                     legacySpeedDiag.offsetOnlyTxOk++;
@@ -961,6 +973,14 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
                     legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::AbortGuard;
+                    return;
+                }
+                // Barrier A covers mux1 device writes too (see the mux0 branch).
+                if (reRequestInhibit3ee && reRequestInhibit3ee())
+                {
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ReRequestHandshake;
                     return;
                 }
                 if (!injectionAllowed())
