@@ -178,14 +178,13 @@ struct CarManagerBase
     bool (*checkEvd)() = nullptr;
     FsdGateBlockReason (*gateBlockReason)() = nullptr;
     bool (*legacyFsdActivationAllowed)(uint32_t nowMs) = nullptr;
-    // 4.5.0 re-request mode hooks (dashboard installs both; nullptr = zero
-    // behavior change). observeReRequest3ee feeds the coordinator on EVERY
-    // native 0x3EE mux0 frame right after fsdTriggered is computed and BEFORE
-    // any gate decision, so a frame that qualifies can carry bit46 in the same
-    // event. reRequestInhibit3ee is barrier A: while a handshake round runs,
-    // every device 0x3EE write stops (bit46, shared speed-offset frames, mux1).
-    void (*reRequestObserve3ee)(bool intentPresent, uint8_t bus, uint32_t nowMs) = nullptr;
-    bool (*reRequestInhibit3ee)() = nullptr;
+    // v1.19 JITTER hooks (see dash_jitter_procedure.h). The observe wrapper
+    // is fed from the Legacy mux0 branch with the full native frame BEFORE
+    // any gate decision — the procedure caches its own one-shot template
+    // (byte5 |= 0x43 clone) from it; the inhibit wrapper pauses every device
+    // 0x3EE write while the procedure runs.
+    void (*jitterObserve3ee)(const uint8_t data[8], uint8_t bus, uint32_t nowMs) = nullptr;
+    bool (*jitterInhibit3ee)() = nullptr;
     // When set and returns true, an installed plugin owns the FSD activation
     // frames (1006/1021/2047) and the built-in handler must suppress its own
     // injection to avoid duplicate frames. Defaults to nullptr so the built-in
@@ -812,11 +811,11 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.forceRuntime = forced;
                 legacyFsdDiag.triggerSource = forced ? FsdTriggerSource::Force : (uiSelected ? FsdTriggerSource::UiBit : FsdTriggerSource::FalseSource);
 
-                // 4.5.0 re-request mode: observe every native mux0 frame BEFORE
-                // any gate below can return, so qualification detection sees
-                // frames the gates would otherwise swallow.
-                if (reRequestObserve3ee)
-                    reRequestObserve3ee((bool)fsdTriggered, frame.bus, nowMs);
+                // v1.19 JITTER: cache every native mux0 frame BEFORE any gate
+                // below can return — the one-shot template must stay fresh
+                // even when the gates swallow the frame.
+                if (jitterObserve3ee)
+                    jitterObserve3ee(frame.data, frame.bus, nowMs);
 
                 const bool speedRequested = legacySpeedOffsetRequested();
                 const bool speedBusAllowed = speedRequested && legacySpeedBus.accept(frame, nowMs);
@@ -846,16 +845,16 @@ struct LegacyHandler : public CarManagerBase
                         legacySpeedDiag.blockedReason = "abortGuard";
                     return;
                 }
-                // Barrier A: while a re-request handshake round runs, ALL device
-                // 0x3EE mux0 writes stop — activation bit46 AND the shared
-                // speed-offset frame. The vehicle's own frame passes untouched.
-                if (reRequestInhibit3ee && reRequestInhibit3ee())
+                // v1.19 JITTER pause (replaces the v1.18 barrier A): while the
+                // procedure runs, ALL device 0x3EE mux0 writes stop — the
+                // one-shot owns bit46. The vehicle's own frame passes untouched.
+                if (jitterInhibit3ee && jitterInhibit3ee())
                 {
                     legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
-                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ReRequestHandshake;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::LegacyFsdSettle;
                     if (speedRequested)
-                        legacySpeedDiag.blockedReason = "apReRequestHandshake";
+                        legacySpeedDiag.blockedReason = "jitterProcedure";
                     return;
                 }
                 bool activationAllowed = false;
@@ -975,12 +974,12 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::AbortGuard;
                     return;
                 }
-                // Barrier A covers mux1 device writes too (see the mux0 branch).
-                if (reRequestInhibit3ee && reRequestInhibit3ee())
+                // The JITTER pause covers mux1 device writes too (see the mux0 branch).
+                if (jitterInhibit3ee && jitterInhibit3ee())
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
-                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::ReRequestHandshake;
+                    legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::LegacyFsdSettle;
                     return;
                 }
                 if (!injectionAllowed())

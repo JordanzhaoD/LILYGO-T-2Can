@@ -40,7 +40,7 @@ enum class DashLegacyWheel045Block : uint8_t
     AutoDisarmed,
     EpisodeLimit,
     AbortGuard,
-    StalkOwnedByReRequest,
+    StalkOwnedByJitter,
 };
 
 static inline const char *dashLegacyWheel045StateName(DashLegacyWheel045State state)
@@ -83,7 +83,7 @@ static inline const char *dashLegacyWheel045BlockName(DashLegacyWheel045Block re
     case DashLegacyWheel045Block::AutoDisarmed: return "auto_disarmed";
     case DashLegacyWheel045Block::EpisodeLimit: return "episode_limit";
     case DashLegacyWheel045Block::AbortGuard: return "abort_guard";
-    case DashLegacyWheel045Block::StalkOwnedByReRequest: return "stalk_owned_by_re_request";
+    case DashLegacyWheel045Block::StalkOwnedByJitter: return "stalk_owned_by_jitter";
     }
     return "unknown";
 }

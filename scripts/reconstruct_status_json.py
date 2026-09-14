@@ -75,6 +75,15 @@ def extract_function(src, name):
     k = i
     while k < len(src):
         c = src[k]
+        # Raw string literals (R"JSON(...)JSON") — the naive quote toggling
+        # below loses phase on their embedded quotes (a beta14 accident hid
+        # inside a quote-parity coincidence; fixed with the beta15 JITTER
+        # surgery). Skip the whole literal before any state machine sees it.
+        if not in_str and not in_chr and not in_line and not in_blk:
+            m = RAW_ANY_RE.match(src, k if c == "R" else k - 1)
+            if m and m.start() == (k if c == "R" else k - 1) and src[m.start():m.start()+2] == 'R"':
+                k = m.end()
+                continue
         if esc:
             esc = False
         elif in_str:

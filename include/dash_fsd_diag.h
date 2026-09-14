@@ -50,7 +50,9 @@ enum class FsdGateBlockReason : uint8_t
     AbortGuard = 7,
     // 8 was MinimalInject — removed with the #108 steer-jerk defense in
     // 4.5.0-beta02; value kept unused so persisted diag numbering stays stable.
-    ReRequestHandshake = 9,
+    // 9 was ReRequestHandshake, removed with the coordinator→JITTER swap in
+    // 4.5.0-beta15 (the JITTER pause reports LegacyFsdSettle, same as the
+    // mux0 activation gate).
 };
 
 enum class FsdHealthState : uint8_t
@@ -144,7 +146,6 @@ static inline const char *fsdGateBlockReasonName(FsdGateBlockReason reason)
     case FsdGateBlockReason::CompileGate: return "compile_gate";
     case FsdGateBlockReason::LegacyFsdSettle: return "legacy_fsd_settle";
     case FsdGateBlockReason::AbortGuard: return "abort_guard";
-    case FsdGateBlockReason::ReRequestHandshake: return "ap_re_request_handshake";
     }
     return "none";
 }

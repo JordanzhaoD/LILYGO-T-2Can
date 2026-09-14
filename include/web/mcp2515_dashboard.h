@@ -49,8 +49,7 @@
 #include "dash_fog_light.h"
 #include "dash_wheel_dnd.h"
 #include "dash_legacy_wheel_045_dnd.h"
-#include "dash_ap_rerequest_activation.h"
-#include "dash_ap_blackbox.h"
+#include "dash_jitter_procedure.h"
 #include "dash_tx_evidence.h"
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
@@ -192,10 +191,12 @@ static DashFogLight dashFogCtrl;           // Phase 4 fog light controller insta
 static bool dashFogOffRequested = false;   // one-shot fail-off/stop command owned by CAN task
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static DashLegacyWheel045Dnd dashLegacyWheel045DndCtrl;
-// 4.5.0-beta01 AP cancel + re-request coordinator (design/4.5.0-beta01).
-// Default off AND compiled profile empty: configure() refuses to arm until a
-// vehicle-validated ApReRequestProfile exists (fail-closed).
-static DashApReRequestActivation dashApReRequestCtrl;
+// v1.19 JITTER procedure (4.5.0-beta15): the LittleGong-aligned anti-jerk
+// machine, ported verbatim from the single-CAN v1.19.2 firmware where it was
+// field-validated (hundreds of FSD opens, zero steering jerks; mechanism
+// frozen). Default off; the AP injection gate stays the arm-level
+// precondition (configure(enabled, apGateOpen) — fail-closed).
+static DashJitterProcedure dashJitterCtrl;
 // beta10 P1 otaWatch (pure observation): 0x318 sighting counters feeding the
 // /status otaWatch object. vehicleOtaActive (set by dashOtaGuardProcessFrame
 // below) is a coordinator permit input AND a legacy injection gate — if it
@@ -209,7 +210,7 @@ static uint32_t dashOta318LastMs = 0;
 // — same observation-only contract as the counters above; fed from the frame
 // dispatcher, emitted as the carrier3ee object in /status.
 static Dash3eeCadence dash3eeCadence;
-static bool dashApReRequestEnabled = false;
+static bool dashJitterEnabled = false;
 static bool dashDefenseEnabled = false;
 static bool dashBionicSteering = false;
 static bool dashSpeedNoDisturb = false;
@@ -1083,25 +1084,38 @@ static void mcpDashOnFrame(const CanFrame &f)
              f.bus == CAN_BUS_PARTY)
         dashLegacyWheel045DndCtrl.observeGatewayMirror(f.data, f.dlc,
                                                        static_cast<uint32_t>(now));
-    // 4.5.0 re-request coordinator sees the raw 0x045 stream from every bus;
-    // the module itself filters to the profile's bound source bus and handles
-    // CRC / own-echo / physical-input detection.
-    if (f.id == 0x045)
-        dashApReRequestCtrl.observeNative045(f.data, f.dlc, f.bus,
-                                             static_cast<uint32_t>(now));
-    if (f.id == 0x399 && f.dlc >= 6 && dashLegacyHandlerActive())
+    // v1.19 JITTER procedure: raw 0x045 stream feeds the carrier-lock cache
+    // (the pump only transmits riding behind a <47 ms old native frame).
+    // VEH-only: PARTY mirrors of this bus must not refresh the cache, and
+    // short-DLC frames must not be cloned into pump frames (wiring guards;
+    // the single-CAN harness had neither dimension).
+    if (f.id == 0x045 && f.dlc >= 8 && f.bus == CAN_BUS_VEH)
+        dashJitterCtrl.observeNative045(f.data, static_cast<uint32_t>(now));
+    // 0x399 (921) DAS_status low nibble is the JITTER event source. VEH-only:
+    // a PARTY mirror double-feeding the edge machine would double-count events.
+    if (f.id == 0x399 && f.dlc >= 6 && f.bus == CAN_BUS_VEH && dashLegacyHandlerActive())
     {
         const uint8_t apState = static_cast<uint8_t>(f.data[0] & 0x0F);
-        // beta09 P2: the HIGH nibble of byte0 is vehicle-side flags
-        // (semantics undecoded; 1/4/5 seen across the two Tier 1 CSVs). It
-        // used to be masked away here — now forwarded for the coordinator's
-        // observational tally (no behavioral role).
-        const uint8_t dasFlags = static_cast<uint8_t>(f.data[0] >> 4);
         const uint8_t handsState = static_cast<uint8_t>((f.data[5] >> 2) & 0x0F);
         dashLegacyWheel045DndCtrl.onDasStatus(apState, handsState, f.bus,
                                               static_cast<uint32_t>(now));
-        dashApReRequestCtrl.observeDasStatus(apState, f.bus,
-                                             static_cast<uint32_t>(now), dasFlags);
+        dashJitterCtrl.observeDasStatus(apState, static_cast<uint32_t>(now));
+    }
+    // 0x488 (1160) DAS steering control: JITTER abort watch (already admitted
+    // to the vehicle filter tables). Angle = ((b0<<8|b1)&0x7FFF − 16384) ×
+    // 0.1° per the beta08 decode, and only meaningful when
+    // steeringControlType (b2 high 3 bits) == 2 — LittleGong parsed the angle
+    // raw, our own field data showed non-type-2 values are garbage. NOTE: the
+    // LegacyHandler 0x488 branch (handlers.h) feeds legacyNagV4 with the
+    // 2-bit (d2>>6)&0x03 form — that is a DIFFERENT consumer and the two
+    // decodes are intentionally not harmonized.
+    if (f.id == 1160 && f.dlc >= 4 && f.bus == CAN_BUS_VEH && dashLegacyHandlerActive())
+    {
+        const uint16_t raw = static_cast<uint16_t>((f.data[0] << 8) | f.data[1]);
+        const float angleDeg = static_cast<float>((raw & 0x7FFF) - 16384) * 0.1f;
+        const bool typeValid = ((f.data[2] >> 5) & 0x07) == 2;
+        dashJitterCtrl.observeSteerAngle(angleDeg, typeValid,
+                                         static_cast<uint32_t>(now));
     }
     // Phase 1: OTA guard 检测 0x318 帧（beta12 起带时间戳：停流超时降级需要）
     dashOtaGuardProcessFrame(f, static_cast<uint32_t>(now));
@@ -1231,22 +1245,17 @@ static bool dashLegacyFsdActivationAllowed(uint32_t nowMs)
         legacyFsdLastBlockedMs = nowMs;
         return false;
     }
-    // 4.5.0 re-request mode: while enabled with a valid profile AND the AP
-    // injection gate open (apGateOpen is part of active() since 4.5.0-beta03 —
-    // the gate is the coordinator's arm-level precondition) the coordinator is
-    // the SOLE activation authority. This REPLACES the settle / steer-defense
-    // / soft-engage chain below — never chained after it, because the old
-    // chain's APActive(3..6)+settle verdict would veto the user-frozen AP=2
-    // qualification set. With the gate closed active() is false, so the
-    // early-true below takes over: that is the LEGAL normal mode for
-    // non-8.3.6 vehicles (gate off = legacy direct path, coordinator inert).
-    if (dashApReRequestCtrl.active())
+    // v1.19 JITTER pause (4.5.0-beta15): while the procedure runs (Arming /
+    // Disengaging), every base bit46 write stops (LittleGong's
+    // jitter_state != 0 mutex). This single check replaces the coordinator's
+    // sole-authority branch AND the mux0 Barrier A; it must sit BEFORE the
+    // gate-off early-true below so a closed gate with a running procedure
+    // still pauses (fail-closed ordering).
+    if (dashJitterCtrl.procedureActive())
     {
-        const bool allowed = dashApReRequestCtrl.activationAllowed(nowMs);
-        legacyFsdLastAllowed = allowed;
-        if (!allowed)
-            legacyFsdLastBlockedMs = nowMs;
-        return allowed;
+        legacyFsdLastAllowed = false;
+        legacyFsdLastBlockedMs = nowMs;
+        return false;
     }
     if (!apInjectionGate)
     {
@@ -1275,15 +1284,7 @@ static FsdGateBlockReason dashCurrentGateBlockReason()
         return FsdGateBlockReason::CanActive;
     if (!dashOtaGuardAllowInjection())
         return FsdGateBlockReason::Ota;
-    if (dashApReRequestCtrl.active())
-    {
-        // Sole authority: while a handshake round runs every Legacy FSD write
-        // is barrier-A blocked; the APActive(3..6) ApGate check below would
-        // misleadingly fire at AP=2, which the frozen qualification set allows.
-        if (!dashApReRequestCtrl.activationAllowed(millis()))
-            return FsdGateBlockReason::ReRequestHandshake;
-    }
-    else if (dashLegacyHandlerActive() && !dashLegacyApInjectionAllowed())
+    if (dashLegacyHandlerActive() && !dashLegacyApInjectionAllowed())
         return FsdGateBlockReason::ApGate;
     if (dashLegacyHandlerActive() && !dashLegacyFsdActivationAllowed(millis()))
         return FsdGateBlockReason::LegacyFsdSettle;
@@ -1633,17 +1634,21 @@ static void dashApplyLegacySmartSpeedState(CarManagerBase *handler)
 // can be shared between HW3Handler (in handlers.h, parsed first) and the
 // dashboard HW3 send path below.
 
-// 4.5.0 re-request mode hooks installed on the Legacy handler. The observe
-// wrapper feeds the coordinator from the real mux0 branch (intent + bus before
-// any gate); the inhibit wrapper is barrier A for every device 0x3EE write.
-static void dashApReRequestObserve3ee(bool intentPresent, uint8_t bus, uint32_t nowMs)
+// v1.19 JITTER hooks installed on the Legacy handler. The observe wrapper
+// caches the full native mux0 payload (the one-shot clones its bit46 template
+// from it); VEH-only — the PARTY mirror of this bus must not refresh the
+// clone template. The inhibit wrapper pauses every device 0x3EE write while
+// the procedure runs.
+static void dashJitterObserve3ee(const uint8_t data[8], uint8_t bus, uint32_t nowMs)
 {
-    dashApReRequestCtrl.observeNative3ee(intentPresent, bus, nowMs);
+    if (bus != CAN_BUS_VEH)
+        return;
+    dashJitterCtrl.observeNative3eeMux0(data, nowMs);
 }
 
-static bool dashApReRequestInhibit3ee()
+static bool dashJitterInhibit3ee()
 {
-    return dashApReRequestCtrl.inhibitDevice3ee(millis());
+    return dashJitterCtrl.procedureActive();
 }
 
 static void dashApplyRuntimeState()
@@ -1665,8 +1670,8 @@ static void dashApplyRuntimeState()
         dashHandler->gateBlockReason = dashCurrentGateBlockReason;
         dashHandler->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
-        dashHandler->reRequestObserve3ee = dashApReRequestObserve3ee;
-        dashHandler->reRequestInhibit3ee = dashApReRequestInhibit3ee;
+        dashHandler->jitterObserve3ee = dashJitterObserve3ee;
+        dashHandler->jitterInhibit3ee = dashJitterInhibit3ee;
         dashHandler->checkNag = dashCheckNagDisabled;
         dashHandler->bionicSteering = dashBionicSteering;
         dashHandler->abortGuard.setEnabled(dashAbortGuardEnabled);
@@ -1684,16 +1689,13 @@ static void dashApplyRuntimeState()
         dashHandler->legacyFsdDiag.mux1Enable = dashLegacyFsdMux1Enable;
         dashHandler->legacyFsdDiag.profileWriteEnable = dashLegacyFsdProfileWriteEnable;
         dashHandler->legacyFsdDiag.visionLimitClearEnable = dashLegacyFsdVisionLimitClearEnable;
-        // 4.5.0 re-request coordinator: armed only when the runtime flag is on,
-        // the compiled profile is valid, AND the AP injection gate is open
-        // (since 4.5.0-beta03 the gate is the coordinator's arm-level
-        // precondition). Gate closed -> Disabled/"apGateOff": fully inert (no
-        // rounds, no interception) and the legacy direct path below is the
-        // legal normal mode. Passing apInjectionGate explicitly (not relying
-        // on the default) keeps this single production call site auditable.
-        dashApReRequestCtrl.configure(dashApReRequestEnabled,
-                                      compiledApReRequestProfile(),
-                                      apInjectionGate);
+        // v1.19 JITTER procedure: armed only when the switch is on AND the AP
+        // injection gate is open (the gate is the arm-level precondition).
+        // Gate closed -> Inert/"apGateOff": fully passive and the legacy
+        // direct path is the legal normal mode for non-8.3.6 vehicles.
+        // Passing apInjectionGate explicitly (not relying on the default)
+        // keeps this single production call site auditable.
+        dashJitterCtrl.configure(dashJitterEnabled, apInjectionGate);
         dashApplyLegacySmartSpeedState(dashHandler);
         dashApplySpeedProfileState();
         if (!canActive)
@@ -1754,7 +1756,8 @@ static void dashSavePrefs()
     prefs.putBool("otg_ovr", dashOtaGuardOverrideEnabled());
     // def_mininj / def_instant / def_se writes removed with the #108
     // steer-jerk defense in 4.5.0-beta02; stale NVS values are ignored.
-    prefs.putBool("apr_on", dashApReRequestEnabled);
+    // apr_on (coordinator) became jtr_on with the JITTER swap in beta15.
+    prefs.putBool("jtr_on", dashJitterEnabled);
     prefs.putUChar("lfsd_pol", dashLegacyFsdPolicy == LegacyFsdPolicy::TeslaParity ? 2 : (dashLegacyFsdPolicy == LegacyFsdPolicy::Experimental ? 1 : 0));
     prefs.putBool("lfsd_m1", dashLegacyFsdMux1Enable);
     prefs.putBool("lfsd_prof", dashLegacyFsdProfileWriteEnable);
@@ -1984,10 +1987,24 @@ static void dashLoadPrefs()
     // flips the「忽略车辆 OTA 守卫」toggle on the FSD defense page.
     dashOtaGuardSetOverride(prefs.getBool("otg_ovr", false));
     // def_mininj / def_instant / def_se loads removed with the #108 defense.
-    // 4.5.0-beta01: the re-request request flag alone never arms the
-    // coordinator — dashApplyRuntimeState() still refuses an invalid compiled
-    // profile, so a stale NVS "on" from a future build stays fail-closed here.
-    dashApReRequestEnabled = prefs.getBool("apr_on", false);
+    // beta15: the coordinator's apr_on key died with the module — actively
+    // removed so a stale "on" from beta14 never leaks into the JITTER switch
+    // (which itself defaults off, fail-closed on the AP gate). The aprbbx
+    // blackbox namespace is cleared once here too (idempotent).
+    dashJitterEnabled = prefs.getBool("jtr_on", false);
+    prefs.remove("apr_on");
+    {
+        // Separate instance: re-begin() on `prefs` would close PREFS_NS and
+        // break every read below this point. "ring" was the namespace's only
+        // key (beta10 blackbox), so removing it empties aprbbx for good —
+        // NVS garbage-collects the orphaned namespace.
+        Preferences bb;
+        if (bb.begin("aprbbx", false))
+        {
+            bb.remove("ring");
+            bb.end();
+        }
+    }
     {
         uint8_t lfsdPolicy = prefs.getUChar("lfsd_pol", 0);
         dashLegacyFsdPolicy = lfsdPolicy == 2 ? LegacyFsdPolicy::TeslaParity : (lfsdPolicy == 1 ? LegacyFsdPolicy::Experimental : LegacyFsdPolicy::Stable);
@@ -2297,14 +2314,6 @@ const DashTxEvidence &t2canServiceTxEvidence(void);
 uint8_t t2canServiceLastCommand(void);
 uint8_t t2canServiceBurstRemaining(void);
 bool t2canGetServiceMode(void);
-// beta10 P1 observation bridges — defined in main.cpp next to the tick
-// wiring: tick liveness, permit snapshot bits, NVS blackbox ring.
-uint8_t t2canApReRequestDriverPresent(void);
-uint32_t t2canApReRequestTickCount(void);
-uint32_t t2canApReRequestLastTickMs(void);
-uint8_t t2canApReRequestPermitBits(void);
-uint8_t t2canApBlackboxCount(void);
-const DashApBbEntry *t2canApBlackboxEntries(void);
 #endif
 
 static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxValue, uint8_t &out)
@@ -3956,40 +3965,6 @@ static void handleLightingConfig()
     server.send(200, "application/json", dashLightingConfigJson());
 }
 
-static const char *dashApReRequestPhaseName(ApReRequestPhase p)
-{
-    switch (p)
-    {
-    case ApReRequestPhase::Disabled: return "disabled";
-    case ApReRequestPhase::WaitDriverIntent: return "waitDriverIntent";
-    case ApReRequestPhase::CancelSequence: return "cancelSequence";
-    case ApReRequestPhase::WaitCancelEvidence: return "waitCancelEvidence";
-    case ApReRequestPhase::RequestSequence: return "requestSequence";
-    case ApReRequestPhase::WaitQualification: return "waitQualification";
-    case ApReRequestPhase::ActiveInjection: return "activeInjection";
-    case ApReRequestPhase::Complete: return "complete";
-    case ApReRequestPhase::FailedLocked: return "failedLocked";
-    }
-    return "unknown";
-}
-
-static const char *dashApReRequestStepName(ApReRequestStep s)
-{
-    switch (s)
-    {
-    case ApReRequestStep::Idle: return "idle";
-    case ApReRequestStep::PressPending: return "pressPending";
-    case ApReRequestStep::PressAccepted: return "pressAccepted";
-    case ApReRequestStep::ReleasePending: return "releasePending";
-    case ApReRequestStep::ReleaseAccepted: return "releaseAccepted";
-    }
-    return "unknown";
-}
-
-// beta10 P1: blackbox record-kind names for the /status JSON below.
-// (blackbox entry JSON + kind names live in dash_ap_blackbox.h since
-// 4.5.0-beta12 — dashApBbEntryToJson / dashApBbKindName, native-testable.)
-
 static void dashAppendLegacySafetyControlsJson(String &j)
 {
     const DashAbortGuardDiag abort = dashHandler ? dashHandler->abortGuard.diag()
@@ -4013,200 +3988,15 @@ static void dashAppendLegacySafetyControlsJson(String &j)
     // minimalInject / steerDefense JSON objects removed with the #108
     // steer-jerk defense in 4.5.0-beta02 (Instant/Minimal/Soft Engage all
     // proved unable to stop the 2026.8.3.6 activation jerk).
-    // 4.5.0-beta01 AP cancel + re-request coordinator. `requested` is the
-    // persisted switch; `effective` stays false while the compiled profile is
-    // invalid (fail-closed by design).
-    const ApReRequestDiag rr = dashApReRequestCtrl.diag();
-    const ApReRequestProfile rrProfile = compiledApReRequestProfile();
-    const char *rrProfileError = apReRequestProfileError(rrProfile);
-    j += R"JSON("},"apReRequest":{"requested":)JSON";
-    j += dashApReRequestEnabled ? "true" : "false";
-    j += R"JSON(,"effective":)JSON";
-    j += (rr.enabled && rr.profileReady && rr.apGateOpen) ? "true" : "false";
-    j += R"JSON(,"profileReady":)JSON";
-    j += rr.profileReady ? "true" : "false";
-    j += R"JSON(,"apGateOpen":)JSON";
-    j += rr.apGateOpen ? "true" : "false";
-    // Unavailable reason priority: profile error first (the switch cannot work
-    // at all), then the AP gate precondition (4.5.0-beta03: gate closed ->
-    // coordinator inert, legacy direct path is the legal normal mode).
-    if (rrProfileError)
-    {
-        j += R"JSON(,"unavailableReason":")JSON";
-        j += rrProfileError;
-        j += R"JSON(")JSON";
-    }
-    else if (!rr.apGateOpen)
-    {
-        j += R"JSON(,"unavailableReason":"apGateOff")JSON";
-    }
-    j += R"JSON(,"permit":)JSON";
-    j += rr.permit ? "true" : "false";
-    j += R"JSON(,"phase":")JSON";
-    j += dashApReRequestPhaseName(rr.phase);
-    j += R"JSON(","step":")JSON";
-    j += dashApReRequestStepName(rr.step);
-    j += R"JSON(","reason":")JSON";
-    j += rr.reason;
-    j += R"JSON(","lastAction":")JSON";
-    j += rr.lastAction;
-    // 4.5.0-beta06: the reason the last round ENDED survives re-arms and
-    // state changes (cleared only by configure()); autoRearms counts the
-    // vehicle-side locks that re-armed automatically instead of locking.
-    j += R"JSON(","lastEndedReason":")JSON";
-    j += rr.lastEndedReason;
-    j += R"JSON(","autoRearms":)JSON";
-    j += rr.autoRearms;
-    // autoRearms above is NUMERIC — the next literal must NOT lead with the
-    // string-close quote. beta06 shipped `","round":` here, emitting
-    // `..."autoRearms":0","round":0...` which broke /status and
-    // /defense_config JSON parsing device-wide (UI: every switch rendered
-    // OFF after re-entry, top badge "未连接"). Chain rule: after a string
-    // value use `","key":`/`","key":"`; after a numeric/bool value use
-    // `,"key":`.
-    j += R"JSON(,"round":)JSON";
-    j += rr.round;
-    j += R"JSON(,"epoch":)JSON";
-    j += rr.epoch;
-    j += R"JSON(,"apState":)JSON";
-    j += rr.apState;
-    j += R"JSON(,"exitSeen":)JSON";
-    j += rr.exitSeen ? "true" : "false";
-    j += R"JSON(,"intentPresent":)JSON";
-    j += rr.intentPresent ? "true" : "false";
-    j += R"JSON(,"roundStartMs":)JSON";
-    j += rr.roundStartMs;
-    j += R"JSON(,"evidenceMs":)JSON";
-    j += rr.evidenceMs;
-    j += R"JSON(,"requestMs":)JSON";
-    j += rr.requestMs;
-    j += R"JSON(,"windowMs":)JSON";
-    j += rrProfile.qualificationWindowMs;
-    j += R"JSON(,"cancelAttempts":)JSON";
-    j += rr.cancelAttempts;
-    j += R"JSON(,"cancelAccepted":)JSON";
-    j += rr.cancelAccepted;
-    j += R"JSON(,"requestAttempts":)JSON";
-    j += rr.requestAttempts;
-    j += R"JSON(,"requestAccepted":)JSON";
-    j += rr.requestAccepted;
-    j += R"JSON(,"templateSeen":)JSON";
-    j += rr.templateSeen ? "true" : "false";
-    j += R"JSON(,"lastTxCounter":)JSON";
-    j += rr.lastTxCounter;
-    j += R"JSON(,"ownEchoRx":)JSON";
-    j += rr.ownEchoRx;
-    j += R"JSON(,"otherBusObs":)JSON";
-    j += rr.otherBusObs;
-    j += R"JSON(,"physicalInputRx":)JSON";
-    j += rr.physicalInputRx;
-    j += R"JSON(,"counterConflicts":)JSON";
-    j += rr.counterConflicts;
-    // beta14 retry diagnostics: benign post-TX counter skips (tolerated +2)
-    // and the per-round in-round retries used (cancel re-send / request
-    // retries after a vehicle refusal). Numeric keys, same chain.
-    j += R"JSON(,"counterSkips":)JSON";
-    j += rr.counterSkips;
-    j += R"JSON(,"cancelRetries":)JSON";
-    j += rr.cancelRetries;
-    j += R"JSON(,"requestRetries":)JSON";
-    j += rr.requestRetries;
-    j += R"JSON(,"native3eeRx":)JSON";
-    j += rr.native3eeRx;
-    // beta09 P1 (all observational; vehicleRefusal latches the last watched
-    // WaitDriverIntent RWD press that got no activation edge within
-    // kVehicleRefusalMs). rwdPressMs is a RAW stamp — the UI computes age
-    // from its own clock, same convention as the ms fields above.
-    j += R"JSON(,"vehicleRefusal":)JSON";
-    j += rr.vehicleRefusal ? "true" : "false";
-    j += R"JSON(,"rwdPressPending":)JSON";
-    j += rr.rwdPressPending ? "true" : "false";
-    j += R"JSON(,"vehicleRefusals":)JSON";
-    j += rr.vehicleRefusals;
-    j += R"JSON(,"rwdPressMs":)JSON";
-    j += rr.rwdPressMs;
-    // beta09 P2: 0x399 high-nibble flag histogram (index = flag value,
-    // value = frame count since configure()) plus the newest flag value and
-    // the raw stamp of its last change. For CSV-driven decoding later.
-    j += R"JSON(,"lastApFlag":)JSON";
-    j += rr.lastApFlag;
-    j += R"JSON(,"lastApFlagMs":)JSON";
-    j += rr.lastApFlagMs;
-    j += R"JSON(,"apFlagCounts":[)JSON";
-    for (uint8_t i = 0; i < 16; ++i)
-    {
-        if (i) j += ',';
-        j += rr.apFlagCounts[i];
-    }
-    j += ']';
-    // ── beta10 P1 (pure observation; zero 8.3.6 semantics) ────────────────
-    // Permit input decomposition: the coordinator permit is a 5-input AND
-    // (see t2canApReRequestTick in main.cpp). A wedge in ANY input kills
-    // injection with no lock and no UI hint — switch cycling cannot recover
-    // it (2026-09-13 field feedback, symptoms 2/3). These fields decompose
-    // the AND at JSON time so one /status read names the dead input.
-    // Chain rule: after the numeric array close, keys continue with `,"k":`.
-    j += R"JSON(,"permitInputs":{"canActive":)JSON";
-    j += canActive ? "true" : "false";
-    j += R"JSON(,"legacyHandler":)JSON";
-    j += dashLegacyHandlerActive() ? "true" : "false";
-    j += R"JSON(,"otaGuardClear":)JSON";
-    j += vehicleOtaActive ? "false" : "true";
-    j += R"JSON(,"abortGuardOk":)JSON";
-    j += (dashHandler && !dashHandler->abortGuard.allowsInjection()) ? "false" : "true";
-#ifdef DRIVER_T2CAN_DUAL
-    j += R"JSON(,"driver":)JSON";
-    j += t2canApReRequestDriverPresent() ? "true" : "false";
-#endif
-    // Close permitInputs here: the five permit inputs are the object, and
-    // permitBits / tickHeartbeat / blackbox / otaWatch below are SIBLINGS at
-    // the apReRequest level (mirrors webui_simulator + UI readers). This
-    // brace was missing in beta10-beta12 -> legacyInjectionSafety never
-    // closed -> /status AND /defense_config unparseable end-to-end (fifth
-    // quote/brace incident; pinned mechanically by
-    // scripts/reconstruct_status_json.py, wired into the pytest suite).
-    j += '}';
-#ifdef DRIVER_T2CAN_DUAL
-    // Tick liveness: count/lastMs come from the tick site; ageMs is computed
-    // JSON-side (millis() - lastMs). A frozen count/age across two /status
-    // reads = tick starvation (main-loop wedge), independent evidence from
-    // the permit inputs.
-    j += R"JSON(,"permitBits":)JSON";
-    j += t2canApReRequestPermitBits();
-    j += R"JSON(,"tickHeartbeat":{"count":)JSON";
-    j += t2canApReRequestTickCount();
-    j += R"JSON(,"lastMs":)JSON";
-    j += t2canApReRequestLastTickMs();
-    j += R"JSON(,"ageMs":)JSON";
-    j += static_cast<uint32_t>(millis() - t2canApReRequestLastTickMs());
-    j += '}';
-    // NVS blackbox (dash_ap_blackbox.h): chronological oldest -> newest.
-    // Survives power cycles by design — the entries BELOW the newest "boot"
-    // record are what the previous boot recorded before it was unplugged.
-    {
-        const DashApBbEntry *bb = t2canApBlackboxEntries();
-        const uint8_t n = t2canApBlackboxCount();
-        j += R"JSON(,"blackbox":[)JSON";
-        // beta12 (LittleGong port 5): per-entry JSON comes from the pure
-        // function in dash_ap_blackbox.h — native golden-string tests pin
-        // every kind × reason combination character-by-character, so the
-        // beta06/beta07/beta10 quote-closure class can no longer ship green
-        // (the dashboard header is not compiled by native tests).
-        {
-            char entryJson[kDashApBbEntryJsonCap];
-            bool firstEntry = true;
-            for (uint8_t k = n; k > 0; --k)
-            {
-                if (dashApBbEntryToJson(entryJson, sizeof(entryJson), bb[k - 1]) == 0)
-                    continue;
-                if (!firstEntry) j += ',';
-                firstEntry = false;
-                j += entryJson;
-            }
-        }
-        j += ']';
-    }
-#endif
+    // The apReRequest coordinator object (incl. the beta10 permitInputs /
+    // tickHeartbeat / blackbox observation layers) was removed with the
+    // beta09..beta14 coordinator in 4.5.0-beta15, replaced by the v1.19
+    // JITTER procedure — its diag object lands in this same slot (see
+    // appendJitterDiagJson below). otaWatch / carrier3ee / txAccounting
+    // survive as direct children of legacyInjectionSafety.
+    // Chain rule: the leading `"` closes lastBlockedPath's string value, the
+    // `}` closes abortGuard (the coordinator's opener used to carry both).
+    j += R"JSON("})JSON";
     // otaWatch from dashboard statics (available wherever this dispatcher
     // compiles, not dual-driver-specific). confirm/clear are the guard's own
     // threshold counters (dash_ota_guard.h); active is the raw flag.
@@ -4268,7 +4058,9 @@ static void dashAppendLegacySafetyControlsJson(String &j)
         j += m0.lastOkMs ? static_cast<uint32_t>(millis() - m0.lastOkMs) : 0;
         j += '}';
     }
-    j += "}}";
+    // Close legacyInjectionSafety (single close since the coordinator
+    // object was removed in 4.5.0-beta15).
+    j += "}";
 }
 
 static String dashDefenseConfigJson()
@@ -4307,10 +4099,10 @@ static String dashDefenseConfigJson()
     j += dashOtaGuardOverrideEnabled() ? "true" : "false";
     // minimal_inject / instant_engage / soft_engage keys removed with the
     // #108 steer-jerk defense in 4.5.0-beta02.
-    // 4.5.0-beta01 re-request switch (requested state; effective state and the
-    // unavailable reason live in legacyInjectionSafety.apReRequest).
-    j += ",\"ap_re_request\":";
-    j += dashApReRequestEnabled ? "true" : "false";
+    // v1.19 JITTER switch (requested state; the live procedure phase and
+    // counters live in legacyInjectionSafety.jitter).
+    j += ",\"jitter\":";
+    j += dashJitterEnabled ? "true" : "false";
     j += ",\"slew_rate_enabled\":";
     j += hw3OffsetSlew ? "true" : "false";
     j += ",\"ban_shield\":";
@@ -4330,7 +4122,7 @@ static void handleDefenseConfig()
         server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
         server.hasArg("abort_guard") ||
         server.hasArg("ota_guard_override") ||
-        server.hasArg("ap_re_request"))
+        server.hasArg("jitter"))
     {
         bool prevDndVolume = dashDndVolume;
         bool prevDndSpeed = dashDndSpeed;
@@ -4385,10 +4177,10 @@ static void handleDefenseConfig()
         if (server.hasArg("ota_guard_override"))
             dashOtaGuardSetOverride(dashArgTruthy(server.arg("ota_guard_override")));
         // Persisted request only. dashApplyRuntimeState() reconfigures the
-        // coordinator below; with the empty compiled profile it stays Disabled
-        // (effective=false) and the response reports unavailableReason.
-        if (server.hasArg("ap_re_request"))
-            dashApReRequestEnabled = dashArgTruthy(server.arg("ap_re_request"));
+        // procedure below; with the AP gate closed it stays Disabled and
+        // re-arms automatically when the gate reopens.
+        if (server.hasArg("jitter"))
+            dashJitterEnabled = dashArgTruthy(server.arg("jitter"));
         nvsBanShieldEnable = dashDefenseEnabled;
         if (dashHandler)
             dashHandler->banShieldEnable = dashDefenseEnabled;

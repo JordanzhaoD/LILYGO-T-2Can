@@ -23,7 +23,6 @@
 #endif
 
 #include "app.h"
-#include "dash_ap_blackbox.h"
 #include "dash_tx_evidence.h"
 
 #ifdef DRIVER_T2CAN_DUAL
@@ -604,8 +603,8 @@ static void t2canWheelDndTick()
         gateBlock = DashLegacyWheel045Block::Disabled;
     else if (!dashLegacyHandlerActive())
         gateBlock = DashLegacyWheel045Block::NotLegacy;
-    else if (dashApReRequestCtrl.ownsStalk(now))
-        gateBlock = DashLegacyWheel045Block::StalkOwnedByReRequest;
+    else if (dashJitterCtrl.procedureActive())
+        gateBlock = DashLegacyWheel045Block::StalkOwnedByJitter;
     else if (vehicleOtaActive)
         gateBlock = DashLegacyWheel045Block::OtaGuard;
     else if (dashHandler && !dashHandler->abortGuard.allowsInjection())
@@ -651,142 +650,38 @@ static void t2canWheelDndTick()
     }
 }
 
-// 4.5.0-beta01 AP cancel + re-request coordinator tick. Mirrors the wheel-DND
-// gating cascade (canActive / Legacy handler / OTA / abort guard / driver) as
-// the coordinator's permit: losing any of them mid-round locks the round
-// fail-closed (permitLost) until the mode is reconfigured.
-// The AP injection gate is deliberately NOT part of the permit expression
-// (4.5.0-beta03): setPermit is fail-closed, so a gate toggle mid-round would
-// trigger a permitLost lock requiring an 8.3.6-switch off->on cycle. Instead,
-// gate toggles flow through dashApplyRuntimeState -> configure(), which resets
-// to Disabled (roundActive == false, never permitLost) and re-arms
-// automatically when the gate reopens.
-// ── beta10 P1: coordinator-surroundings observation (blackbox + permit
-// decomposition + tick liveness). PURE OBSERVATION — the permit expression
-// inside t2canApReRequestTick is unchanged and the coordinator module itself
-// is untouched. Purpose (2026-09-13 field feedback): switch cycling cannot
-// recover symptoms 2/3, only unplugging power can — the wedge lives OUTSIDE
-// the coordinator, in RAM, and a reboot destroys the evidence. These hooks
-// persist the surroundings to NVS so the first /status after a power cycle
-// shows what the box recorded before it died. ─────────────────────────────
-static DashApBlackbox s_apBlackbox;
-static Preferences s_apBbPrefs; // namespace "aprbbx", key "ring"
-static bool s_apBbReady = false;
-static uint32_t s_aprrTickCount = 0;    // +1 per tick pass (liveness)
-static uint32_t s_aprrLastTickMs = 0;   // stamp of the last tick pass
-static uint8_t s_aprrPermitBits = 0;    // last tick's five-input snapshot
-static uint8_t s_aprrPrevPermitBits = 0xFF; // 0xFF = "first pass, no compare"
-static bool s_aprrPrevIntent = false;
-static bool s_aprrPrevHandshake = false;
-static uint32_t s_apBbLastHeartbeatMs = 0;
-static constexpr uint32_t kApBbHeartbeatMs = 300000; // 5 min liveness pulse
-
-static void t2canApBlackboxPersist()
-{
-    uint8_t buf[sizeof(DashApBbEntry) * DashApBlackbox::kCapacity];
-    const size_t len = s_apBlackbox.dump(buf, sizeof(buf));
-    if (len == 0)
-        return;
-    if (!s_apBbPrefs.begin("aprbbx", false))
-        return;
-    s_apBbPrefs.putBytes("ring", buf, len);
-    s_apBbPrefs.end();
-}
-
-static void t2canApReRequestTick()
+// v1.19 JITTER procedure tick (8.3.6 anti-jerk; ported verbatim from the
+// single-CAN v1.19.2 firmware — field-frozen there after 100+ engage cycles
+// with zero jerk — replacing this repo's beta09..beta14 coordinator). The
+// permit cascade is the procedure's license to run: canActive / Legacy
+// handler / driver / OTA / abort guard. Losing any of them mid-procedure is
+// a plain fullReset("permitLost") — LittleGong has no failure taxonomy; the
+// human retries.
+// The AP injection gate is deliberately NOT part of the permit expression:
+// gate toggles flow through dashApplyRuntimeState -> configure(), which
+// resets cleanly and re-arms automatically when the gate reopens.
+// Runs on the CAN task: the same task that feeds it observations from
+// mcpDashOnFrame, keeping dashJitterCtrl single-threaded.
+static void t2canJitterTick()
 {
     const uint32_t now = millis();
     const bool permit = canActive && dashLegacyHandlerActive() && appDriver &&
                         !vehicleOtaActive &&
                         (!dashHandler || dashHandler->abortGuard.allowsInjection());
-    // beta10 P1 observation: decompose the same five inputs (bit layout in
-    // dash_ap_blackbox.h) and count tick liveness. The expression above is
-    // the permit contract; these locals are its mirror, not a replacement.
-    const bool pOtaClear = !vehicleOtaActive;
-    const bool pAbortOk =
-        (!dashHandler || dashHandler->abortGuard.allowsInjection());
-    const uint8_t permitBits =
-        (canActive ? 1u : 0u) | (dashLegacyHandlerActive() ? 2u : 0u) |
-        (appDriver ? 4u : 0u) | (pOtaClear ? 8u : 0u) | (pAbortOk ? 16u : 0u);
-    if (!s_apBbReady)
-    {
-        // One-time boot restore: pull the previous boot's ring out of NVS,
-        // then stamp a Boot record so pre-powerloss entries stay readable
-        // in /status below the reboot marker.
-        s_apBbReady = true;
-        uint8_t buf[sizeof(DashApBbEntry) * DashApBlackbox::kCapacity];
-        if (s_apBbPrefs.begin("aprbbx", true))
-        {
-            const size_t len = s_apBbPrefs.getBytesLength("ring");
-            if (len > 0 && len <= sizeof(buf) &&
-                s_apBbPrefs.getBytes("ring", buf, len) == len)
-                s_apBlackbox.load(buf, len);
-            s_apBbPrefs.end();
-        }
-        if (s_apBlackbox.record(DashApBbKind::Boot, 0, "", 0, 0, now, 0))
-            t2canApBlackboxPersist();
-        s_apBbLastHeartbeatMs = now;
-    }
-    dashApReRequestCtrl.setPermit(permit, "permitLost");
-    dashApReRequestCtrl.tick(now);
-    ++s_aprrTickCount;
-    s_aprrLastTickMs = now;
-    s_aprrPermitBits = permitBits;
-    const ApReRequestDiag rr = dashApReRequestCtrl.diag();
-    const uint8_t phaseVal = static_cast<uint8_t>(rr.phase);
-    const bool handshake =
-        !(rr.phase == ApReRequestPhase::Disabled ||
-          rr.phase == ApReRequestPhase::WaitDriverIntent ||
-          rr.phase == ApReRequestPhase::Complete ||
-          rr.phase == ApReRequestPhase::FailedLocked);
-    bool recorded = false;
-    if (s_aprrPrevPermitBits != 0xFF && permitBits != s_aprrPrevPermitBits)
-        recorded = s_apBlackbox.record(DashApBbKind::PermitChange, phaseVal,
-                                       "", permitBits, rr.apState, now,
-                                       s_aprrTickCount) ||
-                   recorded;
-    s_aprrPrevPermitBits = permitBits;
-    if (rr.intentPresent != s_aprrPrevIntent)
-        recorded = s_apBlackbox.record(DashApBbKind::IntentChange, phaseVal,
-                                       "", permitBits, rr.apState, now,
-                                       s_aprrTickCount) ||
-                   recorded;
-    s_aprrPrevIntent = rr.intentPresent;
-    if (!s_aprrPrevHandshake && handshake)
-        recorded = s_apBlackbox.record(DashApBbKind::RoundStart, phaseVal, "",
-                                       permitBits, rr.apState, now,
-                                       s_aprrTickCount) ||
-                   recorded;
-    else if (s_aprrPrevHandshake && !handshake)
-        recorded = s_apBlackbox.record(
-                       rr.phase == ApReRequestPhase::FailedLocked
-                           ? DashApBbKind::Lock
-                           : DashApBbKind::RoundEnd,
-                       phaseVal,
-                       rr.phase == ApReRequestPhase::FailedLocked
-                           ? rr.reason
-                           : rr.lastEndedReason,
-                       permitBits, rr.apState, now, s_aprrTickCount) ||
-                   recorded;
-    s_aprrPrevHandshake = handshake;
-    if (now - s_apBbLastHeartbeatMs >= kApBbHeartbeatMs)
-    {
-        // 5-minute liveness pulse: if tick starves, heartbeats stop — the
-        // gap between the last heartbeat and the next Boot record is the
-        // outage window.
-        s_apBbLastHeartbeatMs = now;
-        recorded = s_apBlackbox.record(DashApBbKind::Heartbeat, phaseVal, "",
-                                       permitBits, rr.apState, now,
-                                       s_aprrTickCount) ||
-                   recorded;
-    }
-    if (recorded)
-        t2canApBlackboxPersist();
+    // v1.19.1: the gear signal (P) is the drive-session boundary for the
+    // JITTER failed-cycle budget — a rising Park edge re-opens it.
+    dashJitterCtrl.setVehicleParked(dashHandler && (bool)dashHandler->Parked);
+    dashJitterCtrl.setPermit(permit);
     uint8_t data[8];
-    if (dashApReRequestCtrl.nextStalkFrame(now, data) == ApReRequestAction::None)
+    const JitterAction action = dashJitterCtrl.tick(now, data);
+    if (action == JitterAction::None)
         return;
+    // Stalk045 carries a fully-encoded synthetic 0x045 (gesture bits, rolling
+    // counter, CRC8-J1850); Bit46Shot carries a patched native 0x3EE mux0
+    // clone (byte5 |= 0x43). Both go out on the primary vehicle bus
+    // (CAN_BUS_DEFAULT == CAN_BUS_VEH on this profile).
     CanFrame f = {};
-    f.id = 0x045;
+    f.id = action == JitterAction::Stalk045 ? 0x045 : 0x3EE;
     f.dlc = 8;
     memcpy(f.data, data, 8);
     f.bus = CAN_BUS_DEFAULT;
@@ -794,20 +689,8 @@ static void t2canApReRequestTick()
 #ifdef ESP32_DASHBOARD
     dashRecordCanFrame(f, ok ? 'T' : 'E');
 #endif
-    dashApReRequestCtrl.recordStalkTxResult(ok, millis());
+    dashJitterCtrl.recordTxResult(ok);
 }
-
-// beta10 P1 bridges: the /status JSON assembly (mcp2515_dashboard.h, guarded
-// there by the same DRIVER_T2CAN_DUAL macro as the can2Recovery keys) reads
-// the observation state above through these. The five permit inputs are
-// decomposed JSON-side from dashboard globals; these expose the main.cpp-only
-// pieces (driver handle, tick liveness, snapshot bits, blackbox ring).
-uint8_t t2canApReRequestDriverPresent(void) { return appDriver ? 1u : 0u; }
-uint32_t t2canApReRequestTickCount(void) { return s_aprrTickCount; }
-uint32_t t2canApReRequestLastTickMs(void) { return s_aprrLastTickMs; }
-uint8_t t2canApReRequestPermitBits(void) { return s_aprrPermitBits; }
-uint8_t t2canApBlackboxCount(void) { return s_apBlackbox.count(); }
-const DashApBbEntry *t2canApBlackboxEntries(void) { return s_apBlackbox.entries(); }
 #endif
 
 static void app_main_setup()
@@ -920,7 +803,7 @@ static void app_can_task(void *)
         t2canStalkInjectTick();
         t2canFogLightTick();
         t2canWheelDndTick();
-        t2canApReRequestTick();
+        t2canJitterTick();
 #endif
         appCanTaskLoops = appCanTaskLoops + 1;
         if (!processed)
