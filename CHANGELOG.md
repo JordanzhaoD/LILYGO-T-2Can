@@ -1,5 +1,73 @@
 # Changelog
 
+## [4.5.0-beta15] - 2026-09-15
+
+### Removed
+
+- **8.3.6 防甩协调器家族整体移除（约 4,300 行）**，由单 CAN v1.19.2 实车冻结的
+  JITTER 程序逐字移植取代（见 Added）。路线 B 论证：beta13 实车 30 轮 70% 成功、
+  9 次失败，beta14 的计数器容差/重分类/轮内重试三方案全是给协调器续命的生命
+  维持——而单 CAN 同车同总线同拨杆的 JITTER 已「开启上百次、0 例甩方向」
+  （v1.19.1 起机制冻结），继续修协调器等于在已验证方案旁边维护一套未验证方案：
+  - `include/dash_ap_rerequest_activation.h`（1183 行，beta01..beta14 协调器本体
+    含 2026-09-10/11 实车标定 profile 与 beta13/14 全部容差补丁）
+  - `include/dash_ap_blackbox.h`（229 行，beta10 NVS 黑匣子）
+  - `scripts/analyze_rerequest_045_calibration.py`（442 行）+ 其 5 例测试
+  - `test_native_ap_rerequest`（68 例）/`test_native_ap_blackbox`（21 例）与
+    platformio.ini 对应两个 env
+  - JSON `apReRequest` 对象（含 beta10 permitInputs/tickHeartbeat/blackbox 观测层）、
+    /defense_config 平键 `ap_re_request`、NVS `apr_on`（载入时一次性迁移清除）与
+    `aprbbx` 命名空间（一次性清空）、`FsdGateBlockReason::ReRequestHandshake`（值 9
+    留空有注释）、UI 12 格 ap-rr-* 诊断面
+  - 两份 AP-REREQUEST 流程文档顶部加「已被取代」注记（留史）
+
+### Added
+
+- **8.3.6防甩机制（JITTER 程序）**：`include/dash_jitter_procedure.h` 逐字移植自
+  单 CAN v1.19.2（593 行，实车验证：开启上百次、0 例甩方向；CRC8-J1850、
+  0x399 事件驱动、carrier-lock 0x045 泵、bit46 武装单发 + 重挂前刷新、
+  FSD/EAP 落地拆分计数、失败静默复位无重试无锁定）+ 39 例 native 测试
+  （`native_jitter` env，逐字）。接线适配全部在包装层：
+  - **四路观测全部 VEH 总线过滤 + DLC 卫**（0x399/0x3EE/0x045/0x488）——PARTY
+    副总线镜像帧不得驱动机器（单 CAN 无此维度）；0x045 短帧不得克隆进泵帧
+  - **0x488 转向角三位形态** `((b2>>5)&0x07)==2`（单 CAN 实车验证形态）；
+    LegacyHandler 0x370-NAG 的两位解码是另一条路径，两处注释声明差异有意
+  - bit46 暂停：`dashLegacyFsdActivationAllowed` 头部 `procedureActive()` 检查，
+    在 `!apInjectionGate` 早真**之前**（顺序钉）；暂停报 LegacyFsdSettle
+  - Barrier A：`jitterInhibit3ee` + `blockedReason="jitterProcedure"`（mux0/mux1）
+  - 滚轮 DND 仲裁：`procedureActive()` 期间 JITTER 独占 0x045
+    （`StalkOwnedByReRequest`→`StalkOwnedByJitter`，窗口宽度不变）
+  - 诊断：`legacyInjectionSafety.jitter` 22 键（requested/effective/apGateOpen/
+    permit/phase/reason/apState/cycles/cancels/requests/reengagedFsd/reengagedEap/
+    bit46Shots/bit46Refreshes/pumpFrames/txOk/txFail/steerAborts/steerResets/
+    apErrorResets/timeoutResets/failedCycles），链式引号规则逐字移植；
+    UI 9 格诊断面 + jt 原因/阶段映射；模拟器 22 键静态镜像
+  - NVS `jtr_on`（默认关，fail-closed）+ `apr_on` 迁移 + `aprbbx` 清理
+- 模拟器修正：`otaWatch`/`carrier3ee`/`txAccounting` 原误嵌在 apReRequest 对象
+  内，现提升为 `legacyInjectionSafety` 直接子键——与固件发射形态一致
+- `reconstruct_status_json.py` 加固两处：`extract_function` 现识别 C++ 原始字符串
+  字面量（beta14 的引号奇偶「碰巧通过」被消除——本次即抓获一处真实链式引号
+  缺陷，第六次 JSON 事故防于未发）；FUNCS 白名单补 `appendJitterDiagJson`
+- CI native 矩阵重建：16 条 stale（含 2 条不存在 env）→ 22 条与 platformio.ini
+  逐项对账一致
+- **clang-format 棘轮清零（独立 style commit）**：beta01 起的手写代码从未
+  过格式化（2026-08-09 起已知漂移、此前靠手改绕行），Phase 0 全量入库后
+  CI lint 会红（29 文件 717 处，本地 v22 与 CI 同款 v18 判定一致）。批量
+  格式化为纯空白/折行改动；冻结件 dash_jitter_procedure.h 与
+  test_jitter.cpp 原本就干净、未动一字；6 处合约钉随新格式更新
+  （语义零变化）
+
+### Caveats
+
+- **双 CAN 上独立 0x3EE bit46 TX 属新行为**（协调器只改活帧、从不独立发 0x3EE；
+  单 CAN 同车同总线已实车验证同款独立 TX）。首场实车读 bit46Shots/Refreshes 与
+  FSD/EAP 落地计数；急停杆 = 关开关（立即 fullReset("off")）
+- 无 own-echo TX 指纹（单 CAN 实车验证过无指纹形态，逐字移植决策）——列入实车
+  观察项：若 pumpFrames 异常膨胀再加回指纹补丁
+- 「不甩」结论为单车小样本表述（同一辆 CN 2026.8.3.6 车辆、同一驾驶人），
+  不作跨车推广
+- 双 CAN 本机全部验证为构建/native/pytest 级；实车未验证
+
 ## [4.5.0-beta14] - 2026-09-14
 
 ### Changed
