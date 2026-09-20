@@ -723,19 +723,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
         </div>
 
         <div class="card">
-          <div class="card-title">功耗管理</div>
-          <div class="setting-row">
-            <div><div class="setting-name">自动关机</div><div class="setting-desc">5 分钟无 CAN 数据自动休眠。</div></div>
-            <label class="tgl"><input type="checkbox" id="ov-auto-shutdown" onchange="toggleAutoShutdown(this.checked)"><div class="tgl-track"></div></label>
-          </div>
-          <div class="setting-row">
-            <div><div class="setting-name">WiFi 自动关闭</div><div class="setting-desc">5 分钟无操作关闭网络中转。</div></div>
-            <label class="tgl"><input type="checkbox" id="ov-wifi-auto-off" onchange="toggleWifiAutoOff(this.checked)"><div class="tgl-track"></div></label>
-          </div>
-          <div class="setting-desc" id="ov-pwr-idle" style="margin-top:6px">CAN 空闲 --s · Web 空闲 --s · STA 在线</div>
-        </div>
-
-        <div class="card">
           <div class="card-title">FSD 注入策略</div>
           <div class="setting-desc" style="margin-bottom:10px">稳定模式仅注入 mux0 bit46，禁用 mux1；Tesla Controller 对齐模式用于受控 A/B 测试。</div>
           <div class="sel-cards c3" id="legacy-fsd-policy-cards" style="margin-bottom:12px">
@@ -828,6 +815,21 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="sel-name">HW4.0</div>
     </div>
   </div>
+</div>
+
+<!-- 功耗管理（5.0.0-beta02 从首页迁至硬件页：手机端 desktop-home 隐藏，
+     硬件页在手机「更多→硬件模式」与桌面侧边栏双端可达） -->
+<div class="card">
+  <div class="card-title">功耗管理</div>
+  <div class="setting-row">
+    <div><div class="setting-name">自动关机</div><div class="setting-desc">5 分钟无 CAN 数据自动休眠。</div></div>
+    <label class="tgl"><input type="checkbox" id="hw-auto-shutdown" onchange="toggleAutoShutdown(this.checked)"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div><div class="setting-name">WiFi 自动关闭</div><div class="setting-desc">5 分钟无操作关闭网络中转。</div></div>
+    <label class="tgl"><input type="checkbox" id="hw-wifi-auto-off" onchange="toggleWifiAutoOff(this.checked)"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-desc" id="hw-pwr-idle" style="margin-top:6px">CAN 空闲 --s · Web 空闲 --s · STA 在线</div>
 </div>
 
 <!-- 插件管理（驾驶舱风格，全中文） -->
@@ -2240,9 +2242,9 @@ async function poll(){
   setText('s-vota',d.vehicleOta?'OTA 进行中':'正常');
   var otaCnt=$('s-vota-cnt');
   if(otaCnt) fetchJson('/vehicle_ota_status').then(function(o){if(o)setText('s-vota-cnt',o.otaConfirmCount||0)}).catch(function(){});
-  var ashut=$('ov-auto-shutdown');if(ashut)ashut.checked=!!d.autoShutdown;
-  var woff=$('ov-wifi-auto-off');if(woff)woff.checked=!!d.wifiAutoOff;
-  var pwrIdle=$('ov-pwr-idle');
+  var ashut=$('hw-auto-shutdown');if(ashut)ashut.checked=!!d.autoShutdown;
+  var woff=$('hw-wifi-auto-off');if(woff)woff.checked=!!d.wifiAutoOff;
+  var pwrIdle=$('hw-pwr-idle');
   if(pwrIdle){
     var canIdleS=Math.round((d.canIdleMs||0)/1000),webIdleS=Math.round((d.webIdleMs||0)/1000);
     pwrIdle.textContent='CAN 空闲 '+canIdleS+'s · Web 空闲 '+webIdleS+'s · '+(d.wifiStaDisabled?'STA 已自动关闭':'STA 在线');
@@ -2880,7 +2882,9 @@ async function saveHw3Speed(){
 // ── HW3 Slew Save ──────────────────────────────────────────
 async function saveHw3Slew(){
   var tgl=$('hw3-slew-tgl');
-  try{await postForm('/config','hw3OffsetSlew='+(tgl&&tgl.checked?'1':'0'));}
+  // 5.0.0-beta02: postForm 期望对象参数——字符串形式会让 for...in 遍历字符
+  // 下标，发出 0=t&1=r… 乱码体，后端 hasArg 永远为 false（开关弹回）。
+  try{await postForm('/config',{hw3OffsetSlew:(tgl&&tgl.checked?'1':'0')});}
   catch(e){}
   poll();
 }
@@ -2917,12 +2921,14 @@ async function saveDefenseConfig(){
 
 // ── CAN2 ───────────────────────────────────────────────────
 // Phase 1: 功耗管理 toggle
+// 5.0.0-beta02: 必须传对象给 postForm——字符串形式曾把请求体变成
+// 0=t&1=r… 乱码（for...in 遍历字符下标），开关永远存不上、被轮询弹回。
 async function toggleAutoShutdown(on){
-  await postForm('/power_mgmt','autoShutdown='+on);
+  await postForm('/power_mgmt',{autoShutdown:on?'1':'0'});
   poll();
 }
 async function toggleWifiAutoOff(on){
-  await postForm('/power_mgmt','wifiAutoOff='+on);
+  await postForm('/power_mgmt',{wifiAutoOff:on?'1':'0'});
   poll();
 }
 

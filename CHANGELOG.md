@@ -1,5 +1,30 @@
 # Changelog
 
+## [5.0.0-beta02] - 2026-09-20
+
+### Fixed
+
+- **Power management switches can now actually be toggled.** The auto
+  shutdown and Wi-Fi auto-off switches passed a pre-concatenated string
+  to the `postForm` helper, which expects an object: `for...in` over a
+  string iterates character indices, so the request body degenerated to
+  `0=t&1=r&2=u&3=e` garbage, the backend never saw the `autoShutdown` /
+  `wifiAutoOff` arguments, and the poll loop snapped the checkbox back
+  off. Both toggles (and the HW3 slew-rate toggle, which had the same
+  latent bug) now post proper object payloads. This bug dated back to
+  the Phase 1 power UI and is why the switches appeared dead in
+  addition to the runtime fixes in beta01.
+
+### Changed
+
+- **Power management card moved to the hardware page.** The card lived
+  inside the desktop-only overview column, so on phones the two power
+  switches were unreachable. It now sits on the hardware page — which
+  both the phone "more → hardware" tab and the desktop sidebar reach —
+  with element ids renamed `ov-*` → `hw-*` (`hw-auto-shutdown`,
+  `hw-wifi-auto-off`, `hw-pwr-idle`). The read-only idle line moved
+  with it; behavior and backend contract are unchanged.
+
 ## [5.0.0-beta01] - 2026-09-20
 
 ### Changed

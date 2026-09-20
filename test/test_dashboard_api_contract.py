@@ -1120,7 +1120,8 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.dash)
 
         # UI power card read-only idle line consumes the new keys.
-        self.assertIn('id="ov-pwr-idle"', self.ui)
+        # 5.0.0-beta02: the card moved to the hardware page with hw-* ids.
+        self.assertIn('id="hw-pwr-idle"', self.ui)
         self.assertIn("d.canIdleMs", self.ui)
         self.assertIn("d.wifiStaDisabled", self.ui)
         # Simulator mirrors the three keys (beta07 lesson: a missing mirror
@@ -1131,6 +1132,53 @@ class DashboardApiContractTests(unittest.TestCase):
             '"wifiStaDisabled": False',
         ):
             self.assertIn(token, self.simulator)
+
+    def test_50b2_power_toggles_object_form_and_hardware_page(self) -> None:
+        """5.0.0-beta02: the power switches (and HW3 slew) must post object
+        payloads — a string second arg to postForm makes `for...in` iterate
+        character indices, sending `0=t&1=r…` so the backend never sees the
+        argument and the poll snaps the toggle back (dead-switch symptom).
+        The power card also moved to the hardware page (phone-reachable)."""
+        # Object-form call sites for the three formerly string-form toggles.
+        self.assertIn("postForm('/power_mgmt',{autoShutdown:on?'1':'0'})", self.ui)
+        self.assertIn("postForm('/power_mgmt',{wifiAutoOff:on?'1':'0'})", self.ui)
+        self.assertIn(
+            "postForm('/config',{hw3OffsetSlew:(tgl&&tgl.checked?'1':'0')})", self.ui
+        )
+        # Anti-regression: NO postForm call site may pass a string literal
+        # as the body anywhere in the source UI (one convention only).
+        self.assertEqual(re.findall(r"postForm\([^,]+,\s*'", self.ui), [])
+
+        # Power card lives on the hardware page (between pg-hardware and the
+        # next page container), with the renamed hw-* ids on both surfaces
+        # (minifier strips attribute quotes in the generated header).
+        hw_open = self.ui.find('id="pg-hardware"')
+        next_page = re.compile(r'id="pg-[a-z]+"').search(self.ui, hw_open + 10)
+        card = self.ui.find('id="hw-auto-shutdown"')
+        self.assertGreater(hw_open, -1)
+        self.assertIsNotNone(next_page)
+        self.assertGreater(card, hw_open)
+        self.assertLess(card, next_page.start())
+        for token in (
+            'id="hw-auto-shutdown"',
+            'id="hw-wifi-auto-off"',
+            'id="hw-pwr-idle"',
+            "toggleAutoShutdown(this.checked)",
+            "toggleWifiAutoOff(this.checked)",
+        ):
+            self.assertIn(token, self.ui)
+        for token in ("id=hw-auto-shutdown", "id=hw-wifi-auto-off", "id=hw-pwr-idle"):
+            self.assertIn(token, self.ui_gen)
+        # Old overview-prefixed ids must be fully gone (HTML and JS).
+        for gone in ("ov-auto-shutdown", "ov-wifi-auto-off", "ov-pwr-idle"):
+            self.assertNotIn(gone, self.ui)
+            self.assertNotIn(gone, self.ui_gen)
+        # poll() syncs the renamed ids.
+        self.assertIn("$('hw-auto-shutdown')", self.ui)
+        self.assertIn("$('hw-wifi-auto-off')", self.ui)
+        # Phone reachability: the dual-CAN "more" panel keeps the hardware
+        # entry (the card's only phone surface).
+        self.assertIn('data-page="pg-hardware" data-mob="1"', self.ui)
 
     def test_50b1_legacy_experimental_switch_nvs_reset(self) -> None:
         """5.0-beta01: one-time NVS reset of the five removed legacy switches,
@@ -2334,7 +2382,7 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
-        self.assertEqual("5.0.0-beta01", self.version.strip())
+        self.assertEqual("5.0.0-beta02", self.version.strip())
         self.assertIn('file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" PROJECT_VER LIMIT_COUNT 1)', self.cmake)
         self.assertIn("## [4.0.2] - 2026-05-31", self.changelog)
         self.assertIn("lilygo_t2can_dual", self.tests_workflow)
