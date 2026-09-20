@@ -732,17 +732,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
             <div><div class="setting-name">WiFi 自动关闭</div><div class="setting-desc">5 分钟无操作关闭网络中转。</div></div>
             <label class="tgl"><input type="checkbox" id="ov-wifi-auto-off" onchange="toggleWifiAutoOff(this.checked)"><div class="tgl-track"></div></label>
           </div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">Legacy 运行时状态</div>
-          <div class="stats">
-            <div class="stat"><div class="stat-lbl">当前 HW</div><div class="stat-val v-acc" id="legacy-selected-hw">--</div></div>
-            <div class="stat"><div class="stat-lbl">生效模式</div><div class="stat-val v-acc" id="legacy-effective-handler">--</div></div>
-            <div class="stat"><div class="stat-lbl">检测 HW</div><div class="stat-val v-dim" id="legacy-detected-hw">--</div></div>
-            <div class="stat"><div class="stat-lbl">AP 门控</div><div class="stat-val v-dim" id="legacy-ap-gate">--</div></div>
-            <div class="stat"><div class="stat-lbl">OTA 看守</div><div class="stat-val v-dim" id="legacy-ota-guard">--</div></div>
-          </div>
+          <div class="setting-desc" id="ov-pwr-idle" style="margin-top:6px">CAN 空闲 --s · Web 空闲 --s · STA 在线</div>
         </div>
 
         <div class="card">
@@ -768,55 +758,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
             <div class="stat"><div class="stat-lbl">mux1</div><div class="stat-val v-dim" id="legacy-fsd-mux1">--</div></div>
             <div class="stat"><div class="stat-lbl">触发源</div><div class="stat-val v-dim" id="legacy-fsd-trigger">--</div></div>
           </div>
-          <div class="setting-row">
-            <div><div class="setting-name">启用 mux1 注入</div><div class="setting-desc">实验模式：注入 mux1 帧。</div></div>
-            <label class="tgl"><input type="checkbox" id="legacy-fsd-mux1-tgl" onchange="saveLegacyFsdExperimental()"><div class="tgl-track"></div></label>
-          </div>
-          <div class="setting-row">
-            <div><div class="setting-name">写入速度 Profile</div><div class="setting-desc">实验模式：mux0 写入速度档位。</div></div>
-            <label class="tgl"><input type="checkbox" id="legacy-fsd-profile" onchange="saveLegacyFsdExperimental()"><div class="tgl-track"></div></label>
-          </div>
-          <div class="setting-row">
-            <div><div class="setting-name">清除视觉限速</div><div class="setting-desc">清除视觉限速位（独立于 policy）。</div></div>
-            <label class="tgl"><input type="checkbox" id="legacy-fsd-vision" onchange="saveLegacyVision()"><div class="tgl-track"></div></label>
-          </div>
-          <div class="setting-row">
-            <div><div class="setting-name">Legacy 速度偏移</div><div class="setting-desc">0x2F8 UI_userSpeedOffset，0-33 km/h（0=关）</div></div>
-            <input class="inp" type="number" min="0" max="33" id="legacy-offset-inp" value="0" style="width:86px" onchange="saveLegacyOffset()">
-          </div>
-          <div class="setting-row">
-            <div><div class="setting-name">重写限速 <span class="exp-badge">Legacy</span></div><div class="setting-desc">0x438 visionSpeedSlider=100 覆盖限速</div></div>
-            <label class="tgl"><input type="checkbox" id="legacy-override-tgl" onchange="saveLegacyOverride()"><div class="tgl-track"></div></label>
-          </div>
         </div>
 
-        <div class="card">
-          <div class="card-title">Legacy CAN-A 诊断</div>
-          <div class="stats">
-            <div class="stat"><div class="stat-lbl">0x3EE mux0</div><div class="stat-val v-dim" id="legacy-health-mux0">--</div></div>
-            <div class="stat"><div class="stat-lbl">0x3EE mux1</div><div class="stat-val v-dim" id="legacy-health-mux1">--</div></div>
-            <div class="stat"><div class="stat-lbl">TWAI 状态</div><div class="stat-val v-dim" id="legacy-health-twai">--</div></div>
-            <div class="stat"><div class="stat-lbl">TEC/REC</div><div class="stat-val v-dim" id="legacy-health-tec-rec">--</div></div>
-            <div class="stat"><div class="stat-lbl">TX失败</div><div class="stat-val v-dim" id="legacy-health-tx-failed">0</div></div>
-            <div class="stat"><div class="stat-lbl">RX丢失</div><div class="stat-val v-dim" id="legacy-health-rx-missed">0</div></div>
-            <div class="stat"><div class="stat-lbl">健康状态</div><div class="stat-val v-dim" id="legacy-health-state">--</div></div>
-            <div class="stat"><div class="stat-lbl">最后阻止原因</div><div class="stat-val v-dim" id="legacy-health-blocked">--</div></div>
-          </div>
-        </div>
-
-        <div class="card cockpit-card" id="ap-core-card">
-          <div class="ck-head"><h3><span>🛡</span>AP 注入安全</h3><span class="ck-chip" id="ap-core-state-pill">等待 AP</span></div>
-          <div class="state-panel" id="ap-state-panel">
-            <div class="sp-label">AP 注入状态</div>
-            <div class="sp-val" id="ap-core-state-big">等待</div>
-            <div class="sp-desc" id="ap-core-state-detail">门控未触发</div>
-            <div class="gate-bar" id="ap-gate-bar"><i id="ap-gate-fill"></i></div>
-          </div>
-          <div class="src-row"><span>注入来源</span><b id="injection-source">Disabled</b></div>
-          <div class="ctl-section">注入门控（服务端强制）</div>
-          <div class="ctl-row"><div><div class="cn">控制位置</div><div class="cd">设置已收拢到「FSD 防护」页：总开关 → AP 注入门控 → 8.3.6防甩机制</div></div></div>
-          <div class="safety-strip">⚠️ <b>Fail-closed（不变）：</b>未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。</div>
-        </div>
           </div>
         </div>
       </div>
@@ -842,7 +785,15 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           <div class="mobile-remote-card"><div class="lbl">硬件模式</div><div class="val" id="m-hw">Auto</div></div>
           <div class="mobile-remote-card"><div class="lbl">帧率</div><div class="val" id="m-fps">0.0 Hz</div></div>
         </div>
-        <div class="mobile-risk-note">危险操作已收纳到底部导航的“更多”和对应二级页面；首页只保留现场安全遥控。</div>
+        <div class="mobile-risk-note">危险操作已收拢到首页「紧急控制」；遥控页仅保留现场安全操作。</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">紧急控制</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-danger" onclick="rebootDevice()" style="flex:1">重启设备</button>
+          <button class="btn" onclick="resetStats()" style="flex:1">重置计数</button>
         </div>
       </div>
     </div>
@@ -876,20 +827,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="sel-lbl">第四代</div>
       <div class="sel-name">HW4.0</div>
     </div>
-  </div>
-</div>
-
-<!-- AP Restore -->
-<div class="card">
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">AP 状态恢复</div>
-      <div class="setting-desc">重启后恢复上次 AP 配置</div>
-    </div>
-    <label class="tgl">
-      <input type="checkbox" id="hw-ap-restore" onchange="saveConfig()">
-      <div class="tgl-track"></div>
-    </label>
   </div>
 </div>
 
@@ -961,13 +898,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
   </div>
   <div class="mode-note">当前选择：<span id="drive-current">Normal</span></div>
-</div>
-<div class="card">
-  <div class="card-title">紧急控制</div>
-  <div style="display:flex;gap:8px">
-    <button class="btn btn-danger" onclick="rebootDevice()" style="flex:1">重启设备</button>
-    <button class="btn" onclick="resetStats()" style="flex:1">重置计数</button>
-  </div>
 </div>
     </div>
 
@@ -1339,6 +1269,18 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="setting-desc">重启后恢复上次 AP 配置</div>
     </div>
     <label class="tgl"><input type="checkbox" id="ap-auto-restore-tgl" onchange="saveApGateControls()"><div class="tgl-track"></div></label>
+  </div>
+  <div id="ap-core-card" style="margin:10px 0 2px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px">
+    <div class="ck-head"><h3><span>🛡</span>AP 注入安全</h3><span class="ck-chip" id="ap-core-state-pill">等待 AP</span></div>
+    <div class="state-panel" id="ap-state-panel">
+      <div class="sp-label">AP 注入状态</div>
+      <div class="sp-val" id="ap-core-state-big">等待</div>
+      <div class="sp-desc" id="ap-core-state-detail">门控未触发</div>
+      <div class="gate-bar" id="ap-gate-bar"><i id="ap-gate-fill"></i></div>
+    </div>
+    <div class="src-row"><span>注入来源</span><b id="injection-source">Disabled</b></div>
+    <div class="ctl-section">注入门控（服务端强制）</div>
+    <div class="safety-strip">⚠️ <b>Fail-closed（不变）：</b>未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。</div>
   </div>
   <div class="setting-row">
     <div>
@@ -2300,6 +2242,11 @@ async function poll(){
   if(otaCnt) fetchJson('/vehicle_ota_status').then(function(o){if(o)setText('s-vota-cnt',o.otaConfirmCount||0)}).catch(function(){});
   var ashut=$('ov-auto-shutdown');if(ashut)ashut.checked=!!d.autoShutdown;
   var woff=$('ov-wifi-auto-off');if(woff)woff.checked=!!d.wifiAutoOff;
+  var pwrIdle=$('ov-pwr-idle');
+  if(pwrIdle){
+    var canIdleS=Math.round((d.canIdleMs||0)/1000),webIdleS=Math.round((d.webIdleMs||0)/1000);
+    pwrIdle.textContent='CAN 空闲 '+canIdleS+'s · Web 空闲 '+webIdleS+'s · '+(d.wifiStaDisabled?'STA 已自动关闭':'STA 在线');
+  }
   var alertText=[];
   if(!d.can)alertText.push('CAN 离线');
   if(d.txerr)alertText.push('TX Err '+d.txerr);
@@ -2348,10 +2295,6 @@ async function poll(){
   updateHwCards(d.hw);
   updateProfileCards(d.sp);
   updateDriveCards(d.sp,d.spAuto,d.driveProfile,d.driveProfileName);
-
-  // AP restore / injection gate
-  var apR=$('hw-ap-restore');
-  if(apR)apR.checked=!!d.apAutoRestore;
 
   // Speed page
   updateSpeedPage(d);
@@ -2813,14 +2756,14 @@ async function saveSpeedCustom(){
 // ── Save Config (generic toggle) ───────────────────────────
 async function saveConfig(){
   var data={};
-  var apR=$('hw-ap-restore');
-  if(apR)data.apRestore=apR.checked?'1':'0';
   var bt=$('fsd-boot-tgl');
   if(bt)data.bootCan=bt.checked?'1':'0';
   try{await postForm('/config',data);}catch(e){}
 }
 // ap-gate-tgl (hardware page) removed: the gate toggle now lives on the
 // FSD-defense page as ap-core-gate-tgl, refreshed by renderApInjectionState().
+// hw-ap-restore (hardware page) removed in 5.0-beta01: AP 状态恢复 is
+// controlled from the FSD-defense page as ap-auto-restore-tgl.
 
 // ── AP injection core controls (standalone driving status) ────────────
 // AP-settle delay options removed in 4.5.0-beta06 (the 8.3.6 coordinator
@@ -3866,21 +3809,7 @@ function renderLegacyFsdPolicyCards(policy){
 async function loadLegacyFsdConfig(){
   var cfg=await fetchJson('/legacy_fsd_config');
   if(!cfg){legacyFsdConfigLoaded=false;return false;}
-  var mux1=document.getElementById('legacy-fsd-mux1-tgl');
-  var profile=document.getElementById('legacy-fsd-profile');
-  var vision=document.getElementById('legacy-fsd-vision');
-  if(mux1)mux1.checked=!!cfg.mux1;
-  if(profile)profile.checked=!!cfg.profile;
-  if(vision)vision.checked=!!cfg.vision;
   if(cfg.policy)renderLegacyFsdPolicyCards(cfg.policy);
-  // Task 6 UI 补全：从 /config fsdRuntime 读 Legacy offset + overrideSpeedLimit
-  var conf=await fetchJson('/config');
-  if(conf&&conf.fsdRuntime){
-    var offset=document.getElementById('legacy-offset-inp');
-    var override=document.getElementById('legacy-override-tgl');
-    if(offset&&conf.fsdRuntime.legacyOffset!==undefined)offset.value=conf.fsdRuntime.legacyOffset;
-    if(override)override.checked=!!conf.fsdRuntime.overrideSpeedLimit;
-  }
   legacyFsdConfigLoaded=true;
   return true;
 }
@@ -3890,69 +3819,12 @@ async function setLegacyFsdPolicy(policy){
   showToast(policy==='stable'?'Legacy Stable':(policy==='legacy_tesla_parity'?'Tesla Controller 对齐模式':'Experimental'));
   poll();
 }
-async function saveLegacyFsdExperimental(){
-  if(!legacyFsdConfigLoaded){
-    await loadLegacyFsdConfig();
-    if(!legacyFsdConfigLoaded){showToast('配置未同步，请稍后再试');return;}
-  }
-  var mux1=document.getElementById('legacy-fsd-mux1-tgl');
-  var profile=document.getElementById('legacy-fsd-profile');
-  await postForm('/legacy_fsd_config',{
-    policy:'experimental',
-    mux1:mux1&&mux1.checked?'1':'0',
-    profile:profile&&profile.checked?'1':'0'
-  });
-  showToast('实验模式配置已保存');
-  poll();
-}
-// Task 6 UI 补全：POST JSON 到 /config（fsdRuntime 块）
-async function postConfigJson(data){
-  var r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-  if(!r.ok)throw new Error('HTTP '+r.status);
-  return r;
-}
-// 功能1：Legacy 速度偏移（0x2F8 UI_userSpeedOffset，0-33 km/h）
-async function saveLegacyOffset(){
-  var el=document.getElementById('legacy-offset-inp');
-  if(!el)return;
-  var v=parseInt(el.value)||0;
-  if(v<0)v=0;if(v>33)v=33;el.value=v;
-  try{
-    await postConfigJson({fsdRuntime:{legacyOffset:v}});
-    showToast('Legacy 速度偏移已保存: '+v+' km/h',true);
-    poll();
-  }catch(e){showToast('保存失败');}
-}
-// 功能5a：重写限速（0x438 visionSpeedSlider=100）
-async function saveLegacyOverride(){
-  var el=document.getElementById('legacy-override-tgl');
-  if(!el)return;
-  try{
-    await postConfigJson({fsdRuntime:{overrideSpeedLimit:el.checked}});
-    showToast('重写限速已'+(el.checked?'开启':'关闭'),true);
-    poll();
-  }catch(e){showToast('保存失败');}
-}
-// 功能2：视觉限速 clear（独立于 policy，只 POST vision，Task 1 后端独立门控）
-async function saveLegacyVision(){
-  if(!legacyFsdConfigLoaded){
-    await loadLegacyFsdConfig();
-    if(!legacyFsdConfigLoaded){showToast('配置未同步，请稍后再试');return;}
-  }
-  var vision=document.getElementById('legacy-fsd-vision');
-  try{
-    await postForm('/legacy_fsd_config',{vision:vision&&vision.checked?'1':'0'});
-    showToast('视觉限速清除已'+(vision&&vision.checked?'开启':'关闭'),true);
-    poll();
-  }catch(e){showToast('保存失败');}
-}
+// 5.0-beta01: the five legacy experimental controls (mux1 / speed profile /
+// vision clear / legacy offset / speed-limit override) were removed from the
+// overview page; their save/load helpers went with them. Backend endpoints
+// and /status JSON keys are unchanged.
 function renderLegacyTruth(d){
   const set=(id,v)=>{const e=document.getElementById(id); if(e)e.innerText=v;};
-  set('legacy-selected-hw',hwLabel(d.hw));
-  set('legacy-effective-handler',d.hwName||hwLabel(d.effectiveHw));
-  set('legacy-detected-hw',hwLabel(d.hwDetected||0));
-  set('legacy-ap-gate',d.apGateOpen?'开放':'关闭');
-  set('legacy-ota-guard',d.vehicleOta?'已锁定':'正常');
   const fsd=d.fsdDiag||{};
   const m0=fsd.mux0||{};
   const m1=fsd.mux1||{};
@@ -3961,17 +3833,6 @@ function renderLegacyTruth(d){
   set('legacy-fsd-mux0',`RX ${m0.rx||0} / TX ${m0.tx||0} / ${m0.lastSkip||'无'}`);
   set('legacy-fsd-mux1',`RX ${m1.rx||0} / TX ${m1.tx||0} / ${m1.lastSkip||'无'}`);
   set('legacy-fsd-trigger',fsd.triggerSource||'未知');
-  const tw=d.twai||{};
-  const gate=fsd.gate||{};
-  const muxLine=(m)=>`RX ${m.rx||0} / TX ${m.tx||0} / ERR ${m.err||0} / ${m.lastSkip||'无'}`;
-  set('legacy-health-mux0',muxLine(m0));
-  set('legacy-health-mux1',muxLine(m1));
-  set('legacy-health-twai',tw.state||'unknown');
-  set('legacy-health-tec-rec',`${tw.tec||0}/${tw.rec||0}`);
-  set('legacy-health-tx-failed',tw.txFailed||0);
-  set('legacy-health-rx-missed',tw.rxMissed||0);
-  set('legacy-health-state',fsd.health||'unknown');
-  set('legacy-health-blocked',gate.lastBlockedBy||fsd.lastBlockedBy||fsd.gateReason||'none');
   const svc=d.serviceDiag||{};
   const svctx=svc.tx||{};
   set('service-burst-state',`${svc.lastCommand==='enter'?'进入':svc.lastCommand==='exit'?'退出':'无'} / 剩余 ${svc.remaining||0}`);

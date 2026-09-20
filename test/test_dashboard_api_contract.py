@@ -533,10 +533,16 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn('requiredStableMs', self.dash)
         self.assertNotIn('apStableMs', self.dash)
 
-    def test_legacy_can_a_health_ui_labels_are_present(self) -> None:
+    def test_legacy_can_a_health_ui_card_removed(self) -> None:
+        """5.0-beta01: the overview 'Legacy CAN-A 诊断' card was deleted.
+
+        Card-unique labels must stay gone from both the source and the
+        generated header. ('0x3EE mux0' still appears on the speed page and
+        'Tesla Controller 对齐模式' lives in the retained policy cards —
+        those are pinned by their own tests.)
+        """
         for token in [
             'Legacy CAN-A 诊断',
-            '0x3EE mux0',
             '0x3EE mux1',
             'TWAI 状态',
             'TEC/REC',
@@ -544,11 +550,25 @@ class DashboardApiContractTests(unittest.TestCase):
             'RX丢失',
             '健康状态',
             '最后阻止原因',
-            'Tesla Controller 对齐模式',
         ]:
             with self.subTest(token=token):
-                self.assertIn(token, self.ui)
-                self.assertIn(token, self.ui_gen)
+                self.assertNotIn(token, self.ui)
+                self.assertNotIn(token, self.ui_gen)
+
+    def test_legacy_runtime_status_card_removed(self) -> None:
+        """5.0-beta01: the overview 'Legacy 运行时状态' card was deleted."""
+        for token in [
+            'Legacy 运行时状态',
+            'id="legacy-selected-hw"',
+            'id="legacy-effective-handler"',
+            'id="legacy-detected-hw"',
+            'id="legacy-ap-gate"',
+            'id="legacy-ota-guard"',
+            'id="legacy-health-state"',
+        ]:
+            with self.subTest(token=token):
+                self.assertNotIn(token, self.ui)
+                self.assertNotIn(token, self.ui_gen)
 
     def test_legacy_fsd_policy_uses_selection_cards(self) -> None:
         """Regression: policy card container must use the 3-column selection-card layout."""
@@ -596,21 +616,20 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertRegex(self.ui_gen, pattern)
 
-    def test_legacy_fsd_mux1_checkbox_has_unique_toggle_id(self) -> None:
-        """Regression: mux1 checkbox and toggle must not share duplicate DOM ids."""
+    def test_legacy_fsd_mux1_toggle_removed_stat_tile_kept(self) -> None:
+        """5.0-beta01: the mux1 experimental checkbox row was deleted from
+        the FSD 注入策略 card; the retained mux1 policy stat tile keeps its
+        id exactly once (and must not collide with any removed control)."""
         self.assertIn('id="legacy-fsd-mux1"', self.ui)
-        self.assertIn('id="legacy-fsd-mux1-tgl"', self.ui)
-        self.assertIn("document.getElementById('legacy-fsd-mux1-tgl')", self.ui)
         self.assertEqual(self.ui.count('id="legacy-fsd-mux1"'), 1)
-        self.assertEqual(self.ui.count('id="legacy-fsd-mux1-tgl"'), 1)
+        self.assertNotIn('legacy-fsd-mux1-tgl', self.ui)
+        self.assertNotIn("document.getElementById('legacy-fsd-mux1-tgl')", self.ui)
 
         mux1_id = r'\bid=(?:"legacy-fsd-mux1"|legacy-fsd-mux1)(?=[\s>/])'
-        mux1_toggle_id = r'\bid=(?:"legacy-fsd-mux1-tgl"|legacy-fsd-mux1-tgl)(?=[\s>/])'
+        mux1_toggle_id = r'legacy-fsd-mux1-tgl'
         self.assertRegex(self.ui_gen, mux1_id)
-        self.assertRegex(self.ui_gen, mux1_toggle_id)
-        self.assertIn("document.getElementById('legacy-fsd-mux1-tgl')", self.ui_gen)
         self.assertEqual(len(re.findall(mux1_id, self.ui_gen)), 1)
-        self.assertEqual(len(re.findall(mux1_toggle_id, self.ui_gen)), 1)
+        self.assertNotRegex(self.ui_gen, mux1_toggle_id)
 
     def test_twai_diagnostics_are_exposed_for_legacy_can_a(self) -> None:
         twai = (ROOT / "include" / "drivers" / "twai_driver.h").read_text(encoding="utf-8")
@@ -717,10 +736,13 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("nvsLegacyOffset", body)
         self.assertIn("overrideSpeedLimit", body)
         self.assertIn("nvsOverrideSpeedLimit", body)
-        # UI 从 /config 的 fsdRuntime 读这两个字段（前后端契约对齐）
-        self.assertIn("fetchJson('/config')", self.ui)
-        self.assertIn("conf.fsdRuntime.legacyOffset", self.ui)
-        self.assertIn("conf.fsdRuntime.overrideSpeedLimit", self.ui)
+        # 5.0-beta01: the UI controls consuming fsdRuntime.legacyOffset /
+        # overrideSpeedLimit were removed from the FSD 注入策略 card, so the
+        # UI no longer fetches /config for them. The backend GET route and
+        # JSON block stay (API contract unchanged) — flip the UI pins.
+        self.assertNotIn("fetchJson('/config')", self.ui)
+        self.assertNotIn("conf.fsdRuntime.legacyOffset", self.ui)
+        self.assertNotIn("conf.fsdRuntime.overrideSpeedLimit", self.ui)
 
     def test_status_mux_json_is_closed_before_phase1_fields(self) -> None:
         """The /status JSON must close mux[] before appending Phase 1 root fields."""
@@ -1058,6 +1080,115 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("DASH_WAKE_PIN", power_header)
         self.assertIn("TWAI_RX_PIN", power_header)
         self.assertIn("dashPowerMgmtConfigureWake()", power_header)
+
+    def test_50b1_power_mgmt_runtime_fixes(self) -> None:
+        """5.0-beta01: auto shutdown wake polarity, STA auto-off suppression +
+        restore path, and /status idle observability keys."""
+        power_header = (ROOT / "include" / "dash_power_mgmt.h").read_text(encoding="utf-8")
+        # CAN idle bus is recessive (RXD HIGH): wake must arm on level 0 so
+        # only dominant traffic wakes the device (level 1 woke instantly).
+        self.assertIn("esp_sleep_enable_ext0_wakeup(DASH_WAKE_PIN, 0)", power_header)
+        self.assertNotIn("esp_sleep_enable_ext0_wakeup(DASH_WAKE_PIN, 1)", power_header)
+        # Web activity arms a one-shot restore; the disabled flag itself stays
+        # set until the main loop consumes it.
+        self.assertIn("wifiStaRestorePending", power_header)
+        self.assertIn("dashPowerMgmtConsumeStaRestore", power_header)
+
+        # dashCheckWifi must stay suppressed while STA is idle-disabled,
+        # otherwise its rotation drags WIFI_AP_STA back within seconds.
+        check_wifi = re.search(r"static void dashCheckWifi\(\)\s*\{.*?\n\}", self.dash, re.S)
+        self.assertIsNotNone(check_wifi)
+        self.assertIn("wifiNetworkCount == 0 || wifiStaDisabled", check_wifi.group(0))
+
+        # Main loop: restore branch + pre-sleep serial log.
+        loop = re.search(r"void mcpDashboardLoop\(\).*?\n\}", self.dash, re.S)
+        self.assertIsNotNone(loop)
+        loop_body = loop.group(0)
+        self.assertIn("dashPowerMgmtConsumeStaRestore()", loop_body)
+        self.assertIn("dashScheduleSTAConnect(1500)", loop_body)
+        self.assertIn("[PWR] Web activity detected, restoring WiFi STA", loop_body)
+        self.assertIn("[PWR] CAN idle >5min", loop_body)
+        self.assertIn("fflush(stdout)", loop_body)
+
+        # /status emission (bare numeric chain rule: ,"key": after numbers/bools).
+        for token in [
+            'j += ",\\"canIdleMs\\":',
+            'j += ",\\"webIdleMs\\":',
+            'j += ",\\"wifiStaDisabled\\":',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+
+        # UI power card read-only idle line consumes the new keys.
+        self.assertIn('id="ov-pwr-idle"', self.ui)
+        self.assertIn("d.canIdleMs", self.ui)
+        self.assertIn("d.wifiStaDisabled", self.ui)
+        # Simulator mirrors the three keys (beta07 lesson: a missing mirror
+        # field leaves the UI idle line dead in simulator smoke).
+        for token in (
+            '"canIdleMs":',
+            '"webIdleMs":',
+            '"wifiStaDisabled": False',
+        ):
+            self.assertIn(token, self.simulator)
+
+    def test_50b1_legacy_experimental_switch_nvs_reset(self) -> None:
+        """5.0-beta01: one-time NVS reset of the five removed legacy switches,
+        guarded by marker key ui_rst_50b1."""
+        load_prefs = re.search(r"static void dashLoadPrefs\(\)\s*\{.*?\n\}", self.dash, re.S)
+        self.assertIsNotNone(load_prefs)
+        body = load_prefs.group(0)
+        self.assertIn('prefs.getBool("ui_rst_50b1", false)', body)
+        self.assertIn('prefs.putBool("ui_rst_50b1", true)', body)
+        for key in ['"lfsd_m1"', '"lfsd_prof"', '"lfsd_vis"', '"fg"', '"fi"']:
+            with self.subTest(key=key):
+                self.assertIn(f"prefs.remove({key})", body)
+
+    def test_50b1_ui_relocation_pins(self) -> None:
+        """5.0-beta01: AP injection safety card lives on the defense page,
+        emergency controls live on the overview, hardware AP restore is gone."""
+        # Source header: quoted ids. ap-core-card must sit inside pg-defense
+        # (between its open tag and the next page container), not on the
+        # overview page anymore. Page order note: pg-hardware precedes
+        # pg-defense in the file, so containment ends at the NEXT page after
+        # pg-defense.
+        defense_open = self.ui.find('id="pg-defense"')
+        core_card = self.ui.find('id="ap-core-card"')
+        self.assertGreater(defense_open, -1)
+        self.assertGreater(core_card, defense_open)
+        next_page = re.compile(r'id="pg-[a-z]+"')
+        after_defense = next_page.search(self.ui, defense_open + 10)
+        self.assertIsNotNone(after_defense)
+        self.assertLess(core_card, after_defense.start())
+        # Generated header: minifier strips id quotes — use bare tokens.
+        gen_defense = self.ui_gen.find("id=pg-defense")
+        gen_core = self.ui_gen.find("id=ap-core-card")
+        self.assertGreater(gen_defense, -1)
+        self.assertGreater(gen_core, gen_defense)
+        gen_next = re.compile(r"id=pg-[a-z]+")
+        gen_after = gen_next.search(self.ui_gen, gen_defense + 10)
+        self.assertIsNotNone(gen_after)
+        self.assertLess(gen_core, gen_after.start())
+        # Emergency controls moved to the overview; handlers stay live.
+        self.assertIn('onclick="rebootDevice()"', self.ui)
+        self.assertIn('onclick="resetStats()"', self.ui)
+        # Hardware-page AP restore card removed. Pin on the id form — a
+        # tombstone comment legitimately mentions the bare token.
+        self.assertNotIn('id="hw-ap-restore"', self.ui)
+        self.assertNotIn("getElementById('hw-ap-restore')", self.ui)
+        self.assertNotIn("id=hw-ap-restore", self.ui_gen)
+        # The five experimental switch ids are gone from both headers.
+        for legacy_id in [
+            'legacy-fsd-mux1-tgl',
+            'legacy-fsd-profile',
+            'legacy-fsd-vision',
+            'legacy-offset-inp',
+            'legacy-override-tgl',
+        ]:
+            with self.subTest(legacy_id=legacy_id):
+                self.assertNotIn(f'"{legacy_id}"', self.ui)
+                self.assertNotIn(f"getElementById('{legacy_id}')", self.ui)
+                self.assertNotIn(legacy_id, self.ui_gen)
 
     def test_phase1_lilygo_release_defaults_injection_off(self) -> None:
         """LILYGO release profile should require explicit dashboard arming after boot."""
@@ -1983,7 +2114,6 @@ class DashboardApiContractTests(unittest.TestCase):
     def test_ui_explains_legacy_real_wiring_states(self) -> None:
         # Runtime / backend-backed Legacy real-wiring copy stays in the UI.
         for token in [
-            "Legacy 运行时状态",
             "FSD 注入策略",
             "稳定模式",
             "实验模式",
@@ -2107,7 +2237,7 @@ class DashboardApiContractTests(unittest.TestCase):
             'id="m-fps"',
             'id="m-alert"',
             '现场遥控',
-            '底部导航',
+            '紧急控制',
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
@@ -2171,8 +2301,8 @@ class DashboardApiContractTests(unittest.TestCase):
             'class="mobile-risk-note"',
             '现场遥控',
             '长按启用',
-            '危险操作已收纳',
-            '底部导航',
+            '危险操作已收拢到首页',
+            '仅保留现场安全操作',
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
@@ -2204,7 +2334,7 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
-        self.assertEqual("4.5.0-beta15", self.version.strip())
+        self.assertEqual("5.0.0-beta01", self.version.strip())
         self.assertIn('file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" PROJECT_VER LIMIT_COUNT 1)', self.cmake)
         self.assertIn("## [4.0.2] - 2026-05-31", self.changelog)
         self.assertIn("lilygo_t2can_dual", self.tests_workflow)

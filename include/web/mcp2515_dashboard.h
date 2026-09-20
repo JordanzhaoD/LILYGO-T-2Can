@@ -1933,6 +1933,21 @@ static void dashLoadPrefs()
 {
     prefs.begin(PREFS_NS, false);
     dashClearLegacyOptionPrefs();
+    // 5.0-beta01 one-time migration: the five legacy experimental injection
+    // controls (mux1 inject / speed-profile write / vision-limit clear /
+    // legacy speed offset 0x2F8 / speed-limit override 0x438) were removed
+    // from the UI. Clear their persisted values once so a stale experiment
+    // cannot keep running headless; the marker key makes it idempotent and
+    // the loads below then fall back to safe defaults (all off, offset 0).
+    if (!prefs.getBool("ui_rst_50b1", false))
+    {
+        prefs.remove("lfsd_m1");
+        prefs.remove("lfsd_prof");
+        prefs.remove("lfsd_vis");
+        prefs.remove("fg");
+        prefs.remove("fi");
+        prefs.putBool("ui_rst_50b1", true);
+    }
     bool hasStoredHw = prefs.isKey("hw");
     uint8_t storedHw = prefs.getUChar("hw", DASH_DEFAULT_HW);
     uint8_t storedDefaultHw = prefs.getUChar("hw_def", kDashUnsetU8);
@@ -3291,6 +3306,13 @@ static void handleStatus()
     j += autoShutdownEnabled ? "true" : "false";
     j += ",\"wifiAutoOff\":";
     j += wifiAutoOffEnabled ? "true" : "false";
+    // 功耗可观测性：两个空闲计时 + STA 是否已被自动关闭（UI 功耗卡只读行）
+    j += ",\"canIdleMs\":";
+    j += (unsigned long)(millis() - lastCanActivityMs);
+    j += ",\"webIdleMs\":";
+    j += (unsigned long)(millis() - lastWebActivityMs);
+    j += ",\"wifiStaDisabled\":";
+    j += wifiStaDisabled ? "true" : "false";
     j += ",\"fogStrategy\":";
     j += (int)dashRearFogStrategy;
     j += ",\"strobeCont\":";
@@ -5740,7 +5762,11 @@ static void performAutoUpdate(); // forward decl, defined below
 static void dashCheckWifi()
 {
     static unsigned long lastCheck = 0;
-    if (wifiNetworkCount == 0)
+    // Power management: STA was auto-disabled after web idle — suppress the
+    // reconnect rotation here until dashPowerMgmtConsumeStaRestore() re-arms
+    // it, otherwise this loop would drag WIFI_AP_STA back within seconds and
+    // undo the idle shutdown.
+    if (wifiNetworkCount == 0 || wifiStaDisabled)
         return;
     unsigned long now = millis();
     if (!staConnected && !staConnectAttemptActive && staRetryAt > 0 && (long)(now - staRetryAt) >= 0)
@@ -8383,9 +8409,28 @@ static void mcpDashboardLoop()
     {
         WiFi.mode(WIFI_AP);
         dashPowerMgmtMarkWifiDisabled();
+        // 同步 STA 状态机，防止 web 任务的重连循环立刻把它拉回
+        staConnected = false;
+        staConnectAttemptActive = false;
+        staRetryAt = 0;
         dashLog("[PWR] WiFi STA auto-off (idle timeout)");
     }
-    // Phase 1: 自动关机检查（deep sleep）
+    // Web 活动（面板重新打开）→ 恢复 STA。delay 1500ms 错开刚建立的 AP 会话
+    else if (dashPowerMgmtConsumeStaRestore())
+    {
+        if (WiFi.getMode() != WIFI_AP_STA)
+            WiFi.mode(WIFI_AP_STA);
+        dashScheduleSTAConnect(1500);
+        dashLog("[PWR] Web activity detected, restoring WiFi STA");
+    }
+    // Phase 1: 自动关机检查（deep sleep）—— 日志放在 loop 层
+    // （dash_power_mgmt.h 无 dashLog/Serial 依赖），确保睡前理由落串口
+    if (autoShutdownEnabled && (millis() - lastCanActivityMs) > CAN_TIMEOUT_MS)
+    {
+        dashLog("[PWR] CAN idle >5min, entering deep sleep (wake on CAN traffic)");
+        // ESP-IDF6 shim 的 SerialClass 走 stdio 且无 flush() 成员，用可移植形式
+        fflush(stdout);
+    }
     dashPowerMgmtTick();
 }
 

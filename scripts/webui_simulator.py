@@ -198,6 +198,14 @@ class SimState:
             "vehicleOta": self.vehicle_ota,
             "autoShutdown": self.auto_shutdown,
             "wifiAutoOff": self.wifi_auto_off,
+            # 5.0-beta01 power observability: the overview power card's
+            # read-only idle line reads these from /status. The simulated
+            # bus always has traffic and the polling panel counts as web
+            # activity, so both idle timers stay small and the STA flag
+            # reads "online" (firmware emits the same keys).
+            "canIdleMs": (self.uptime() % 30) * 1000 + 250,
+            "webIdleMs": (self.uptime() % 3) * 1000 + 600,
+            "wifiStaDisabled": False,
             "fogStrategy": self.rear_fog_value,
             "strobeCont": False,
             "dndVolume": self.dnd_volume,
