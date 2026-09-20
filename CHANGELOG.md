@@ -1,5 +1,54 @@
 # Changelog
 
+## [5.0.0-beta01] - 2026-09-20
+
+### Changed
+
+- **Overview page slimmed down.** The "Legacy runtime status" card, the
+  "Legacy CAN-A diagnostics" card, and the five experimental switches inside
+  the "FSD injection policy" card (mux1 injection, profile write, vision
+  limit clear, legacy speed offset, speed limit override) are removed from
+  the UI. The three policy cards and four policy status tiles remain.
+  Backend endpoints and `/status` JSON keys are unchanged.
+- **AP injection safety block relocated.** The overview-page AP injection
+  safety card now lives on the FSD defense page, directly under the AP gate
+  controls. All inner element ids are preserved, so rendering is unchanged.
+- **Emergency controls promoted to the overview page.** The "Emergency
+  controls" card (device reboot, counter reset) moved from the drive style
+  page to the bottom of the overview page and is now visible on both the
+  in-car and phone layouts. The phone remote page keeps only field-safe
+  operations.
+- **Hardware page AP restore toggle consolidated.** The AP state restore
+  card was removed from the hardware page; the equivalent toggle on the FSD
+  defense page (`ap-auto-restore-tgl`) remains the single control point for
+  the same backend setting.
+- **Power management card observability.** A read-only line in the power
+  management card now shows CAN idle seconds, web idle seconds, and whether
+  STA was auto-disabled, fed by new `/status` keys `canIdleMs`,
+  `webIdleMs`, and `wifiStaDisabled`.
+
+### Removed
+
+- **Five legacy experimental switches are also reset once in NVS.** A
+  one-time migration (marker `ui_rst_50b1`) clears the persisted values for
+  mux1 injection, profile write, vision limit clear, legacy speed offset,
+  and speed limit override on first boot of this firmware, so previously
+  stored experimental states can no longer take effect silently.
+
+### Fixed
+
+- **Wi-Fi auto-off actually sticks now.** Previously the dashboard's STA
+  reconnect loop forced `WIFI_AP_STA` back within seconds of the idle
+  shutdown, and opening the web panel again cleared the disabled flag with
+  no restore path. The reconnect loop now stays suppressed while STA is
+  idle-disabled, and web activity (opening the panel) restores STA within
+  about a second.
+- **Auto shutdown wake polarity corrected.** The deep-sleep ext0 wake on
+  the CAN RX pin was configured for level 1, which is the recessive
+  (idle) bus level, so the device woke immediately and auto shutdown never
+  held. Wake is now armed on level 0 (dominant, i.e. real bus traffic),
+  and a serial log line is emitted before entering deep sleep.
+
 ## [4.5.0-beta15] - 2026-09-15
 
 ### Removed
