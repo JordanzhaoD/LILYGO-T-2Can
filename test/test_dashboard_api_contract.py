@@ -2382,7 +2382,7 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
-        self.assertEqual("5.0.0-beta02", self.version.strip())
+        self.assertEqual("5.0.0-beta03", self.version.strip())
         self.assertIn('file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" PROJECT_VER LIMIT_COUNT 1)', self.cmake)
         self.assertIn("## [4.0.2] - 2026-05-31", self.changelog)
         self.assertIn("lilygo_t2can_dual", self.tests_workflow)
@@ -2505,7 +2505,8 @@ class DashboardApiContractTests(unittest.TestCase):
         both surfaces, the simulator key set, the four VEH-filtered
         observation feeds, and the wheel-DND arbitration stay in lockstep.
         (The plan's "23 keys" was a miscount — struct, emission, simulator,
-        and the single-CAN firmware all carry 22.)"""
+        and the single-CAN firmware all carry 22.)
+        5.0.0-beta03 adds bit46LandingShots (EAP-landing one-shot) → 23."""
         # 1. Emission literals in order: extracting every R"JSON(...)JSON"
         #    wrapper from appendJitterDiagJson must yield exactly this
         #    sequence — key order AND chain-rule leading-quote forms in one
@@ -2516,11 +2517,12 @@ class DashboardApiContractTests(unittest.TestCase):
         keys = [
             "requested", "effective", "apGateOpen", "permit", "phase", "reason",
             "apState", "cycles", "cancels", "requests", "reengagedFsd",
-            "reengagedEap", "bit46Shots", "bit46Refreshes", "pumpFrames",
+            "reengagedEap", "bit46Shots", "bit46Refreshes", "bit46LandingShots",
+            "pumpFrames",
             "txOk", "txFail", "steerAborts", "steerResets", "apErrorResets",
             "timeoutResets", "failedCycles",
         ]
-        self.assertEqual(len(keys), 22)
+        self.assertEqual(len(keys), 23)
         lits = re.findall(r'R"JSON\((.*?)\)JSON"', jitter_fn)
         self.assertEqual(
             lits,
@@ -2530,7 +2532,8 @@ class DashboardApiContractTests(unittest.TestCase):
                 ',"phase":"', '","reason":"', '","apState":',
                 ',"cycles":', ',"cancels":', ',"requests":',
                 ',"reengagedFsd":', ',"reengagedEap":',
-                ',"bit46Shots":', ',"bit46Refreshes":', ',"pumpFrames":',
+                ',"bit46Shots":', ',"bit46Refreshes":', ',"bit46LandingShots":',
+                ',"pumpFrames":',
                 ',"txOk":', ',"txFail":', ',"steerAborts":', ',"steerResets":',
                 ',"apErrorResets":', ',"timeoutResets":', ',"failedCycles":',
                 '}',

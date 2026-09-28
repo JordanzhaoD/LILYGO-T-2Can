@@ -4105,6 +4105,11 @@ static void appendJitterDiagJson(String &j)
     // a field session can verify refreshes ~= requests directly).
     j += R"JSON(,"bit46Refreshes":)JSON";
     j += jt.bit46Refreshes;
+    // 5.0.0-beta03 EAP-landing one-shots: bit46 clones at the state-3
+    // landing edge that upgrade a restalk from EAP to FSD (field-verified
+    // mechanism; distinct counter so landing shots ~= reengagedEap holds).
+    j += R"JSON(,"bit46LandingShots":)JSON";
+    j += jt.bit46LandingShots;
     j += R"JSON(,"pumpFrames":)JSON";
     j += jt.pumpFrames;
     j += R"JSON(,"txOk":)JSON";

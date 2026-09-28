@@ -610,6 +610,7 @@ class Handler(BaseHTTPRequestHandler):
                             "reengagedEap": 0,
                             "bit46Shots": 0,
                             "bit46Refreshes": 0,
+                            "bit46LandingShots": 0,
                             "pumpFrames": 0,
                             "txOk": 0,
                             "txFail": 0,

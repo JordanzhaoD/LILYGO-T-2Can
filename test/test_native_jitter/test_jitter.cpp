@@ -768,6 +768,99 @@ void test_v1192_landing_split_fsd_vs_eap()
     TEST_ASSERT_EQUAL_UINT32(2, d.cancels);
 }
 
+// ─── 5.0.0-beta03 EAP-landing one-shot (Plan A) ───────────────────────
+
+void test_beta03_landing_shot_fires_at_eap_landing()
+{
+    // E7/E8 field data: every human restalk during the disengage window
+    // landed EAP (13/13) because the paused base bit46 path left the
+    // state-3 acquisition window empty. One clone at the landing edge
+    // upgrades the engaged vehicle to FSD within ~100 ms (11/11 field
+    // upgrades followed a bit46 frame by 14-104 ms).
+    DashJitterProcedure p;
+    arm(p);
+    uint8_t tmpl[8] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x00, 0x26, 0x27};
+    p.observeNative3eeMux0(tmpl, 900);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);
+    uint8_t out[8];
+    TEST_ASSERT_EQUAL(JitterAction::Bit46Shot, p.tick(1015, out)); // arming shot
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().bit46Shots);
+    p.observeDasStatus(1, 1040);
+    p.observeDasStatus(2, 1050);                                   // re-request: refresh queued + pump started
+    TEST_ASSERT_EQUAL(JitterAction::Bit46Shot, p.tick(1055, out)); // refresh
+    // Human restalk lands EAP while the procedure still runs.
+    p.observeDasStatus(3, 1200); // EAP landing -> landing shot queued
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().reengagedEap);
+    TEST_ASSERT_EQUAL_STRING("reEngagedEap", p.diag().reason);
+    // No fresh 0x045 carrier at 1205 (last seen 1000, >47 ms): the ONLY
+    // emittable frame is the landing shot.
+    TEST_ASSERT_EQUAL(JitterAction::Bit46Shot, p.tick(1205, out));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(tmpl, out, 5); // same clone builder
+    TEST_ASSERT_EQUAL_UINT8(0x43, out[5]);
+    TEST_ASSERT_EQUAL_UINT8(tmpl[6], out[6]);
+    DashJitterDiag d = p.diag();
+    TEST_ASSERT_EQUAL_UINT32(1, d.bit46LandingShots);
+    TEST_ASSERT_EQUAL_UINT32(1, d.bit46Shots); // counters stay split
+    TEST_ASSERT_EQUAL_UINT32(1, d.bit46Refreshes);
+    TEST_ASSERT_EQUAL(JitterPhase::Disengaging, d.phase); // landing stays in
+    // The upgrade the shot exists for: state 6 follows within ~100 ms.
+    p.observeDasStatus(6, 1300);
+    d = p.diag();
+    TEST_ASSERT_EQUAL_UINT32(1, d.reengagedFsd);
+    TEST_ASSERT_EQUAL_UINT32(1, d.reengagedEap);
+    TEST_ASSERT_EQUAL_STRING("reEngagedFsd", d.reason);
+    TEST_ASSERT_EQUAL_UINT32(1, d.cancels); // no second cancel burst
+    TEST_ASSERT_EQUAL_UINT32(1, d.requests);
+    // No second landing shot without another EAP landing edge.
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(1305, out));
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().bit46LandingShots);
+}
+
+void test_beta03_landing_shot_skipped_without_fresh_template()
+{
+    // Fail-closed skip mirrors the other one-shots: no fresh native 0x3EE
+    // template -> no landing frame, but the landing still counts and the
+    // procedure walks on (the base bit46 path re-opens after the cycle
+    // ends and covers the upgrade ~1 s later).
+    DashJitterProcedure p;
+    arm(p);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);
+    p.observeDasStatus(1, 1040);
+    p.observeDasStatus(2, 1050);
+    p.observeDasStatus(3, 1200); // EAP landing, no template ever cached
+    uint8_t out[8];
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(1205, out));
+    TEST_ASSERT_EQUAL_UINT32(0, p.diag().bit46LandingShots);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().reengagedEap); // landing counted
+    TEST_ASSERT_EQUAL(JitterPhase::Disengaging, p.diag().phase);
+}
+
+void test_beta03_pending_landing_shot_dies_with_reset()
+{
+    // A queued landing shot must not fire after the cycle dies: the
+    // deadline check runs before the emission blocks and fullReset clears
+    // all three one-shot queues. The landing itself had already set
+    // engagedAfterRequest_, so the reset bills the cycle as a success.
+    DashJitterProcedure p;
+    arm(p);
+    uint8_t tmpl[8] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x00, 0x26, 0x27};
+    p.observeNative3eeMux0(tmpl, 900);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);
+    p.observeDasStatus(1, 1040);
+    p.observeDasStatus(2, 1050);
+    p.observeDasStatus(3, 1200); // EAP landing -> shot queued
+    p.setPermit(false);          // permitLost full reset
+    uint8_t out[8];
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(1205, out));
+    TEST_ASSERT_EQUAL_UINT32(0, p.diag().bit46LandingShots);
+    TEST_ASSERT_EQUAL_UINT8(0, p.diag().failedCycles); // success billing
+    TEST_ASSERT_EQUAL(JitterPhase::Idle, p.diag().phase);
+    TEST_ASSERT_EQUAL_STRING("permitLost", p.diag().reason);
+}
+
 // ─── diag snapshot ────────────────────────────────────────────────────
 void test_diag_reflects_armed_state()
 {
@@ -846,6 +939,11 @@ int main()
     RUN_TEST(test_v1192_refresh_skipped_without_fresh_template);
     RUN_TEST(test_v1192_pending_refresh_dies_with_reset);
     RUN_TEST(test_v1192_landing_split_fsd_vs_eap);
+
+    // 5.0.0-beta03 EAP-landing one-shot (Plan A)
+    RUN_TEST(test_beta03_landing_shot_fires_at_eap_landing);
+    RUN_TEST(test_beta03_landing_shot_skipped_without_fresh_template);
+    RUN_TEST(test_beta03_pending_landing_shot_dies_with_reset);
 
     // Diag
     RUN_TEST(test_diag_reflects_armed_state);

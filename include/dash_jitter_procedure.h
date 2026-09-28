@@ -123,15 +123,16 @@ struct DashJitterDiag
     bool permit = false;
     JitterPhase phase = JitterPhase::Inert;
     const char *reason = "off";
-    uint8_t apState = 0;         // last observed 0x399 low nibble
-    uint8_t cycles = 0;          // cancel/re-request cycles this period
-    uint32_t cancels = 0;        // cancel bursts started
-    uint32_t requests = 0;       // re-request bursts started
-    uint32_t reengagedFsd = 0;   // landings in state 6 after our 0x42
-    uint32_t reengagedEap = 0;   // landings in state 3 after our 0x42
-    uint32_t bit46Shots = 0;     // arming one-shot 0x3EE frames emitted
-    uint32_t bit46Refreshes = 0; // v1.19.2 pre-re-request refresh frames
-    uint32_t pumpFrames = 0;     // synthetic 0x045 frames emitted
+    uint8_t apState = 0;            // last observed 0x399 low nibble
+    uint8_t cycles = 0;             // cancel/re-request cycles this period
+    uint32_t cancels = 0;           // cancel bursts started
+    uint32_t requests = 0;          // re-request bursts started
+    uint32_t reengagedFsd = 0;      // landings in state 6 after our 0x42
+    uint32_t reengagedEap = 0;      // landings in state 3 after our 0x42
+    uint32_t bit46Shots = 0;        // arming one-shot 0x3EE frames emitted
+    uint32_t bit46Refreshes = 0;    // v1.19.2 pre-re-request refresh frames
+    uint32_t bit46LandingShots = 0; // EAP-landing one-shots (see tick comment)
+    uint32_t pumpFrames = 0;        // synthetic 0x045 frames emitted
     uint32_t txOk = 0;
     uint32_t txFail = 0;
     uint32_t steerAborts = 0;   // >45° burst aborts
@@ -192,6 +193,7 @@ struct DashJitterProcedure
     // ── pending one-shot ────────────────────────────────────────────────
     bool bit46Queued_ = false;        // arming-entry one-shot (LittleGong)
     bool bit46RefreshQueued_ = false; // v1.19.2 pre-re-request refresh (ours)
+    bool bit46LandingQueued_ = false; // EAP-landing one-shot (ours, beta03)
 
     // ── 0x488 steering angle ────────────────────────────────────────────
     float steerAngleDeg_ = 0.0f;
@@ -204,6 +206,7 @@ struct DashJitterProcedure
     uint32_t reengagedEap_ = 0;
     uint32_t bit46Shots_ = 0;
     uint32_t bit46Refreshes_ = 0;
+    uint32_t bit46LandingShots_ = 0;
     uint32_t pumpFrames_ = 0;
     uint32_t txOk_ = 0;
     uint32_t txFail_ = 0;
@@ -295,6 +298,7 @@ struct DashJitterProcedure
         pumpActive_ = false;
         bit46Queued_ = false;
         bit46RefreshQueued_ = false;
+        bit46LandingQueued_ = false;
         deadlineMs_ = 0;
         engagedAfterRequest_ = false;
     }
@@ -434,8 +438,19 @@ struct DashJitterProcedure
             {
                 // ...and state 3 is the EAP landing (v1.19.1 counted both
                 // as one success, hiding the ~30% FSD rate in the field).
+                // 5.0.0-beta03 (E7/E8 field data): the EAP landing is a
+                // human restalk that arrived while the base bit46 path was
+                // paused by this very procedure — the vehicle saw no bit46
+                // inside its state-3 acquisition window and engaged EAP
+                // (13/13 field landings). Queue one clone here: it reaches
+                // the bus 1-2 ticks later, and the field data shows a bit46
+                // frame arriving while the vehicle is engaged upgrades it
+                // to FSD within 14-104 ms (11/11). Extends the proven
+                // arming one-shot to the landing edge (not LittleGong's —
+                // their machine never survived long enough to see this).
                 engagedAfterRequest_ = true;
                 ++reengagedEap_;
+                bit46LandingQueued_ = true;
                 reason_ = "reEngagedEap";
             }
             else if (apState >= 8 && apState <= 10)
@@ -521,6 +536,24 @@ struct DashJitterProcedure
             // Stale template: skipped fail-closed, the 0x42 pump still runs.
         }
 
+        // 5.0.0-beta03 EAP-landing one-shot: a human restalk during the
+        // disengage window engages the vehicle as EAP (the acquisition
+        // window saw no bit46 — the paused base path is this procedure's
+        // own doing). One clone right at the landing edge hands the vehicle
+        // the unlock while it is engaged, upgrading EAP -> FSD in ~100 ms
+        // (E7/E8: 11/11 upgrades followed a bit46 frame by 14-104 ms) so
+        // the driver no longer waits out the 5 s deadline tail. Same
+        // fail-closed template freshness as the other one-shots.
+        if (bit46LandingQueued_)
+        {
+            bit46LandingQueued_ = false;
+            if (emitBit46Clone(outData, nowMs))
+            {
+                ++bit46LandingShots_;
+                return JitterAction::Bit46Shot;
+            }
+        }
+
         // Carrier-locked 0x045 pump: only transmit riding right behind a
         // fresh native frame (<47 ms old), >=3 ms apart, <=16 per burst.
         if (pumpActive_)
@@ -580,6 +613,7 @@ struct DashJitterProcedure
         d.reengagedEap = reengagedEap_;
         d.bit46Shots = bit46Shots_;
         d.bit46Refreshes = bit46Refreshes_;
+        d.bit46LandingShots = bit46LandingShots_;
         d.pumpFrames = pumpFrames_;
         d.txOk = txOk_;
         d.txFail = txFail_;

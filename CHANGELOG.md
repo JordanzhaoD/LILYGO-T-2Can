@@ -1,5 +1,32 @@
 # Changelog
 
+## [5.0.0-beta03] - 2026-09-29
+
+### Added
+
+- **EAP-landing bit46 one-shot upgrades a restalk to FSD in place.**
+  Field data from two instrumented drives (E7/E8) showed every human
+  restalk during the disengage window landed EAP (13/13) — the state-3
+  acquisition window saw no bit46 because the paused base path is the
+  procedure's own doing — and the vehicle upgraded to FSD within
+  14-104 ms whenever a bit46 frame arrived while engaged (11/11). The
+  state-3 landing edge now queues one clone (same fail-closed template
+  freshness gate as the arming shot) so the driver no longer waits out
+  the 5 s deadline tail for the base path to resume. New diag counter
+  `bit46LandingShots` (expected to track `reengagedEap` in the field);
+  `bit46Shots` and `bit46Refreshes` stay split.
+
+### Fixed
+
+- **Parked no longer rises on a single corrupted gear frame.** One
+  glitched 0x118/0x186 frame decoded as Park mid-drive (observed in
+  the E7 recording while the car was rolling) reset a running JITTER
+  cycle, swallowed its re-request, cleared the session budget, and
+  spuriously opened the AP injection gate. Parked now rises only after
+  3 consecutive P readings shared across both gear sources (280 and
+  390); any non-P gear clears it instantly, and a Parked that is
+  already true (the boot default while the DI is asleep) stays true.
+
 ## [5.0.0-beta02] - 2026-09-20
 
 ### Fixed

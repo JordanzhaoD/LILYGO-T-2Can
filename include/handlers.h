@@ -297,6 +297,34 @@ struct CarManagerBase
             clearSummonOnPark();
     }
 
+    // 5.0.0-beta03 (E7 field data): a single corrupted 0x118/0x186 gear
+    // frame decoded as Park mid-drive (E7 t=5.5-8.0s, rolling) reset a
+    // running JITTER cycle, swallowed its re-request, cleared the session
+    // budget, and spuriously opened the AP injection gate. Parked now
+    // rises only after kParkedDebounceFrames consecutive P readings; any
+    // non-P gear clears it instantly (driving must never be masked by a
+    // stale latch). A Parked that is already true (boot default while the
+    // DI is asleep) stays true — the debounce only guards the rise.
+    static constexpr uint8_t kParkedDebounceFrames = 3;
+    uint8_t parkedStreak_ = 0;
+
+    void applyGear(uint8_t gear)
+    {
+        currentGear = gear;
+        if (isVehicleParked(gear))
+        {
+            if (parkedStreak_ < 255)
+                ++parkedStreak_;
+            if ((bool)Parked || parkedStreak_ >= kParkedDebounceFrames)
+                Parked = true;
+        }
+        else
+        {
+            parkedStreak_ = 0;
+            Parked = false;
+        }
+    }
+
     // Process DI_systemStatus (CAN 280) — gear + summon update.
     // Returns true if the frame was handled.
     bool handleDISystemStatus(const CanFrame &frame)
@@ -304,8 +332,7 @@ struct CarManagerBase
         if (frame.id != 280 || frame.dlc < 3)
             return false;
         uint8_t diGear = readDIGear(frame);
-        currentGear = diGear;
-        Parked = isVehicleParked(diGear);
+        applyGear(diGear);
         updateSummonFromDISystemStatus(frame);
         clearSummonOnParkIfAcaInactive(diGear);
         return true;
@@ -318,8 +345,7 @@ struct CarManagerBase
         if (frame.id != 390 || frame.dlc < 8)
             return false;
         uint8_t difGear = readVehicleGear(frame);
-        currentGear = difGear;
-        Parked = isVehicleParked(difGear);
+        applyGear(difGear);
         clearSummonOnParkIfAcaInactive(difGear);
         return true;
     }

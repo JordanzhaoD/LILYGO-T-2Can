@@ -439,6 +439,83 @@ void test_hw4_gear_drive_clears_parked()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
+// ─── 5.0.0-beta03 Parked debounce (Plan C, E7 field data) ─────────────
+
+static CanFrame hw4GearFrame390(uint8_t gear)
+{
+    CanFrame f = {.id = 390};
+    f.dlc = 8;
+    f.data[7] = static_cast<uint8_t>(gear << 3);
+    return f;
+}
+
+static CanFrame hw4GearFrame280(uint8_t gear)
+{
+    CanFrame f = {.id = 280};
+    f.dlc = 8;
+    f.data[2] = static_cast<uint8_t>(gear << 5); // DI_gear bits 5-7
+    return f;
+}
+
+void test_beta03_single_park_glitch_mid_drive_does_not_mark_parked()
+{
+    // E7 field data (2026-09-28): a single corrupted 0x118/0x186 gear
+    // frame decoded as Park mid-drive reset a running JITTER cycle,
+    // swallowed its re-request, and spuriously opened the AP injection
+    // gate. Parked now rises only after 3 consecutive P readings.
+    CanFrame drive = hw4GearFrame390(4);
+    CanFrame glitch = hw4GearFrame390(1);
+    handler.handleMessage(drive, mock);
+    TEST_ASSERT_FALSE(handler.Parked);
+
+    handler.handleMessage(glitch, mock); // corrupted P frame
+    TEST_ASSERT_FALSE(handler.Parked);   // debounce swallows it
+
+    handler.handleMessage(drive, mock); // still driving
+    TEST_ASSERT_FALSE(handler.Parked);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+void test_beta03_park_debounce_three_consecutive_p_frames()
+{
+    CanFrame drive = hw4GearFrame390(4);
+    CanFrame park = hw4GearFrame390(1);
+    handler.handleMessage(drive, mock); // D first
+    TEST_ASSERT_FALSE(handler.Parked);
+
+    handler.handleMessage(park, mock);
+    TEST_ASSERT_FALSE(handler.Parked); // 1/3
+    handler.handleMessage(park, mock);
+    TEST_ASSERT_FALSE(handler.Parked); // 2/3
+    handler.handleMessage(park, mock);
+    TEST_ASSERT_TRUE(handler.Parked); // 3/3 — a real Park
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+void test_beta03_park_debounce_counts_across_gear_sources()
+{
+    // 280 (DI_systemStatus) and 390 (DI_vehicleStatus) both feed the
+    // same debounce streak — mixed-source P readings must reach 3, and
+    // any non-P frame resets the streak.
+    CanFrame drive = hw4GearFrame390(4);
+    CanFrame park390 = hw4GearFrame390(1);
+    CanFrame park280 = hw4GearFrame280(1);
+    CanFrame drive280 = hw4GearFrame280(4);
+    handler.handleMessage(drive, mock); // D first
+    TEST_ASSERT_FALSE(handler.Parked);
+
+    handler.handleMessage(park390, mock); // 1/3 via 390
+    handler.handleMessage(park280, mock); // 2/3 via 280
+    TEST_ASSERT_FALSE(handler.Parked);
+    handler.handleMessage(drive280, mock); // D resets the streak
+    TEST_ASSERT_FALSE(handler.Parked);
+    handler.handleMessage(park280, mock); // 1/3 again
+    handler.handleMessage(park280, mock); // 2/3
+    TEST_ASSERT_FALSE(handler.Parked);
+    handler.handleMessage(park390, mock); // 3/3 — mixed sources
+    TEST_ASSERT_TRUE(handler.Parked);
+}
+
 // --- Filter IDs ---
 
 void test_hw4_filter_ids_count()
@@ -581,6 +658,10 @@ int main()
     RUN_TEST(test_hw4_gw_autopilot_mux2_updates_state_without_send);
     RUN_TEST(test_hw4_gear_park_marks_parked);
     RUN_TEST(test_hw4_gear_drive_clears_parked);
+    // 5.0.0-beta03 Parked debounce (Plan C)
+    RUN_TEST(test_beta03_single_park_glitch_mid_drive_does_not_mark_parked);
+    RUN_TEST(test_beta03_park_debounce_three_consecutive_p_frames);
+    RUN_TEST(test_beta03_park_debounce_counts_across_gear_sources);
 
     RUN_TEST(test_hw4_ban_shield_blocks_changed_2047_mux2);
 
