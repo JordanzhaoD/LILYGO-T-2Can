@@ -1163,11 +1163,11 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 <!-- Independent defense master and feature toggles -->
 <div class="card cockpit-card">
   <div class="card-title">FSD 防护状态</div>
-  <div class="card-subtitle">通用防御、Legacy 0x370 与左滚轮 DND 分别独立控制</div>
+  <div class="card-subtitle">通用防御与左滚轮 DND 分别独立控制</div>
   <div class="setting-row">
     <div>
       <div class="setting-name">FSD 防御总开关</div>
-      <div class="setting-desc">仅联动 Ban Shield 通用防御；Legacy 0x370 NAG、左滚轮免打扰与 8.3.6防甩机制不受此开关联动</div>
+      <div class="setting-desc">仅联动 Ban Shield 通用防御；左滚轮免打扰与 8.3.6防甩机制不受此开关联动</div>
     </div>
     <label class="tgl">
       <input type="checkbox" id="def-master-tgl" onchange="saveDefenseConfig()">
@@ -1220,24 +1220,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="diag-grid" style="margin:6px 0 4px">
     <div class="diag-item"><span class="lbl">Abort Guard</span><span class="v-dim" id="def-abort-state">关闭</span></div>
-  </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">Legacy 0x370 NAG 主路径</div>
-      <div class="setting-desc">独立开关直连：Legacy + CAN + AP上下文 + 原生0x370；2050零点，硬限制 ±1.8 Nm；仅即时counter冲突连续3次降级</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="def-bionic-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
-  <div class="diag-grid" style="margin:8px 0 4px">
-    <div class="diag-item"><span class="lbl">运行模式</span><span class="v-acc" id="legacy-nag-mode">idle</span></div>
-    <div class="diag-item"><span class="lbl">目标通道</span><span class="v-info" id="legacy-nag-bus">AUTO</span></div>
-    <div class="diag-item"><span class="lbl">原生/发送</span><span class="v-dim" id="legacy-nag-rxtx">0 / 0</span></div>
-    <div class="diag-item"><span class="lbl">AP/Hands</span><span class="v-dim" id="legacy-nag-context">-- / --</span></div>
-    <div class="diag-item"><span class="lbl">当前状态</span><span class="v-dim" id="legacy-nag-state">等待</span></div>
-    <div class="diag-item"><span class="lbl">覆盖率/静默</span><span class="v-dim" id="legacy-nag-coverage">0% / 0 ms</span></div>
-    <div class="diag-item"><span class="lbl">重试/降级</span><span class="v-dim" id="legacy-nag-retry">0 / 正常</span></div>
-    <div class="diag-item"><span class="lbl">回声/跟随/冲突</span><span class="v-dim" id="legacy-nag-collision">0 / 0 / 0</span></div>
-    <div class="diag-item"><span class="lbl">阻断原因</span><span class="v-dim" id="legacy-nag-block">disabled</span></div>
   </div>
   <div class="setting-row">
     <div>
@@ -2200,7 +2182,7 @@ async function poll(){
   setStatusTriplet('module',d.ci?'FSD ON':'FSD OFF','启动保存: '+((d.bootCan!==undefined?d.bootCan:d.ci)?'ON':'OFF'),d.can?'CAN Online':'CAN Offline',d.can?'ok':'err');
   setStatusTriplet('hw',(d.hwName||hwLabel(d.hw)),'mode_hw: '+(d.hwName||hwLabel(d.hw)),(d.can?'CAN运行 / ':'CAN离线 / ')+(d.hwName||hwLabel(d.hw)),d.can?'ok':'warn');
   setStatusTriplet('speed','偏移 '+(d.soff!==undefined?d.soff:'--'),driveLabel(d.sp,d.spAuto),d.fusedSpeedLimitKph?('Fused '+d.fusedSpeedLimitKph+' kph'):'CAN未给出速度',d.can?'ok':'warn');
-  setStatusTriplet('defense',d.defenseEnabled?'防御 ON':'防御 OFF','slew '+(d.hw3OffsetSlew?'ON':'OFF'),'NAG '+(d.bionicSteering?'ON':'OFF'),d.defenseEnabled?'ok':'warn');
+  setStatusTriplet('defense',d.defenseEnabled?'防御 ON':'防御 OFF','slew '+(d.hw3OffsetSlew?'ON':'OFF'),d.defenseEnabled?'防御就绪':'防御关闭',d.defenseEnabled?'ok':'warn');
 
   // FSD page toggle
   updateFsdToggle(d.ci);
@@ -2224,7 +2206,6 @@ async function poll(){
 
   // Defense page
   updateDefensePage(d);
-  updateLegacyNagStatus(d);
 
   // Legacy Real Wiring truth cards
   renderLegacyTruth(d);
@@ -2406,8 +2387,6 @@ async function loadDefenseConfig(){
   if(master)master.checked=!!d.enabled;
   var tgl=$('hw3-slew-tgl');
   if(tgl)tgl.checked=!!d.slew_rate_enabled;
-  var bio=$('def-bionic-tgl');if(bio)bio.checked=!!d.bionic_steering;
-  updateLegacyNagStatus(d);
   var sound=$('def-sound-tgl');if(sound)sound.checked=!!d.sound_warning_suppression;
   var isaOvr=$('def-isa-override-tgl');if(isaOvr)isaOvr.checked=!!d.isa_override;
   var dndVol=$('def-dnd-vol-tgl');if(dndVol)dndVol.checked=!!d.dnd_volume;
@@ -2445,29 +2424,7 @@ async function loadDefenseConfig(){
   setText('def-status',d.enabled?T('保护已启用'):T('保护未启用'));
   var dot=$('def-dot');if(dot)dot.className='status-dot '+(d.enabled?'ok':'err');
   var exp=(d.speed_no_disturb||d.ap_eap_compatible||d.dnd_volume||d.dnd_speed);
-  var nag=d.legacyNag||{};
-  setStatusTriplet('defense',d.enabled?'防御 ON':'防御 OFF',
-    'NVS '+(d.enabled?'ON':'OFF')+(d.bionic_steering?' / NAG ON':''),
-    d.bionic_steering?('NAG '+(nag.runtime?'运行中':(nag.blockedReason||'等待'))):(exp?'实验项需实车验证':'等待 /status 运行确认'),
-    nag.runtime?'ok':(exp?'warn':(d.enabled?'ok':'warn')));
   setText('tb-exp',experimentSummary());
-}
-
-function updateLegacyNagStatus(d){
-  var nag=(d&&d.legacyNag)||{};
-  setText('legacy-nag-mode',(nag.torqueModel||nag.mode||'continuous_absolute')+' / '+(nag.state||'disabled'));
-  setText('legacy-nag-bus',nag.bus||'AUTO');
-  setText('legacy-nag-tx',(nag.tx370||0)+' / '+(nag.txFail||0));
-  setText('legacy-nag-rxtx',(nag.rx370||0)+' / '+(nag.tx370||0));
-  var steering=nag.steeringSeen?('0x488 '+Number(nag.steeringAngleDeg||0).toFixed(1)+'° / '+(nag.steeringAgeMs??'--')+' ms'):'0x488 未发现';
-  setText('legacy-nag-context',(nag.apState??'--')+' / '+(nag.handsOnState??'--')+' / '+steering);
-  setText('legacy-nag-block',nag.blockedReason||'none');
-  setText('legacy-nag-coverage',Number(nag.coveragePct||0).toFixed(1)+'% / '+(nag.maxSilentMs||0)+' ms');
-  setText('legacy-nag-retry',(nag.txRetryOk||0)+' / '+(nag.degraded?'已降级':'正常'));
-  setText('legacy-nag-collision',(nag.duplicateCounterObserved||0)+' / '+(nag.expectedNativeFollowerObserved||0)+' / '+(nag.counterCollisionObserved||0));
-  var state=!nag.configured?'未启用':(!nag.legacyHandler?'仅Legacy可用':(nag.runtime?'运行中':(nag.blockedReason||'等待')));
-  setText('legacy-nag-state',state);
-  setCls('legacy-nag-state','v-'+(nag.runtime?'ok':(nag.configured?'warn':'dim')));
 }
 
 // ── FSD Toggle ─────────────────────────────────────────────
@@ -2815,7 +2772,6 @@ async function saveHw3Slew(){
 
 async function saveDefenseConfig(){
   var master=$('def-master-tgl');
-  var bio=$('def-bionic-tgl');
   var sound=$('def-sound-tgl');
   var isaOvr=$('def-isa-override-tgl');
   var dndVol=$('def-dnd-vol-tgl');
@@ -2827,7 +2783,6 @@ async function saveDefenseConfig(){
   var jtTgl=$('def-jitter-tgl');
   var data={
     enabled:master&&master.checked?'1':'0',
-    bionic_steering:bio&&bio.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
     isa_override:isaOvr&&isaOvr.checked?'1':'0',
     dnd_volume:dndVol&&dndVol.checked?'1':'0',

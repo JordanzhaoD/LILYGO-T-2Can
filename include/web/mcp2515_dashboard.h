@@ -207,11 +207,9 @@ static uint32_t dashOta318LastMs = 0;
 static Dash3eeCadence dash3eeCadence;
 static bool dashJitterEnabled = false;
 static bool dashDefenseEnabled = false;
-static bool dashBionicSteering = false;
 static bool dashSpeedNoDisturb = false;
 static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行逻辑）
 static bool dashDndSpeed = false;       // 速度滚轮DND（Phase 3实现执行逻辑）
-static bool dashBionicDisabled = false; // bionic auto-disabled after 3 failures
 static bool dashApEapCompatible = true;
 // Experimental Legacy-only safety controls. Default off so existing
 // continuous activation behavior remains unchanged until explicitly armed.
@@ -1679,7 +1677,6 @@ static void dashApplyRuntimeState()
         dashHandler->jitterObserve3ee = dashJitterObserve3ee;
         dashHandler->jitterInhibit3ee = dashJitterInhibit3ee;
         dashHandler->checkNag = dashCheckNagDisabled;
-        dashHandler->bionicSteering = dashBionicSteering;
         dashHandler->abortGuard.setEnabled(dashAbortGuardEnabled);
         dashHandler->isaChimeSuppress = nvsIsaChimeSuppress;
         dashHandler->isaOverride = nvsIsaOverride;
@@ -1752,7 +1749,6 @@ static void dashSavePrefs()
     prefs.putUChar("lt_cnt", dashLightingCount);
     prefs.putUChar("lt_freq", dashLightingFrequency);
     prefs.putBool("def_en", dashDefenseEnabled);
-    prefs.putBool("def_bio", dashBionicSteering);
     prefs.putBool("def_nd", dashSpeedNoDisturb);
     prefs.putBool("def_dv", dashDndVolume);
     prefs.putBool("def_ds", dashDndSpeed);
@@ -1993,7 +1989,6 @@ static void dashLoadPrefs()
     if (dashLightingFrequency > 2)
         dashLightingFrequency = 1;
     dashDefenseEnabled = prefs.getBool("def_en", false);
-    dashBionicSteering = prefs.getBool("def_bio", false);
     dashSpeedNoDisturb = prefs.getBool("def_nd", false);
     dashDndVolume = prefs.getBool("def_dv", false);
     dashDndSpeed = prefs.getBool("def_ds", false);
@@ -2596,116 +2591,6 @@ static const char *dashLegacyNagModeName(NagMode mode)
     return "idle";
 }
 
-static void appendLegacyNagDiagJson(String &j, unsigned long now)
-{
-    DashLegacyNagDiag diag{};
-    if (dashHandler)
-        diag = dashHandler->legacyNagDiag(now);
-    uint8_t effectiveHw = hwMode == 3 ? DASH_DEFAULT_HW : hwMode;
-    bool configured = dashBionicSteering;
-    j += R"JSON(,"legacyNag":{"verified":false,"vehicleTest":"pending_beta16_vehicle_test","strategy":"continuous_absolute","torqueModel":"modec_488_one_sided","directionSource":"0x488","configured":)JSON";
-    j += configured ? "true" : "false";
-    j += R"JSON(,"legacyHandler":)JSON";
-    j += effectiveHw == 0 ? "true" : "false";
-    j += R"JSON(,"runtime":)JSON";
-    j += diag.runtimeActive ? "true" : "false";
-    j += R"JSON(,"mode":"continuous_absolute","state":")JSON";
-    j += dashLegacyNagV4StateName(diag.state);
-    j += R"JSON(","bus":")JSON";
-    j += dashLegacyNagBusName(diag.selectedBus);
-    j += R"JSON(","apState":)JSON";
-    j += diag.apState;
-    j += R"JSON(,"gear":)JSON";
-    j += diag.gear;
-    j += R"JSON(,"gearGateRequired":false,"apContextStatusMin":3,"apContextStatusMax":6)JSON";
-    j += R"JSON(,"handsOnState":)JSON";
-    j += diag.dasHandsState;
-    j += R"JSON(,"nativeHandsOnLevel":)JSON";
-    j += diag.nativeHandsOnLevel;
-    j += R"JSON(,"injecting":)JSON";
-    j += diag.runtimeActive ? "true" : "false";
-    j += R"JSON(,"rx370":)JSON";
-    j += diag.rx370;
-    j += R"JSON(,"tx370":)JSON";
-    j += diag.tx370;
-    j += R"JSON(,"txFail":)JSON";
-    j += diag.txFail;
-    j += R"JSON(,"eligible370":)JSON";
-    j += diag.eligible370;
-    j += R"JSON(,"coveragePct":)JSON";
-    j += diag.eligible370 ? String((100.0f * static_cast<float>(diag.tx370)) /
-                                       static_cast<float>(diag.eligible370),
-                                   1)
-                          : String("0.0");
-    j += R"JSON(,"txAttempts":)JSON";
-    j += diag.txAttempts;
-    j += R"JSON(,"txRetryAttempts":)JSON";
-    j += diag.txRetryAttempts;
-    j += R"JSON(,"txRetryOk":)JSON";
-    j += diag.txRetryOk;
-    j += R"JSON(,"degraded":)JSON";
-    j += diag.degraded ? "true" : "false";
-    j += R"JSON(,"autoDisarmed":)JSON";
-    j += diag.autoDisarmed ? "true" : "false";
-    j += R"JSON(,"consecutiveTxFailures":)JSON";
-    j += diag.consecutiveTxFailures;
-    j += R"JSON(,"consecutiveCounterCollisions":)JSON";
-    j += diag.consecutiveCounterCollisions;
-    j += R"JSON(,"requestedTorqueCentiNm":)JSON";
-    j += diag.requestedTorqueCentiNm;
-    j += R"JSON(,"requestedTorqueRaw":)JSON";
-    j += diag.requestedTorqueRaw;
-    j += R"JSON(,"maxSilentMs":)JSON";
-    j += diag.maxSilentMs;
-    j += R"JSON(,"currentSilentMs":)JSON";
-    j += diag.currentSilentMs;
-    j += R"JSON(,"targetHandsBlocked":)JSON";
-    j += diag.targetHandsBlocked;
-    j += R"JSON(,"duplicateCounterObserved":)JSON";
-    j += diag.duplicateCounterObserved;
-    j += R"JSON(,"expectedNativeFollowerObserved":)JSON";
-    j += diag.expectedNativeFollowerObserved;
-    j += R"JSON(,"counterCollisionObserved":)JSON";
-    j += diag.counterCollisionObserved;
-    j += R"JSON(,"lastNativeFollowerDelayMs":)JSON";
-    j += diag.lastNativeFollowerDelayMs;
-    j += R"JSON(,"state1EnterCount":)JSON";
-    j += diag.state1EnterCount;
-    j += R"JSON(,"state1HoldCount":)JSON";
-    j += diag.state1HoldCount;
-    j += R"JSON(,"state1FallbackCount":)JSON";
-    j += diag.state1FallbackCount;
-    j += R"JSON(,"randomWalkSteps":)JSON";
-    j += diag.faithfulWalkSteps;
-    j += R"JSON(,"rx488":)JSON";
-    j += diag.rx488;
-    j += R"JSON(,"steeringSeen":)JSON";
-    j += diag.steeringSeen ? "true" : "false";
-    j += R"JSON(,"steeringControlType":)JSON";
-    j += diag.steeringControlType;
-    j += R"JSON(,"steeringAngleDeg":)JSON";
-    j += String(static_cast<float>(diag.steeringAngleX10) / 10.0f, 1);
-    j += R"JSON(,"steeringBus":")JSON";
-    j += dashLegacyNagBusName(diag.steeringBus);
-    j += R"JSON(","steeringAgeMs":)JSON";
-    j += diag.steeringSeen ? String(diag.steeringAgeMs) : String(-1);
-    j += R"JSON(,"episodeDirection":)JSON";
-    j += String(static_cast<int>(diag.episodeDirection));
-    j += R"JSON(,"directionChangeCount":)JSON";
-    j += diag.directionChangeCount;
-    j += R"JSON(,"targetTorqueCentiNm":)JSON";
-    j += diag.targetTorqueCentiNm;
-    j += R"JSON(,"blockedReason":")JSON";
-    j += legacyNagBlockReasonName(diag.blocked);
-    j += R"JSON(","lastContextAgeMs":)JSON";
-    j += diag.lastContextMs ? String(now - diag.lastContextMs) : String(-1);
-    j += R"JSON(,"lastRxAgeMs":)JSON";
-    j += diag.lastRxMs ? String(now - diag.lastRxMs) : String(-1);
-    j += R"JSON(,"lastTxAgeMs":)JSON";
-    j += diag.lastTxMs ? String(now - diag.lastTxMs) : String(-1);
-    j += "}";
-}
-
 static const char *dashLegacySpeedModeName(LegacySmartOffsetMode mode)
 {
     if (mode == LegacySmartOffsetMode::Manual)
@@ -2817,9 +2702,7 @@ static void appendCapabilitiesJson(String &j, uint8_t selectedHw, uint8_t effect
     j += dashCapabilityLegacyFsd(effectiveHw);
     j += "\",\"legacySpeedOffset\":\"";
     j += effectiveHw == 0 ? "supported" : "unsupported_on_legacy";
-    j += "\",\"serviceMode\":\"can_b_direct\",\"wheelDnd\":\"can_b_direct\",\"fogLight\":\"can_b_direct\",\"stalkTest\":\"can_b_direct\",\"bionicSteering\":\"";
-    j += dashCapabilityBionicSteering(effectiveHw);
-    j += "\",\"banShield\":\"";
+    j += "\",\"serviceMode\":\"can_b_direct\",\"wheelDnd\":\"can_b_direct\",\"stalkTest\":\"can_b_direct\",\"banShield\":\"";
     j += dashCapabilityBanShield(effectiveHw);
     j += "\",\"legacySmartSpeed\":\"";
     j += effectiveHw == 0 ? "supported" : "inactive_non_legacy";
@@ -3049,8 +2932,6 @@ static void handleStatus()
     j += hw3OffsetSlew ? "true" : "false";
     j += ",\"defenseEnabled\":";
     j += dashDefenseEnabled ? "true" : "false";
-    j += ",\"bionicSteering\":";
-    j += dashBionicSteering ? "true" : "false";
     j += ",\"hw3SlewRate\":";
     j += hw3SlewRate;
     j += ",\"hw3OffsetTarget\":";
@@ -3255,7 +3136,6 @@ static void handleStatus()
 #endif
     appendServiceDiagJson(j, now);
     appendWheelDndDiagJson(j, now);
-    appendLegacyNagDiagJson(j, now);
     appendLegacySmartSpeedJson(j, now);
     dashAppendLegacySafetyControlsJson(j);
     // ── Phase 1 新增状态字段 ──────────────────────────────────────────
@@ -4161,16 +4041,6 @@ static String dashDefenseConfigJson()
 {
     String j = "{\"ok\":true,\"enabled\":";
     j += dashDefenseEnabled ? "true" : "false";
-    j += ",\"bionic_steering\":";
-    j += dashBionicSteering ? "true" : "false";
-    j += ",\"legacy_nag_enabled\":";
-    j += dashBionicSteering ? "true" : "false";
-    j += ",\"legacy_nag_strategy\":\"continuous_absolute\"";
-    j += ",\"legacy_nag_torque_limit_nm\":1.8";
-    // Bionic disabled warning (3 consecutive failures)
-    bool bionicDisabled = dashHandler ? dashHandler->bionicDisabled() : dashBionicDisabled;
-    j += ",\"bionic_disabled\":";
-    j += bionicDisabled ? "true" : "false";
     j += ",\"sound_warning_suppression\":";
     j += dashHandler ? ((bool)dashHandler->isaChimeSuppress ? "true" : "false") : (nvsIsaChimeSuppress ? "true" : "false");
     j += ",\"isa_override\":";
@@ -4201,7 +4071,6 @@ static String dashDefenseConfigJson()
     j += hw3OffsetSlew ? "true" : "false";
     j += ",\"ban_shield\":";
     j += dashHandler ? ((bool)dashHandler->banShieldEnable ? "true" : "false") : (nvsBanShieldEnable ? "true" : "false");
-    appendLegacyNagDiagJson(j, millis());
     dashAppendLegacySafetyControlsJson(j);
     j += "}";
     return j;
@@ -4209,7 +4078,7 @@ static String dashDefenseConfigJson()
 
 static void handleDefenseConfig()
 {
-    if (server.hasArg("enabled") || server.hasArg("bionic_steering") ||
+    if (server.hasArg("enabled") ||
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
         server.hasArg("legacy_scroll_dnd") ||
@@ -4222,19 +4091,6 @@ static void handleDefenseConfig()
         bool prevDndSpeed = dashDndSpeed;
         if (server.hasArg("enabled"))
             dashDefenseEnabled = dashArgTruthy(server.arg("enabled"));
-        if (server.hasArg("bionic_steering"))
-        {
-            bool v = dashArgTruthy(server.arg("bionic_steering"));
-            dashBionicSteering = v;
-            // Reset runtime and bus affinity whenever the user changes the switch.
-            if (v)
-                dashBionicDisabled = false;
-            if (dashHandler)
-            {
-                dashHandler->bionicSteering = v;
-                dashHandler->resetBionic((uint32_t)millis());
-            }
-        }
         if (server.hasArg("sound_warning_suppression"))
         {
             bool v = dashArgTruthy(server.arg("sound_warning_suppression"));
@@ -6781,7 +6637,6 @@ static void handleSettingsExport()
     uint8_t storedLightingCount = dashLightingCount;
     uint8_t storedLightingFrequency = dashLightingFrequency;
     bool storedDefenseEnabled = dashDefenseEnabled;
-    bool storedBionicSteering = dashBionicSteering;
     bool storedSpeedNoDisturb = dashSpeedNoDisturb;
     bool storedDndVolume = dashDndVolume;
     bool storedDndSpeed = dashDndSpeed;
@@ -6839,7 +6694,6 @@ static void handleSettingsExport()
         storedLightingCount = p.getUChar("lt_cnt", dashLightingCount);
         storedLightingFrequency = p.getUChar("lt_freq", dashLightingFrequency);
         storedDefenseEnabled = p.getBool("def_en", dashDefenseEnabled);
-        storedBionicSteering = p.getBool("def_bio", dashBionicSteering);
         storedSpeedNoDisturb = p.getBool("def_nd", dashSpeedNoDisturb);
         storedDndVolume = p.getBool("def_dv", dashDndVolume);
         storedDndSpeed = p.getBool("def_ds", dashDndSpeed);
@@ -6971,7 +6825,6 @@ static void handleSettingsExport()
     j += ",\"lighting\":{\"enabled\":" + String(storedLightingEnabled ? "true" : "false");
     j += ",\"count\":" + String(storedLightingCount) + ",\"frequencyValue\":" + String(storedLightingFrequency) + "}";
     j += ",\"defense\":{\"enabled\":" + String(storedDefenseEnabled ? "true" : "false");
-    j += ",\"bionicSteering\":" + String(storedBionicSteering ? "true" : "false");
     j += ",\"speedNoDisturb\":" + String(storedSpeedNoDisturb ? "true" : "false");
     j += ",\"dndVolume\":" + String(storedDndVolume ? "true" : "false");
     j += ",\"dndSpeed\":" + String(storedDndSpeed ? "true" : "false");
@@ -7242,8 +7095,6 @@ static void handleSettingsImport()
         JsonObject defense = doc["defense"].as<JsonObject>();
         if (defense["enabled"].is<bool>())
             p.putBool("def_en", defense["enabled"].as<bool>());
-        if (defense["bionicSteering"].is<bool>())
-            p.putBool("def_bio", defense["bionicSteering"].as<bool>());
         if (defense["speedNoDisturb"].is<bool>())
             p.putBool("def_nd", defense["speedNoDisturb"].as<bool>());
         if (defense["dndVolume"].is<bool>())
@@ -7932,8 +7783,6 @@ static void dashSwapHandler(uint8_t mode)
     appActiveHandler = next;
     dashHandler = next;
     dashApplyRuntimeState();
-    if (effective == 0 && dashBionicSteering)
-        next->resetBionic((uint32_t)millis());
     // Update driver acceptance filters for the new handler.
     // For MCP2515 (ext) dashApplyFilters() will also fine-tune the hardware
     // filter registers. For TWAI and old MCP2515 this abstract call is enough.
@@ -7965,7 +7814,6 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->isaOverride = nvsIsaOverride;
         handlerPool[i]->hw4OffsetRaw = nvsHw4OffsetRaw;
         handlerPool[i]->banShieldEnable = nvsBanShieldEnable;
-        handlerPool[i]->bionicSteering = dashBionicSteering;
         handlerPool[i]->abortGuard.setEnabled(dashAbortGuardEnabled);
         handlerPool[i]->legacyOffset = nvsLegacyOffset;
         handlerPool[i]->removeVisionSpeedLimit = nvsRemoveVisionSpeedLimit;

@@ -67,7 +67,6 @@ class SimState:
         self.burst_on_ms = 120
         self.burst_off_ms = 120
         self.defense_enabled = True
-        self.bionic_steering = False
         self.dnd_volume = True
         self.dnd_speed = True
         self.ap_eap_compatible = False
@@ -231,7 +230,6 @@ class SimState:
             # UI smoke test on the simulator look like the "switches revert
             # to OFF" bug (checkbox forced false each poll).
             "defenseEnabled": self.defense_enabled,
-            "bionicSteering": self.bionic_steering,
             "bootCan": self.boot_can,
             "hw3OffsetSlew": self.hw3_offset_slew,
             "hw3SlewRate": self.hw3_slew_rate,
@@ -552,7 +550,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_obj(
                 {
                     "enabled": STATE.defense_enabled,
-                    "bionic_steering": STATE.bionic_steering,
                     "dnd_volume": STATE.dnd_volume,
                     "legacy_scroll_dnd": STATE.dnd_volume,
                     "dnd_speed": STATE.dnd_speed,
@@ -1056,8 +1053,6 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/defense_config":
             if "enabled" in form:
                 STATE.defense_enabled = self.form_bool(form["enabled"])
-            if "bionic_steering" in form:
-                STATE.bionic_steering = self.form_bool(form["bionic_steering"])
             if "dnd_volume" in form:
                 STATE.dnd_volume = self.form_bool(form["dnd_volume"])
             if "legacy_scroll_dnd" in form:
