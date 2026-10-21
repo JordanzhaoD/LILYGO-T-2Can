@@ -1,5 +1,53 @@
 # Changelog
 
+## [5.0.0-beta04] - 2026-10-22
+
+### Removed
+
+- **Light stunts page (Option A, conservative).** The pg-strobe page, its
+  sidebar/mobile navigation entries, the fog-light strategy backend
+  (`/fog_light`, `/strobe_cont`, `handleFogLight`, `handleStrobeCont`,
+  `dash_fog_light.h`, `t2canFogLightTick`) and the `lt_fog` NVS keys are
+  gone. Everything on the CAN2 control page — flash burst, stalk test,
+  service mode — is preserved unchanged.
+- **Power management module.** `dash_power_mgmt.h`, `/power_mgmt`, the
+  hardware-page power card, auto-shutdown / Wi-Fi auto-off state, and the
+  backup `power` block are removed from firmware and UI.
+- **Legacy 0x370 NAG main-path UI.** The defense-page card, toggle,
+  runtime-status grid, `/status` legacyNag JSON blob, and the
+  `bionic_steering` branch of `/defense_config` are removed; the engine
+  (handlers, bionic steering, v4 continuous-absolute) stays compiled but
+  dormant with `bionicSteering` defaulting to false.
+- Emergency controls consolidated: the overview-page card moves into the
+  desktop home and the mobile field-remote page (no duplicate card).
+
+### Changed
+
+- **UI restyle: Tactical Telemetry.** Square corners everywhere (radius
+  discipline), a single aviation-red accent (`#E61919`), solid instrument
+  panels (translucency and blur removed), monospaced data values, and
+  micro-label tracking — per the industrial-brutalist system the vehicle
+  UI standardizes on.
+- **Daylight mode rebuilt.** Theme switching now toggles a root `light`
+  class driving two complete CSS variable sets (including the cockpit
+  layer, previously stuck dark); 26 hardcoded dark rgba values became
+  variables. The light palette is Swiss Industrial Print (paper
+  `#F4F4F0`, carbon ink).
+- **Bilingual switching rebuilt.** Static copy carries `data-i18n`
+  attributes (~490 nodes), dynamic strings route through `T()`, the I18N
+  dictionary grew to ~600 entries, and a language switch re-renders the
+  cached status data. English mode now leaves zero Chinese residue on all
+  ten pages (pytest guards included).
+
+### Added
+
+- Overview cockpit gains a CAN2 status block (5-column row on dual-CAN,
+  hidden on single-CAN) and font-size auto-fit so metric values never
+  wrap to two lines.
+- Speed strategy page: the Legacy smart speed-offset card moved above the
+  mode selector. CAN2 page: Service Mode moved to the top with a live
+  status line.
+
 ## [5.0.0-beta03] - 2026-09-29
 
 ### Added
