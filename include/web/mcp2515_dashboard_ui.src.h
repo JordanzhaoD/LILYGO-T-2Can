@@ -373,9 +373,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .cockpit-hold { width: 100%; min-height: 72px; margin-top: 18px; border: none; border-radius: 24px; background: linear-gradient(135deg, #991b1b, #ef4444); color: white; font-size: 16px; font-weight: 950; letter-spacing: .045em; cursor: pointer; box-shadow: 0 18px 42px rgba(239,68,68,.24); }
 .cockpit-hold.on { background: linear-gradient(135deg, #047857, #22c55e); box-shadow: 0 18px 42px rgba(34,197,94,.22); }
 .cockpit-metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+.cockpit-metrics.m5 { grid-template-columns: repeat(5, minmax(0,1fr)); }
 .cockpit-metric { min-height: 96px; border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-lg); background: rgba(15,23,42,.58); padding: 14px; backdrop-filter: var(--cockpit-card-blur); }
 .cockpit-metric .lbl { color: var(--cockpit-muted); font-size: 10px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
-.cockpit-metric .val { margin-top: 8px; color: var(--tx1); font-size: 24px; font-weight: 900; letter-spacing: -0.045em; overflow-wrap: anywhere; }
+.cockpit-metric .val { margin-top: 8px; color: var(--tx1); font-size: 24px; font-weight: 900; letter-spacing: -0.045em; white-space: nowrap; overflow: hidden; }
+.cockpit-metric .val.vf-md { font-size: 20px; }
+.cockpit-metric .val.vf-sm { font-size: 17px; }
+.cockpit-metric .val.vf-xs { font-size: 14px; }
 .cockpit-metric .hint { margin-top: 4px; color: var(--cockpit-dim); font-size: 11px; }
 .cockpit-vehicle { border: 1px solid var(--cockpit-stroke); border-radius: var(--cockpit-radius-xl); background: linear-gradient(145deg, rgba(15,23,42,.60), rgba(8,13,24,.82)); padding: 20px; box-shadow: var(--cockpit-shadow), var(--cockpit-glow-cyan); backdrop-filter: var(--cockpit-card-blur); }
 .cockpit-vehicle-visual { position: relative; min-height: 220px; display: grid; place-items: center; margin: 14px 0; border-radius: 24px; overflow: hidden; background: radial-gradient(circle at 50% 45%, rgba(56,189,248,.17), transparent 38%), linear-gradient(180deg, rgba(2,6,23,.30), rgba(2,6,23,.72)); }
@@ -584,7 +588,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="nav-item" data-page="pg-drive"><span class="nav-icon">◉</span>驾驶风格</div>
     <div class="nav-item" data-page="pg-speed"><span class="nav-icon">↗</span>速度策略</div>
     <div class="nav-item" data-page="pg-bus2" data-cap="can2" data-single-hide="1"><span class="nav-icon">✦</span>CAN2 控制</div>
-    <div class="nav-item" data-page="pg-strobe" data-cap="lighting" data-single-hide="1"><span class="nav-icon">⚡</span>灯光特技</div>
     <div class="nav-item" data-page="pg-defense"><span class="nav-icon">◈</span>FSD 防护</div>
     <div class="nav-item" data-page="pg-ota"><span class="nav-icon">⇧</span>OTA 升级</div>
     <div class="nav-item" data-page="pg-network"><span class="nav-icon">◎</span>网络设置</div>
@@ -651,8 +654,9 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
               <div class="cockpit-metric"><div class="lbl">运行时间</div><div class="val" id="ov-up">00:00:00</div><div class="hint" id="m-up">设备在线</div></div>
             </div>
 
-            <div class="cockpit-metrics">
+            <div class="cockpit-metrics" id="ov-can-row">
               <div class="cockpit-metric"><div class="lbl">CAN1</div><div class="val" id="s-can">Offline</div><div class="hint">--</div></div>
+              <div class="cockpit-metric" data-single-hide="1" data-cap="can2"><div class="lbl">CAN2</div><div class="val" id="s-can2">Offline</div><div class="hint">CAN-B</div></div>
               <div class="cockpit-metric" id="ov-ap-metric"><div class="lbl">AP 激活</div><div class="val" id="ov-ap">等待</div><div class="hint" id="ov-ap-hint">门控未触发</div></div>
               <div class="cockpit-metric"><div class="lbl">帧率</div><div class="val" id="s-fps">0.0 Hz</div><div class="hint">0.0 Hz</div></div>
               <div class="cockpit-metric"><div class="lbl">芯片温度</div><div class="val" id="s-temp">--</div><div class="hint">高于 60°C 标红</div></div>
@@ -747,6 +751,14 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           </div>
         </div>
 
+        <div class="card">
+          <div class="card-title">紧急控制</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-danger" onclick="rebootDevice()" style="flex:1">重启设备</button>
+            <button class="btn" onclick="resetStats()" style="flex:1">重置计数</button>
+          </div>
+        </div>
+
           </div>
         </div>
       </div>
@@ -772,15 +784,14 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           <div class="mobile-remote-card"><div class="lbl">硬件模式</div><div class="val" id="m-hw">Auto</div></div>
           <div class="mobile-remote-card"><div class="lbl">帧率</div><div class="val" id="m-fps">0.0 Hz</div></div>
         </div>
-        <div class="mobile-risk-note">危险操作已收拢到首页「紧急控制」；遥控页仅保留现场安全操作。</div>
+        <div class="mobile-primary-card">
+          <div class="cockpit-state-label">紧急控制</div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn btn-danger" onclick="rebootDevice()" style="flex:1">重启设备</button>
+            <button class="btn" onclick="resetStats()" style="flex:1">重置计数</button>
+          </div>
         </div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">紧急控制</div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-danger" onclick="rebootDevice()" style="flex:1">重启设备</button>
-          <button class="btn" onclick="resetStats()" style="flex:1">重置计数</button>
+        <div class="mobile-risk-note">危险操作需点击确认：重启设备会中断当前模块；重置计数会清零统计。</div>
         </div>
       </div>
     </div>
@@ -911,34 +922,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-speed-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-speed-run">待检测</div></div>
 </div>
-<div class="card cockpit-card">
-  <div class="card-title">速度策略模式</div>
-  <div class="card-subtitle">HW3/HW4：固定百分比 / 自动偏移 / 自定义偏移。Legacy 请使用下方独立四档控制。</div>
-  <div class="sel-cards c3" id="speed-mode-tabs" style="margin-bottom:12px">
-    <div class="sel-card" onclick="showSpeedMode('fixed')"><div class="sel-lbl">模式</div><div class="sel-name">固定百分比</div></div>
-    <div class="sel-card active" onclick="showSpeedMode('auto')"><div class="sel-lbl">模式</div><div class="sel-name">自动偏移</div></div>
-    <div class="sel-card" onclick="showSpeedMode('custom')"><div class="sel-lbl">模式</div><div class="sel-name">自定义偏移</div></div>
-  </div>
-  <div class="mode-note">当前策略：<span id="speed-current">auto</span></div>
-</div>
-
-<!-- Realtime Offset -->
-<div class="card">
-  <div class="card-title">实时偏移</div>
-  <div class="diag-grid">
-    <div class="diag-item"><span class="lbl">速度限制 speedLimit</span><span class="v-info" id="sp-limit">--</span></div>
-    <div class="diag-item"><span class="lbl">实际偏移 actOffset</span><span class="v-acc" id="sp-act-offset">--</span></div>
-    <div class="diag-item"><span class="lbl">生效模式</span><span class="v-dim" id="sp-active-mode">--</span></div>
-    <div class="diag-item"><span class="lbl">Wire Encoding</span><span class="v-dim" id="sp-wire">--</span></div>
-    <div class="diag-item"><span class="lbl">Fused Raw</span><span class="v-dim" id="sp-raw">--</span></div>
-    <div class="diag-item"><span class="lbl">Stock Offset</span><span class="v-dim" id="sp-stock">--</span></div>
-    <div class="diag-item"><span class="lbl">Legacy 限速来源</span><span class="v-info" id="sp-legacy-source">--</span></div>
-    <div class="diag-item"><span class="lbl">Legacy 目标速度</span><span class="v-acc" id="sp-legacy-target">--</span></div>
-    <div class="diag-item"><span class="lbl">Legacy 目标总线</span><span class="v-dim" id="sp-legacy-bus">--</span></div>
-    <div class="diag-item"><span class="lbl">Legacy 运行状态</span><span class="v-dim" id="sp-legacy-runtime">--</span></div>
-  </div>
-</div>
-
 <div class="card">
   <div class="card-title">Legacy 智能速度偏移</div>
   <div class="card-subtitle">独立四档：关闭 / 手动 / 自动 / 自定义。0x2F8 只读限速，0x3EE mux0 输出。</div>
@@ -979,6 +962,33 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="diag-item"><span class="lbl">0x3EE RX</span><span class="v-dim" id="sp-legacy-rx3ee">0</span></div>
     <div class="diag-item"><span class="lbl">TX OK / Fail</span><span class="v-dim" id="sp-legacy-tx">0 / 0</span></div>
     <div class="diag-item"><span class="lbl">阻断原因</span><span class="v-dim" id="sp-legacy-block">--</span></div>
+  </div>
+</div>
+<div class="card cockpit-card">
+  <div class="card-title">速度策略模式</div>
+  <div class="card-subtitle">HW3/HW4：固定百分比 / 自动偏移 / 自定义偏移。Legacy 请使用上方独立四档控制。</div>
+  <div class="sel-cards c3" id="speed-mode-tabs" style="margin-bottom:12px">
+    <div class="sel-card" onclick="showSpeedMode('fixed')"><div class="sel-lbl">模式</div><div class="sel-name">固定百分比</div></div>
+    <div class="sel-card active" onclick="showSpeedMode('auto')"><div class="sel-lbl">模式</div><div class="sel-name">自动偏移</div></div>
+    <div class="sel-card" onclick="showSpeedMode('custom')"><div class="sel-lbl">模式</div><div class="sel-name">自定义偏移</div></div>
+  </div>
+  <div class="mode-note">当前策略：<span id="speed-current">auto</span></div>
+</div>
+
+<!-- Realtime Offset -->
+<div class="card">
+  <div class="card-title">实时偏移</div>
+  <div class="diag-grid">
+    <div class="diag-item"><span class="lbl">速度限制 speedLimit</span><span class="v-info" id="sp-limit">--</span></div>
+    <div class="diag-item"><span class="lbl">实际偏移 actOffset</span><span class="v-acc" id="sp-act-offset">--</span></div>
+    <div class="diag-item"><span class="lbl">生效模式</span><span class="v-dim" id="sp-active-mode">--</span></div>
+    <div class="diag-item"><span class="lbl">Wire Encoding</span><span class="v-dim" id="sp-wire">--</span></div>
+    <div class="diag-item"><span class="lbl">Fused Raw</span><span class="v-dim" id="sp-raw">--</span></div>
+    <div class="diag-item"><span class="lbl">Stock Offset</span><span class="v-dim" id="sp-stock">--</span></div>
+    <div class="diag-item"><span class="lbl">Legacy 限速来源</span><span class="v-info" id="sp-legacy-source">--</span></div>
+    <div class="diag-item"><span class="lbl">Legacy 目标速度</span><span class="v-acc" id="sp-legacy-target">--</span></div>
+    <div class="diag-item"><span class="lbl">Legacy 目标总线</span><span class="v-dim" id="sp-legacy-bus">--</span></div>
+    <div class="diag-item"><span class="lbl">Legacy 运行状态</span><span class="v-dim" id="sp-legacy-runtime">--</span></div>
   </div>
 </div>
 
@@ -1047,6 +1057,23 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="status-chip"><div class="lbl">NVS 持久化状态</div><div class="val" id="st-light-nvs">读取中</div></div>
   <div class="status-chip"><div class="lbl">实际 CAN/网络运行状态</div><div class="val" id="st-light-run">待检测</div></div>
 </div>
+<!-- Service Mode（beta04 从页底移至顶部，并加状态显示） -->
+<div class="card">
+  <div class="setting-row">
+    <div>
+      <div class="setting-name">Service Mode</div>
+      <div class="setting-desc">按 VCSEC 规格发送 0x339 四帧脉冲到 CAN2（byte5 bit7）</div>
+    </div>
+    <label class="tgl">
+      <input type="checkbox" id="svc-mode-tgl" onchange="toggleServiceMode()">
+      <div class="tgl-track"></div>
+    </label>
+  </div>
+  <div class="diag-grid" style="margin-top:8px">
+    <div class="diag-item"><span class="lbl">当前状态</span><span class="v-dim" id="svc-mode-status">未激活</span></div>
+  </div>
+</div>
+
 <!-- CAN2 Status -->
 <div class="stats">
   <div class="stat"><div class="stat-lbl">CAN2 状态</div><div class="stat-val v-dim" id="b2-status">Offline</div></div>
@@ -1093,11 +1120,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="sel-card active" onclick="setLightFrequency('medium')"><div class="sel-lbl">频率</div><div class="sel-name">medium</div></div>
     <div class="sel-card" onclick="setLightFrequency('fast')"><div class="sel-lbl">频率</div><div class="sel-name">fast</div></div>
   </div>
-  <div class="sel-cards c3" id="rear-fog-strategy" style="margin-bottom:10px">
-    <div class="sel-card active" onclick="setRearFogStrategy('off')"><div class="sel-lbl">后雾灯</div><div class="sel-name">off</div></div>
-    <div class="sel-card" onclick="setRearFogStrategy('strobe')"><div class="sel-lbl">后雾灯</div><div class="sel-name">strobe</div></div>
-    <div class="sel-card" onclick="setRearFogStrategy('continuous')"><div class="sel-lbl">后雾灯</div><div class="sel-name">continuous <span class="exp-badge">实验</span></div></div>
-  </div>
   <div style="display:flex;gap:8px;margin-bottom:10px">
     <button class="btn btn-outline" onclick="stalkTest('PULL')" style="flex:1">PULL (闪光)</button>
     <button class="btn btn-outline" onclick="stalkTest('PUSH')" style="flex:1">PUSH (远光)</button>
@@ -1143,97 +1165,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 
-<!-- Service Mode -->
-<div class="card">
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">Service Mode</div>
-      <div class="setting-desc">按 VCSEC 规格发送 0x339 四帧脉冲到 CAN2（byte5 bit7）</div>
-    </div>
-    <label class="tgl">
-      <input type="checkbox" id="svc-mode-tgl" onchange="toggleServiceMode()">
-      <div class="tgl-track"></div>
-    </label>
-  </div>
-</div>
-    </div>
-
-    <!-- Page 5.5: Light Stunt (Phase 4) -->
-    <div class="page" id="pg-strobe" data-cap="lighting" data-single-hide="1">
-<div class="page-title">灯光特技 <span class="exp-badge">实验</span></div>
-<div class="card">
-  <div class="card-title">后雾灯策略</div>
-  <div class="card-subtitle">这里仅保存默认策略；下方按钮才会立即发送 0x273 CAN-B 执行动作，仅D挡时激活</div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">雾灯策略</div>
-      <div class="setting-desc">选择后雾灯模式</div>
-    </div>
-    <select id="fog-strategy" onchange="saveFogStrategy()">
-      <option value="0">关闭</option>
-      <option value="1">爆闪</option>
-      <option value="2">持续亮</option>
-    </select>
-  </div>
-</div>
-<div class="card">
-  <div class="card-title">爆闪参数</div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">闪烁次数</div>
-    </div>
-    <select id="strobe-count" onchange="saveLightingConfig()">
-      <option value="3">3次</option>
-      <option value="5">5次</option>
-      <option value="7">7次</option>
-      <option value="10">10次</option>
-    </select>
-  </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">闪烁频率</div>
-    </div>
-    <select id="strobe-freq" onchange="saveLightingConfig()">
-      <option value="0">慢速</option>
-      <option value="1" selected>中速</option>
-      <option value="2">快速</option>
-    </select>
-  </div>
-</div>
-<div class="card">
-  <div class="card-title">双拨超车闪 <span class="exp-badge">实验</span></div>
-  <div class="card-subtitle">真实拨杆 2 秒内双 PULL 后，固件自动发送 0x249 PULL burst</div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name">启用双拨爆闪</div>
-      <div class="setting-desc" id="burst-status-strobe">关闭</div>
-    </div>
-    <label class="tgl">
-      <input type="checkbox" id="burst-enabled-tgl-strobe" onchange="toggleBurst(this)">
-      <div class="tgl-track"></div>
-    </label>
-  </div>
-  <div class="sel-cards c4" id="burst-preset-strobe" style="margin-bottom:10px">
-    <div class="sel-card" onclick="setBurstPreset('A')"><div class="sel-lbl">A 短促</div><div class="sel-name">2×</div></div>
-    <div class="sel-card active" onclick="setBurstPreset('B')"><div class="sel-lbl">B 标准</div><div class="sel-name">3×</div></div>
-    <div class="sel-card" onclick="setBurstPreset('C')"><div class="sel-lbl">C 明显</div><div class="sel-name">5×</div></div>
-    <div class="sel-card" onclick="setBurstPreset('D')"><div class="sel-lbl">D 长闪</div><div class="sel-name">7×</div></div>
-  </div>
-</div>
-<div class="card">
-  <div class="card-title">立即执行</div>
-  <div class="card-subtitle">这些按钮才会触发实际灯光动作；需D挡，自动停止于其他挡位</div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-    <button class="btn" onclick="fogTrigger('strobe')" style="flex:1;min-width:100px">💡 爆闪</button>
-    <button class="btn" onclick="fogTrigger('f1')" style="flex:1;min-width:100px">🏎️ F1领航灯</button>
-    <button class="btn" onclick="fogTrigger('continuous')" style="flex:1;min-width:100px">🔆 持续亮</button>
-    <button class="btn btn-danger" onclick="fogTrigger('stop')" style="flex:1;min-width:100px">⏹ 停止</button>
-  </div>
-  <div class="diag-grid" style="margin-top:12px">
-    <div class="diag-item"><span class="lbl">当前状态</span><span class="v-acc" id="strobe-status">待触发</span></div>
-    <div class="diag-item"><span class="lbl">挡位</span><span class="v-dim" id="strobe-gear">--</span></div>
-  </div>
-</div>
     </div>
 
     <!-- Page 6: FSD Defense -->
@@ -1861,7 +1792,6 @@ var recActive = false;
 var canTab = 'sniffer';
 var lightPreset = 3;
 var lightFrequency = 'medium';
-var rearFogStrategy = 'off';
 var burstPreset = 'B';
 var BURST_PRESETS = {
   A:{count:2,on_ms:250,off_ms:250,label:'A 短促'},
@@ -1941,7 +1871,7 @@ function fmtUp(sec){
 var I18N={
   // Sidebar
   '驾驶状态':'Drive Status','硬件模式':'Hardware Mode','驾驶风格':'Drive Style',
-  '速度策略':'Speed Strategy',['CAN2 '+'控制']:'CAN2 Control','灯光特技':'Light Show',
+  '速度策略':'Speed Strategy',['CAN2 '+'控制']:'CAN2 Control',
   'FSD 防护':'FSD Guard','OTA 升级':'OTA Update',
   '网络设置':'Network','CAN 诊断':'CAN Diagnostics',['自动'+'换挡']:'Auto'+' Shift',
   // Top bar
@@ -2043,11 +1973,14 @@ function applyCapabilities(c){
   if(active&&active.getAttribute('data-cap')&&!capEnabled(active.getAttribute('data-cap'))){
     showPage('pg-overview');
   }
+  // 5.0.0-beta04: CAN row widens to 5 columns only when CAN2 is present
+  var canRow=$('ov-can-row');
+  if(canRow)canRow.classList.toggle('m5',capEnabled('can2'));
   applyProductMode();
 }
 function applyI18n(){
   var navs=document.querySelectorAll('.nav-item');
-  var zhTexts=['驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 '+'控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动'+'换挡'];
+  var zhTexts=['驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 '+'控制','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动'+'换挡'];
   for(var i=0;i<navs.length;i++){
     var icon=navs[i].querySelector('.nav-icon');
     var iconHtml=icon?icon.outerHTML:'';
@@ -2115,10 +2048,9 @@ function showPage(pageId){
   if(pageId==='pg-can')pollCanTab();
   if(pageId==='pg-drive')loadDriveProfile();
   if(pageId==='pg-bus2'&&CAP.can2Available&&!isSingleCan())pollCAN2();
+  if(pageId==='pg-overview'&&CAP.can2Available&&!isSingleCan())pollCAN2();
   if(pageId==='pg-bus2'&&CAP.lightingBusSupported&&!isSingleCan())loadLightingConfig();
   if(pageId==='pg-bus2'&&CAP.can2Available&&!isSingleCan())loadBurstConfig();
-  if(pageId==='pg-strobe'&&CAP.lightingBusSupported&&!isSingleCan())loadStrobePage();
-  if(pageId==='pg-strobe'&&CAP.can2Available&&!isSingleCan())loadBurstConfig();
   if(pageId==='pg-speed')loadSpeedStrategy();
   if(pageId==='pg-defense')loadDefenseConfig();
   if(pageId==='pg-shift'&&!isSingleCan())pollGearAssist();
@@ -2130,6 +2062,17 @@ function closeSidebar(){$('sidebar').classList.remove('open');$('overlay').class
 
 // ── Fetch Helper ───────────────────────────────────────────
 var _fetchErrCount=0;
+// 5.0.0-beta04: auto-fit cockpit metric font by value length (≤4→24px, 5-6→20, 7-8→17, >8→14)
+function fitCockpitVals(){
+  var els=document.querySelectorAll('.cockpit-metric .val');
+  for(var i=0;i<els.length;i++){
+    var n=(els[i].textContent||'').trim().length;
+    els[i].classList.remove('vf-md','vf-sm','vf-xs');
+    if(n>8)els[i].classList.add('vf-xs');
+    else if(n>=7)els[i].classList.add('vf-sm');
+    else if(n>=5)els[i].classList.add('vf-md');
+  }
+}
 async function fetchJson(url){
   try{
     var r=await fetch(url);
@@ -2254,8 +2197,8 @@ async function poll(){
   if(d.txerr)alertText.push('TX Err '+d.txerr);
   if(d.apGate)alertText.push('AP Gate 等待');
   setText('m-alert',alertText.length?alertText.join(' / '):'暂无异常');
-  setCls('s-can','stat-val '+(d.can?'v-ok':'v-err'));
-  setText('s-can',d.can?'Online':'Offline');
+  var sCanEl=$('s-can');
+  if(sCanEl){sCanEl.className=(sCanEl.classList.contains('val')?'val ':'stat-val ')+(d.can?'v-ok':'v-err');sCanEl.textContent=d.can?'Online':'Offline';}
   setText('s-rx',(d.rx||0)+'/'+(d.tx||0));
   setText('s-tx',d.tx||0);
   if(d.can2){
@@ -2313,6 +2256,9 @@ async function poll(){
 
   // AP injection core (standalone driving status)
   renderApInjectionState(d);
+
+  // 5.0.0-beta04: keep cockpit metric values single-line at any length
+  fitCockpitVals();
 }
 
 function updateFsdToggle(ci){
@@ -2952,6 +2898,11 @@ async function pollCAN2(){
   setText('ov-can',(sCan&&sCan.textContent==='Online'?'CAN1 Online':'CAN1 Offline')+' / '+(d.count>0?'CAN2 Online':'CAN2 Idle'));
   var svc=$('svc-mode-tgl');
   if(svc)svc.checked=!!d.service_mode;
+  setText('svc-mode-status',d.service_mode?T('激活'):T('未激活'));
+  setCls('svc-mode-status',d.service_mode?'v-acc':'v-dim');
+  var sCan2El=$('s-can2');
+  if(sCan2El){sCan2El.className=(sCan2El.classList.contains('val')?'val ':'stat-val ')+(d.count>0?'v-ok':'v-dim');sCan2El.textContent=d.count>0?'Online':'Idle';}
+  fitCockpitVals();
   loadBurstConfig();
   setStatusTriplet('light',
     ($('light-enabled-tgl')&&$('light-enabled-tgl').checked)?'爆闪 ON':'爆闪 OFF',
@@ -3002,7 +2953,7 @@ function detectBurstPreset(d){
   return burstPreset||'B';
 }
 function updateBurstPresetCards(){
-  ['burst-preset','burst-preset-strobe'].forEach(function(id){
+  ['burst-preset'].forEach(function(id){
     var cards=$(id);if(!cards)return;
     var items=cards.querySelectorAll('.sel-card');
     var keys=['A','B','C','D'];
@@ -3015,11 +2966,9 @@ function updateBurstUi(d){
   updateBurstPresetCards();
   var enabled=!!d.enabled;
   var t=$('burst-enabled-tgl');if(t)t.checked=enabled;
-  var ts=$('burst-enabled-tgl-strobe');if(ts)ts.checked=enabled;
   var running=!!d.running;
   var status=enabled?(running?'运行中':'等待双拨'):'关闭';
   setText('burst-status',status);
-  setText('burst-status-strobe',status);
   setText('burst-params',(d.count||0)+'× '+(d.on_ms||0)+'/'+(d.off_ms||0)+'ms');
   setText('burst-phases',d.phases_left||0);
   setCls('burst-status','stat-val '+(running?'v-warn':(enabled?'v-ok':'v-dim')));
@@ -3038,17 +2987,15 @@ async function saveBurstConfig(enabled){
 }
 function toggleBurst(src){
   var t=$('burst-enabled-tgl');
-  var ts=$('burst-enabled-tgl-strobe');
-  var enabled=src?!!src.checked:!!((t&&t.checked)||(ts&&ts.checked));
+  var enabled=src?!!src.checked:!!(t&&t.checked);
   if(t)t.checked=enabled;
-  if(ts)ts.checked=enabled;
   saveBurstConfig(enabled);
 }
 function setBurstPreset(id){
   if(!BURST_PRESETS[id])id='B';
   burstPreset=id;
   updateBurstPresetCards();
-  var enabled=(($('burst-enabled-tgl')&&$('burst-enabled-tgl').checked)||($('burst-enabled-tgl-strobe')&&$('burst-enabled-tgl-strobe').checked));
+  var enabled=!!($('burst-enabled-tgl')&&$('burst-enabled-tgl').checked);
   saveBurstConfig(enabled);
 }
 
@@ -3057,13 +3004,11 @@ async function loadLightingConfig(){
   if(!d)return;
   lightPreset=d.count||3;
   lightFrequency=d.frequency||'medium';
-  rearFogStrategy=d.rear_fog_strategy||'off';
   updateLightPreset(lightPreset);
   updateLightOptionCards('light-frequency',lightFrequency,['slow','medium','fast']);
-  updateLightOptionCards('rear-fog-strategy',rearFogStrategy,['off','strobe','continuous']);
   var t=$('light-enabled-tgl');if(t)t.checked=!!d.enabled;
   setStatusTriplet('light',d.enabled?'爆闪 ON':'爆闪 OFF',
-    (d.count||3)+'x '+(d.frequency||'medium')+' / fog '+rearFogStrategy,
+    (d.count||3)+'x '+(d.frequency||'medium'),
     '等待 CAN2 运行确认',
     d.enabled?'warn':'ok');
   setText('tb-exp',experimentSummary());
@@ -3071,7 +3016,7 @@ async function loadLightingConfig(){
 
 async function saveLightingConfig(){
   var t=$('light-enabled-tgl');
-  try{await postForm('/lighting_config',{enabled:t&&t.checked?'1':'0',count:String(lightPreset),frequency:lightFrequency,rear_fog_strategy:rearFogStrategy});}
+  try{await postForm('/lighting_config',{enabled:t&&t.checked?'1':'0',count:String(lightPreset),frequency:lightFrequency});}
   catch(e){}
   loadLightingConfig();
 }
@@ -3082,48 +3027,10 @@ function setLightFrequency(freq){
   saveLightingConfig();
 }
 
-function setRearFogStrategy(strategy){
-  rearFogStrategy=strategy;
-  updateLightOptionCards('rear-fog-strategy',strategy,['off','strobe','continuous']);
-  saveLightingConfig();
-}
-
 function lightDelayMs(){
   return lightFrequency==='fast'?180:(lightFrequency==='slow'?650:350);
 }
 
-// ── Phase 4: Strobe / Fog Light ──────────────────────────────
-async function loadStrobePage(){
-  var d=await fetchJson('/lighting_config');
-  if(!d)return;
-  var sel=$('fog-strategy');if(sel)sel.value=d.rear_fog_value||0;
-  var cnt=$('strobe-count');if(cnt)cnt.value=d.count||3;
-  var frq=$('strobe-freq');if(frq)frq.value=d.frequency_value||1;
-  // Get active state from execution endpoint plus gear from status.
-  var f=await fetchJson('/fog_light');
-  if(f)setText('strobe-status',f.active?'运行中':(f.reason||'待触发'));
-  var s=await fetchJson('/status');
-  if(s){
-    var gears=['','P','R','N','D','','','','SNA'];
-    setText('strobe-gear',s.gear!==undefined?gears[s.gear]||s.gear:'--');
-  }
-}
-
-async function fogTrigger(mode){
-  try{
-    var r=await postForm('/fog_light',{trigger:mode});
-    if(r)setText('strobe-status',r.active?'运行中':(r.reason||'已发送'));
-  }
-  catch(e){setText('strobe-status','执行失败')}
-  loadStrobePage();
-}
-
-async function saveFogStrategy(){
-  var sel=$('fog-strategy');
-  if(!sel)return;
-  try{await postForm('/fog_light',{fogStrategy:sel.value});}
-  catch(e){}
-}
 
 async function strobeTest(mode){
   if(!confirm('确认执行灯光注入序列？'))return;
@@ -3967,7 +3874,7 @@ document.addEventListener('DOMContentLoaded',function(){
     if(activePage){
       var pid=activePage.id;
       if(pid==='pg-can'){if(canTab==='sniffer'&&!sniffPaused)pollSniffer();else if(canTab==='recorder')pollRecStatus();else if(canTab==='debug')pollLastWrite()}
-      if(pid==='pg-bus2'&&!isSingleCan())pollCAN2();
+      if((pid==='pg-bus2'||pid==='pg-overview')&&!isSingleCan()&&CAP.can2Available)pollCAN2();
       if(pid==='pg-shift'&&!isSingleCan())pollGearAssist();
     }
   };
@@ -4024,7 +3931,6 @@ function restartPoll(ms){
   <div class="mob-more-item" data-page="pg-speed" data-mob="1">↗ 速度策略</div>
   <div class="mob-more-item" data-page="pg-ota" data-mob="1">⇧ OTA 升级</div>
   <div class="mob-more-item" data-page="pg-bus2" data-cap="can2" data-single-hide="1">✦ CAN2 控制</div>
-  <div class="mob-more-item" data-page="pg-strobe" data-cap="lighting" data-single-hide="1">⚡ 灯光特技</div>
   <div class="mob-more-item" data-page="pg-network" data-mob="1">◎ 网络设置</div>
   <div class="mob-more-item" data-page="pg-defense" data-mob="1">◈ FSD 防护</div>
   <div class="mob-more-item" data-page="pg-can" data-mob="1">⌘ CAN 诊断</div>

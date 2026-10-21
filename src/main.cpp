@@ -99,9 +99,7 @@ static volatile uint32_t t2canSecondaryTxCount = 0;
 static volatile uint32_t t2canSecondaryTxErrCount = 0;
 static volatile uint8_t t2canSecondaryEflg = 0;
 static DashTxEvidence serviceTxEvidence;
-static DashTxEvidence fogTxEvidence;
 static DashTxEvidence stalkTxEvidence;
-const DashTxEvidence &t2canFogTxEvidence(void) { return fogTxEvidence; }
 const DashTxEvidence &t2canStalkTxEvidence(void) { return stalkTxEvidence; }
 static volatile uint8_t g_svcLastCommand = 0; // 0=none, 1=enter, 2=exit
 
@@ -529,63 +527,6 @@ static void t2canStalkInjectTick()
 #endif
 }
 
-// ── Fog light tick (Phase 4: 0x273 on bus B) ──────────────────
-static uint32_t g_fogLastMs = 0;
-static constexpr uint32_t kT2canGearFreshMs = 500;
-
-static void t2canSendFogFrame(const uint8_t data[8])
-{
-    CanFrame f = {};
-    f.id = CAN_ID_REAR_FOG_LIGHT;
-    f.dlc = 8;
-    memcpy(f.data, data, 8);
-    f.bus = T2CAN_SECONDARY_BUS;
-    uint32_t now = millis();
-    fogTxEvidence.recordAttempt(f.id, f.bus, f.dlc, f.data, now);
-    bool ok = t2canTxSecondaryCounted(f);
-    fogTxEvidence.recordResult(ok);
-#ifdef ESP32_DASHBOARD
-    dashRecordCanFrame(f, ok ? 'T' : 'E');
-#endif
-}
-
-static bool t2canGearIsFreshDrive(uint32_t now)
-{
-    return apRestoreState.gearSeen && apRestoreState.gearRaw == 4 &&
-           (now - apRestoreState.gearMs) <= kT2canGearFreshMs;
-}
-
-static void t2canFogLightTick()
-{
-    if (!appDriverSecondary)
-        return;
-    uint32_t now = millis();
-    bool active = dashFogCtrl.isActive();
-    bool safeGear = t2canGearIsFreshDrive(now);
-
-    if (dashFogOffRequested || (active && !safeGear))
-    {
-        uint8_t offData[8];
-        dashFogCtrl.buildFrame(offData, false);
-        t2canSendFogFrame(offData);
-        dashFogCtrl.stop();
-        dashFogOffRequested = false;
-        g_fogLastMs = 0;
-        return;
-    }
-
-    if (!active)
-        return;
-
-    uint32_t elapsed = g_fogLastMs ? (now - g_fogLastMs) : 0;
-    g_fogLastMs = now;
-    uint8_t data[8];
-    if (dashFogCtrl.tick((int)elapsed, apRestoreState.gearRaw, data))
-        t2canSendFogFrame(data);
-    if (!dashFogCtrl.isActive())
-        g_fogLastMs = 0;
-}
-
 // Legacy Model X Scroll DND: 0x399 warning transition -> one CAN1 native 0x045
 // positive tick. An unsuccessful action is balanced while the warning remains;
 // warning clear cancels the inverse so the clearing action is consumed only by
@@ -801,7 +742,6 @@ static void app_can_task(void *)
         t2canBus2HealthTick();
         t2canBurstTick();
         t2canStalkInjectTick();
-        t2canFogLightTick();
         t2canWheelDndTick();
         t2canJitterTick();
 #endif

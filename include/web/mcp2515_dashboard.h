@@ -46,7 +46,6 @@
 #include "dash_ota_guard.h"
 #include "dash_3ee_cadence.h"
 #include "dash_power_mgmt.h"
-#include "dash_fog_light.h"
 #include "dash_wheel_dnd.h"
 #include "dash_legacy_wheel_045_dnd.h"
 #include "dash_jitter_procedure.h"
@@ -186,9 +185,6 @@ static uint8_t dashSpeedStrategy = 1; // 0=fixed, 1=auto, 2=custom
 static bool dashLightingEnabled = false;
 static uint8_t dashLightingCount = 3;
 static uint8_t dashLightingFrequency = 1; // 0=slow, 1=medium, 2=fast
-static uint8_t dashRearFogStrategy = 0;   // 0=off, 1=strobe, 2=continuous
-static DashFogLight dashFogCtrl;          // Phase 4 fog light controller instance
-static bool dashFogOffRequested = false;  // one-shot fail-off/stop command owned by CAN task
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static DashLegacyWheel045Dnd dashLegacyWheel045DndCtrl;
 // v1.19 JITTER procedure (4.5.0-beta15): the LittleGong-aligned anti-jerk
@@ -1610,33 +1606,6 @@ static int dashLightingFrequencyFromName(String frequency)
     return -1;
 }
 
-static const char *dashRearFogStrategyName(uint8_t strategy)
-{
-    switch (strategy)
-    {
-    case 0:
-        return "off";
-    case 1:
-        return "strobe";
-    case 2:
-        return "continuous";
-    default:
-        return "off";
-    }
-}
-
-static int dashRearFogStrategyFromName(String strategy)
-{
-    strategy.toLowerCase();
-    if (strategy == "off")
-        return 0;
-    if (strategy == "strobe")
-        return 1;
-    if (strategy == "continuous")
-        return 2;
-    return -1;
-}
-
 static void dashApplySpeedProfileState()
 {
     if (!dashHandler)
@@ -1785,7 +1754,6 @@ static void dashSavePrefs()
     prefs.putBool("lt_en", dashLightingEnabled);
     prefs.putUChar("lt_cnt", dashLightingCount);
     prefs.putUChar("lt_freq", dashLightingFrequency);
-    prefs.putUChar("lt_fog", dashRearFogStrategy);
     prefs.putBool("def_en", dashDefenseEnabled);
     prefs.putBool("def_bio", dashBionicSteering);
     prefs.putBool("def_nd", dashSpeedNoDisturb);
@@ -2027,9 +1995,6 @@ static void dashLoadPrefs()
     dashLightingFrequency = prefs.getUChar("lt_freq", 1);
     if (dashLightingFrequency > 2)
         dashLightingFrequency = 1;
-    dashRearFogStrategy = prefs.getUChar("lt_fog", 0);
-    if (dashRearFogStrategy > 2)
-        dashRearFogStrategy = 0;
     dashDefenseEnabled = prefs.getBool("def_en", false);
     dashBionicSteering = prefs.getBool("def_bio", false);
     dashSpeedNoDisturb = prefs.getBool("def_nd", false);
@@ -3313,10 +3278,6 @@ static void handleStatus()
     j += (unsigned long)(millis() - lastWebActivityMs);
     j += ",\"wifiStaDisabled\":";
     j += wifiStaDisabled ? "true" : "false";
-    j += ",\"fogStrategy\":";
-    j += (int)dashRearFogStrategy;
-    j += ",\"strobeCont\":";
-    j += dashFogCtrl.isActive() ? "true" : "false";
     j += ",\"dndVolume\":";
     j += dashDndVolume ? "true" : "false";
     j += ",\"dndSpeed\":";
@@ -3980,10 +3941,6 @@ static String dashLightingConfigJson()
     j += dashLightingFrequencyName(dashLightingFrequency);
     j += "\",\"frequency_value\":";
     j += dashLightingFrequency;
-    j += ",\"rear_fog_strategy\":\"";
-    j += dashRearFogStrategyName(dashRearFogStrategy);
-    j += "\",\"rear_fog_value\":";
-    j += dashRearFogStrategy;
     j += ",\"bus2_available\":";
 #ifdef DRIVER_T2CAN_DUAL
     j += "true";
@@ -3997,7 +3954,7 @@ static String dashLightingConfigJson()
 static void handleLightingConfig()
 {
     if (server.hasArg("enabled") || server.hasArg("strobe") || server.hasArg("flash") ||
-        server.hasArg("count") || server.hasArg("frequency") || server.hasArg("rear_fog_strategy"))
+        server.hasArg("count") || server.hasArg("frequency"))
     {
         if (server.hasArg("enabled"))
             dashLightingEnabled = dashArgTruthy(server.arg("enabled"));
@@ -4023,16 +3980,6 @@ static void handleLightingConfig()
                 return;
             }
             dashLightingFrequency = static_cast<uint8_t>(f);
-        }
-        if (server.hasArg("rear_fog_strategy"))
-        {
-            int s = dashRearFogStrategyFromName(server.arg("rear_fog_strategy"));
-            if (s < 0)
-            {
-                server.send(400, "application/json", "{\"ok\":false,\"error\":\"rear_fog_strategy must be off, strobe, or continuous\"}");
-                return;
-            }
-            dashRearFogStrategy = static_cast<uint8_t>(s);
         }
         dashSavePrefs();
         dashLog("[CFG] /lighting_config saved");
@@ -4449,123 +4396,6 @@ static void handleVehicleOtaStatus()
     }
     json += "}";
     server.send(200, "application/json", json);
-}
-
-// POST/GET /fog_light — 后雾灯策略 + 执行控制
-static void handleFogLight()
-{
-    dashPowerMgmtTouchWeb();
-    const char *reason = "idle";
-#if defined(DRIVER_T2CAN_DUAL)
-    bool driverSupported = true;
-#else
-    bool driverSupported = false;
-#endif
-    if (server.hasArg("fogStrategy"))
-    {
-        int strategy = server.arg("fogStrategy").toInt();
-        if (strategy < 0 || strategy > 2)
-            strategy = 0;
-        dashRearFogStrategy = strategy;
-        prefs.begin(PREFS_NS, false);
-        prefs.putUChar("lt_fog", strategy);
-        prefs.end();
-        // Stop active fog when strategy changes to off; CAN task sends final OFF frame.
-        if (strategy == 0)
-            dashFogOffRequested = true;
-        reason = "strategy_saved";
-        dashLog(String("[CFG] Fog strategy: ") + dashRearFogStrategyName(strategy));
-    }
-    // Phase 4: trigger fog light execution. /lighting_config only saves the
-    // preferred strategy; actual CAN-B execution must enter here.
-    if (server.hasArg("trigger"))
-    {
-        String t = server.arg("trigger");
-        if (!driverSupported)
-        {
-            reason = "driver_not_supported";
-        }
-        else if (t == "strobe")
-        {
-            dashFogCtrl.startStrobe(dashLightingCount, dashLightingFrequency);
-            reason = "strobe_started";
-            dashLog("[FOG] Strobe started");
-        }
-        else if (t == "f1")
-        {
-            dashFogCtrl.startF1Pilot();
-            reason = "f1_started";
-            dashLog("[FOG] F1 pilot started");
-        }
-        else if (t == "continuous")
-        {
-            dashFogCtrl.startContinuous();
-            reason = "continuous_started";
-            dashLog("[FOG] Continuous ON");
-        }
-        else if (t == "stop")
-        {
-            dashFogOffRequested = true;
-            reason = "stop_requested";
-            dashLog("[FOG] Stopped");
-        }
-        else
-        {
-            reason = "unknown_trigger";
-        }
-    }
-    String j = "{\"ok\":true,\"fogStrategy\":";
-    j += String(dashRearFogStrategy);
-    j += ",\"active\":";
-    j += dashFogCtrl.isActive() ? "true" : "false";
-    j += ",\"canActive\":";
-    j += canActive ? "true" : "false";
-    j += ",\"driverSupported\":";
-    j += driverSupported ? "true" : "false";
-    j += ",\"reason\":\"";
-    j += reason;
-    j += "\"}";
-    server.send(200, "application/json", j);
-}
-
-// POST /strobe_cont — 连续闪烁（Phase 4: now functional）
-static void handleStrobeCont()
-{
-    dashPowerMgmtTouchWeb();
-#if defined(DRIVER_T2CAN_DUAL)
-    bool driverSupported = true;
-#else
-    bool driverSupported = false;
-#endif
-    bool enable = server.hasArg("enable") && server.arg("enable") == "1";
-    const char *reason = "stop_requested";
-    if (enable && driverSupported)
-    {
-        dashFogCtrl.startStrobe(0, dashLightingFrequency); // 0 = infinite
-        reason = "continuous_started";
-        dashLog("[STROBE] Continuous strobe started");
-    }
-    else if (enable)
-    {
-        reason = "driver_not_supported";
-    }
-    else
-    {
-        dashFogOffRequested = true;
-        dashLog("[STROBE] Stopped");
-    }
-    String j = "{\"ok\":true,\"strobeCont\":";
-    j += dashFogCtrl.isActive() ? "true" : "false";
-    j += ",\"active\":";
-    j += dashFogCtrl.isActive() ? "true" : "false";
-    j += ",\"canActive\":";
-    j += canActive ? "true" : "false";
-    j += ",\"driverSupported\":";
-    j += driverSupported ? "true" : "false";
-    j += ",\"reason\":\"";
-    j += reason;
-    j += "\"}";
-    server.send(200, "application/json", j);
 }
 
 static void handleGearAssistStatus()
@@ -7001,7 +6831,6 @@ static void handleSettingsExport()
     bool storedLightingEnabled = dashLightingEnabled;
     uint8_t storedLightingCount = dashLightingCount;
     uint8_t storedLightingFrequency = dashLightingFrequency;
-    uint8_t storedRearFogStrategy = dashRearFogStrategy;
     bool storedDefenseEnabled = dashDefenseEnabled;
     bool storedBionicSteering = dashBionicSteering;
     bool storedSpeedNoDisturb = dashSpeedNoDisturb;
@@ -7062,7 +6891,6 @@ static void handleSettingsExport()
         storedLightingEnabled = p.getBool("lt_en", dashLightingEnabled);
         storedLightingCount = p.getUChar("lt_cnt", dashLightingCount);
         storedLightingFrequency = p.getUChar("lt_freq", dashLightingFrequency);
-        storedRearFogStrategy = p.getUChar("lt_fog", dashRearFogStrategy);
         storedDefenseEnabled = p.getBool("def_en", dashDefenseEnabled);
         storedBionicSteering = p.getBool("def_bio", dashBionicSteering);
         storedSpeedNoDisturb = p.getBool("def_nd", dashSpeedNoDisturb);
@@ -7196,8 +7024,7 @@ static void handleSettingsExport()
     }
     j += "]}";
     j += ",\"lighting\":{\"enabled\":" + String(storedLightingEnabled ? "true" : "false");
-    j += ",\"count\":" + String(storedLightingCount) + ",\"frequencyValue\":" + String(storedLightingFrequency);
-    j += ",\"rearFogValue\":" + String(storedRearFogStrategy) + "}";
+    j += ",\"count\":" + String(storedLightingCount) + ",\"frequencyValue\":" + String(storedLightingFrequency) + "}";
     j += ",\"defense\":{\"enabled\":" + String(storedDefenseEnabled ? "true" : "false");
     j += ",\"bionicSteering\":" + String(storedBionicSteering ? "true" : "false");
     j += ",\"speedNoDisturb\":" + String(storedSpeedNoDisturb ? "true" : "false");
@@ -7465,12 +7292,6 @@ static void handleSettingsImport()
             uint8_t frequency = lighting["frequencyValue"].as<int>();
             if (frequency <= 2)
                 p.putUChar("lt_freq", frequency);
-        }
-        if (lighting["rearFogValue"].is<int>())
-        {
-            uint8_t strategy = lighting["rearFogValue"].as<int>();
-            if (strategy <= 2)
-                p.putUChar("lt_fog", strategy);
         }
     }
     if (doc["defense"].is<JsonObject>())
@@ -8306,11 +8127,6 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/power_mgmt", HTTP_GET, handlePowerMgmt);
     server.on("/power_mgmt", HTTP_POST, handlePowerMgmt);
     server.on("/vehicle_ota_status", HTTP_GET, handleVehicleOtaStatus);
-#if !defined(DASH_SINGLE_CAN_STANDALONE)
-    server.on("/fog_light", HTTP_GET, handleFogLight);
-    server.on("/fog_light", HTTP_POST, handleFogLight);
-    server.on("/strobe_cont", HTTP_POST, handleStrobeCont);
-#endif
     server.on("/hotspot_config", HTTP_GET, handleHotspotConfig);
     server.on("/hotspot_config", HTTP_POST, handleHotspotConfig);
     server.on("/relay_wifi_test", HTTP_POST, handleRelayWifiTest);
