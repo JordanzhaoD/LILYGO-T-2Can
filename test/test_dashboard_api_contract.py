@@ -2093,15 +2093,14 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('server.on("/update_beta", HTTP_GET, handleUpdateBeta);', self.dash)
 
     def test_batch_c_sidebar_i18n_and_version_display_are_stable(self) -> None:
-        """New UI pages must not break nav translations, and overview version should use /system_status firmware.
+        """Nav translations and overview version stay stable.
 
-        The CAN2 / auto-shift zh strings are split via concatenation in source so the
-        raw forbidden literals never appear in standalone-visible source (Task 10);
-        the assertions check the split fragments instead.
+        5.0.0-beta04 task 8c rewrote i18n: applyI18n walks [data-i18n] nodes
+        (nav included), the old position array is gone, and the dict uses
+        plain quoted keys (the Task-10 concat splitting is obsolete).
         """
         for token in [
-            "'灯光特技':'Light Show'",
-            "['自动'+'换挡']:'Auto'+' Shift'",
+            "'自动换挡':'Auto Shift'",
             "'驾驶状态':'Drive Status'",
             "'硬件模式':'Hardware Mode'",
             "'驾驶风格':'Drive Style'",
@@ -2111,7 +2110,9 @@ class DashboardApiContractTests(unittest.TestCase):
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
-        self.assertIn("'驾驶状态','硬件模式','驾驶风格','速度策略','CAN2 '+'控制','灯光特技','FSD 防护','OTA 升级','网络设置','CAN 诊断','自动'+'换挡'", self.ui)
+        self.assertIn("document.querySelectorAll('[data-i18n]')", self.ui)
+        self.assertIn('data-i18n="驾驶状态"', self.ui)
+        self.assertNotIn("zhTexts=", self.ui)
         self.assertIn("d&&(d.firmware||d.version)", self.ui)
         self.assertIn("setText('s-ver',d.firmware||d.version);", self.ui)
 
@@ -2559,8 +2560,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("jtTgl.checked=!!d.jitter", self.ui)
         self.assertIn("jitter:jtTgl&&jtTgl.checked?'1':'0'", self.ui)
         self.assertIn("var jt=safety.jitter||{}", self.ui)
-        self.assertIn("steerReset:'转向>90°·全复位'", self.ui)
-        self.assertIn("sessionCap:'本行车段已站下'", self.ui)
+        self.assertIn("steerReset:T('转向>90°·全复位')", self.ui)
+        self.assertIn("sessionCap:T('本行车段已站下')", self.ui)
         # 4. Simulator key set equals the firmware emission (order included;
         #    beta07 lesson — a missing mirror field flips real UI state).
         sim_obj = re.search(r'\n\s*"jitter": \{(.*?)\n\s*\},', self.simulator, re.S)
@@ -2943,6 +2944,44 @@ class DashboardApiContractTests(unittest.TestCase):
             f"reconstructor failed:\n{result.stdout}\n{result.stderr}",
         )
         self.assertIn("ALL EMISSIONS PARSE CLEAN", result.stdout)
+
+
+
+    def test_ui_i18n_data_attributes_covered_by_dict(self):
+        """5.0.0-beta04 task 8c: every data-i18n value must exist in the I18N dict,
+        and key dynamic strings must be wrapped in T()."""
+        src = self.ui
+        html = re.search(r'R"HTML\((.*?)\)HTML"', src, re.S).group(1)
+        dict_m = re.search(r'var I18N=\{(.*?)\n\};', html, re.S)
+        self.assertIsNotNone(dict_m, "I18N dict not found")
+        keys = set()
+        for a, b in re.findall(r"""(?:'([^']+)'|\["([^\"]+)\"])\s*:""", dict_m.group(1)):
+            keys.add(a or b)
+        attrs = re.findall(r'data-i18n="([^"]*)"', html)
+        self.assertGreater(
+            len(attrs), 300, f"data-i18n coverage too thin: {len(attrs)} attributes"
+        )
+        def _unesc(v: str) -> str:
+            return v.replace("&quot;", chr(34)).replace("&lt;", "<").replace("&amp;", "&")
+        missing = sorted({a for a in attrs if _unesc(a) not in keys})
+        self.assertEqual(
+            missing,
+            [],
+            f"data-i18n values missing from I18N dict (first 10): {missing[:10]}",
+        )
+
+    def test_ui_i18n_dynamic_strings_wrapped_in_T(self):
+        """5.0.0-beta04 task 8c spot-check: visible dynamic Chinese strings route
+        through T() so an EN switch does not leave Chinese text behind."""
+        src = self.ui
+        for probe in [
+            "T('CAN 离线')",
+            "T('暂无异常')",
+            "T('AP Gate 等待')",
+            "T('已连接')",
+            "T('防御 ON')",
+        ]:
+            self.assertIn(probe, src, f"dynamic string not wrapped in T(): {probe}")
 
 
 if __name__ == "__main__":

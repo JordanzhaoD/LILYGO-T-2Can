@@ -88,9 +88,12 @@ class PluginRedesignTests(UiV11RedesignTests):
         self.assert_id_present("plugin-replay-count")
 
     def test_no_english_install_labels(self):
-        # 中文化：英文按钮文案应移除
-        self.assert_absent("Official JSON plugin manager")
-        self.assert_absent("Install from URL")
+        # 中文化：英文按钮文案应移除（5.0.0-beta04 task 8c 起英文只允许
+        # 作为 I18N 词典的 value 出现，源码其余位置仍不得有英文按钮文案）
+        dict_block = re.search(r"var I18N=\{[\s\S]*?\n\};", SRC)
+        outside = SRC.replace(dict_block.group(0), "") if dict_block else SRC
+        for needle in ["Official JSON plugin manager", "Install from URL"]:
+            self.assertNotIn(needle, outside, f"{needle} 只应存在于 I18N 词典")
 
     def test_original_ids_preserved(self):
         for i in ["plugins-card","plugin-editor-json","plugin-rule-test-result"]:
@@ -139,7 +142,7 @@ class MobileNavTests(UiV11RedesignTests):
 
     def test_single_can_mobile_nav_has_exactly_five_ordered_tabs(self):
         tabs = re.findall(
-            r'<button class="mob-tab(?: active)?" data-mobile-page="([^"]+)" onclick="([^"]+)">\s*<div class="mob-icon">[^<]*</div><div>([^<]+)</div></button>',
+            r'<button class="mob-tab(?: active)?" data-mobile-page="([^"]+)" onclick="([^"]+)">\s*<div class="mob-icon">[^<]*</div><div[^>]*>([^<]+)</div></button>',
             self._standalone_tabs_block(),
         )
         self.assertEqual(
@@ -190,7 +193,7 @@ class MobileNavTests(UiV11RedesignTests):
             ("ota", "OTA 升级"),
             ("can", "CAN 诊断"),
         ]
-        items = re.findall(r'<div class="mob-more-item" onclick="showStandaloneMorePage\(\'([^\']+)\'\)">[^<]*?([^<]+)</div>', panel)
+        items = re.findall(r'<div class="mob-more-item" onclick="showStandaloneMorePage\(\'([^\']+)\'\)"[^>]*>\s*([^<]+?)\s*</div>', panel)
         normalized = [(name, re.sub(r"^[^\w\u4e00-\u9fff]+\s*", "", label.strip())) for name, label in items]
         self.assertEqual(expected, normalized)
 
