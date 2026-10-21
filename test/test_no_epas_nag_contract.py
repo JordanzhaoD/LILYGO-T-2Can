@@ -31,7 +31,9 @@ def test_runtime_is_default_off_and_layered():
     assert "legacyNagLastTxData" in HANDLERS
     assert "CounterCollision" in HANDLERS
     assert "DasSatisfied" in ENGINE
-    assert "counterCollisionObserved" in DASH
+    # 5.0.0-beta04 task 7: dashboard defense-diag mirror removed with the
+    # Legacy NAG UI; the engine counters stay observable in HANDLERS only.
+    assert "counterCollisionObserved" not in DASH
     assert "expectedNativeFollowerObserved" in HANDLERS
     assert "kNagNativeFollowerMinMs" in HANDLERS
 
@@ -53,20 +55,15 @@ def test_v4_engine_is_bounded_and_same_frame_based():
 
 
 def test_api_nvs_and_ui_contract():
-    assert 'prefs.putBool("def_bio", dashBionicSteering)' in DASH
-    assert 'prefs.getBool("def_bio", false)' in DASH
-    assert '"legacyNag"' in DASH
-    assert '"verified":false' in DASH
-    assert '"vehicleTest":"pending_beta16_vehicle_test"' in DASH
-    assert '"gearGateRequired":false' in DASH
-    assert '"apContextStatusMax":6' in DASH
-    assert 'legacy_nag_strategy' in DASH
-    assert 'continuous_absolute' in DASH
-    assert 'modec_488_one_sided' in DASH
-    assert '"directionSource":"0x488"' in DASH
-    assert "Legacy 0x370 NAG 主路径" in UI
-    assert "continuous_absolute" in UI
-    assert "updateLegacyNagStatus" in UI
+    # 5.0.0-beta04 task 7: the dashboard /defense_config bionic branch, the
+    # /status legacyNag JSON blob, and the Legacy NAG UI card were removed;
+    # the engine (handlers.h / dash_legacy_nag_v4.h) stays dormant but intact.
+    assert 'prefs.putBool("def_bio", dashBionicSteering)' not in DASH
+    assert 'prefs.getBool("def_bio", false)' not in DASH
+    assert '"legacyNag"' not in DASH
+    assert 'legacy_nag_strategy' not in DASH
+    assert "Legacy 0x370 NAG 主路径" not in UI
+    assert "updateLegacyNagStatus" not in UI
     assert 'id="def-epnag-tgl"' not in UI
     assert 'id="legacy-nag-strategy"' not in UI
     assert 'id="legacy-nag-arm-tgl"' not in UI

@@ -56,12 +56,23 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.parts: list[str] = []
                 self.hidden_depth = 0
                 self.replaced_depth = 0
+                self.skip_depth = 0
 
             def _is_void(self, tag: str) -> bool:
                 return tag.lower() in self.VOID_TAGS
 
             def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
                 attr_map = {name: value for name, value in attrs}
+                # 5.0.0-beta04 task 8c: script/style content (I18N dict, JS
+                # literals) is not visible copy — the dict legitimately holds
+                # dual-CAN Chinese keys whose EN values show in standalone.
+                if tag.lower() in {"script", "style"}:
+                    self.skip_depth = 1
+                    return
+                if self.skip_depth:
+                    if not self._is_void(tag):
+                        self.skip_depth += 1
+                    return
                 if self.hidden_depth:
                     if not self._is_void(tag):
                         self.hidden_depth += 1
@@ -87,6 +98,9 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.parts.append(f"<{tag}{(' ' + attr_text) if attr_text else ''}>")
 
             def handle_endtag(self, tag: str) -> None:
+                if self.skip_depth:
+                    self.skip_depth -= 1
+                    return
                 if self.hidden_depth:
                     self.hidden_depth -= 1
                     return
@@ -96,7 +110,7 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.parts.append(f"</{tag}>")
 
             def handle_data(self, data: str) -> None:
-                if not self.hidden_depth and not self.replaced_depth:
+                if not self.hidden_depth and not self.replaced_depth and not self.skip_depth:
                     self.parts.append(data)
 
         parser = StandaloneVisibleParser()
@@ -126,11 +140,9 @@ class DashboardApiContractTests(unittest.TestCase):
             "DASH_HTML_GZ",
             "DASH_UI_BUILD_ID",
             "DASH_UI_BUILD_UTC",
-            "pg-strobe",
             "pg-shift",
             "/speed_custom",
             "/defense_config",
-            "/fog_light",
             "/burst",
         ]:
             with self.subTest(token=token):
@@ -245,7 +257,6 @@ class DashboardApiContractTests(unittest.TestCase):
             "var CAP=",
             "function applyCapabilities(c)",
             "data-cap=\"can2\"",
-            "data-cap=\"lighting\"",
             "cap-hidden",
             "applyCapabilities(d.capabilities||{})",
         ]:
@@ -332,7 +343,10 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(token, self.ui)
 
         # Task 5 (UI V1.1) replaced the English plugin UI labels with Chinese
-        # cockpit-style copy. The old English labels must not come back.
+        # cockpit-style copy. The old English labels must not come back as
+        # hardcoded copy. 5.0.0-beta04 task 8c: the I18N dict legitimately
+        # stores EN labels as translation values, so strip it first.
+        ui_no_dict = re.sub(r"var I18N=\{.*?\n\};", "", self.ui, flags=re.S)
         for token in [
             'Install from URL',
             'Upload .json',
@@ -343,7 +357,7 @@ class DashboardApiContractTests(unittest.TestCase):
             'GTW2047 Replay Count',
         ]:
             with self.subTest(token=token):
-                self.assertNotIn(token, self.ui)
+                self.assertNotIn(token, ui_no_dict)
 
     def test_single_can_product_ui_hides_dual_can_surfaces(self) -> None:
         for token in [
@@ -373,11 +387,13 @@ class DashboardApiContractTests(unittest.TestCase):
 
         for token in [
             'data-page="pg-bus2" data-cap="can2" data-single-hide="1"',
-            'data-page="pg-strobe" data-cap="lighting" data-single-hide="1"',
             'data-page="pg-shift" data-single-hide="1"',
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
+        # 5.0.0-beta04 task 2: pg-strobe (light stunts) was deleted entirely;
+        # the lighting capability gate no longer has a page to hide.
+        self.assertNotIn('id="pg-strobe"', self.ui)
 
     def test_mobile_single_can_ui_matches_ap_and_plugin_capabilities(self) -> None:
         for token in [
@@ -756,7 +772,8 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn('j += "]}";', body[vehicle_pos:])
 
     def test_settings_backup_exports_new_dashboard_config(self) -> None:
-        """Backup JSON must include the newer FSD, speed, defense, lighting and power settings."""
+        """Backup JSON must include the newer FSD, speed, defense and lighting settings.
+        5.0.0-beta04 task 3: the power block was removed with power management."""
         match = re.search(r"static void handleSettingsExport\(\).*?server\.send\(200, \"application/json\", j\);", self.dash, re.S)
         self.assertIsNotNone(match)
         body = match.group(0)
@@ -769,12 +786,12 @@ class DashboardApiContractTests(unittest.TestCase):
             '\\"speed\\"',
             '\\"lighting\\"',
             '\\"defense\\"',
-            '\\"power\\"',
             '\\"fsdRuntime\\"',
             '\\"legacyMpp\\"',
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, body)
+        self.assertNotIn('\\"power\\"', body)
 
     def test_settings_import_restores_new_dashboard_config(self) -> None:
         """Restore must accept Auto HW and write all persisted dashboard config groups."""
@@ -792,7 +809,6 @@ class DashboardApiContractTests(unittest.TestCase):
             'p.putUChar("manualPct"',
             'p.putBool("lt_en"',
             'p.putBool("def_en"',
-            'p.putBool(NVS_KEY_AUTO_SHUTDOWN',
             'p.putBool("fa"',
             'p.putBool("lg_mpp_en"',
             "i < kHw3CustomTargetCount && i < arr.size()",
@@ -932,12 +948,7 @@ class DashboardApiContractTests(unittest.TestCase):
             ("GET", "/auto_update"),
             ("POST", "/auto_update"),
             # Phase 1 新增端点
-            ("GET", "/power_mgmt"),
-            ("POST", "/power_mgmt"),
             ("GET", "/vehicle_ota_status"),
-            ("GET", "/fog_light"),
-            ("POST", "/fog_light"),
-            ("POST", "/strobe_cont"),
         }
         missing = sorted(expected - routes)
         self.assertEqual([], missing)
@@ -1036,14 +1047,11 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("pollTick=function()", self.ui)
 
     def test_phase1_new_endpoints(self) -> None:
-        """Phase 1 新增端点应在固件路由中注册，handler 函数存在"""
+        """Phase 1 新增端点应在固件路由中注册，handler 函数存在。
+        5.0.0-beta04: /power_mgmt, /fog_light, /strobe_cont removed with
+        their modules (tasks 2/3)."""
         new_endpoints = {
-            "GET  /power_mgmt": "handlePowerMgmt",
-            "POST /power_mgmt": "handlePowerMgmt",
             "GET  /vehicle_ota_status": "handleVehicleOtaStatus",
-            "GET  /fog_light": "handleFogLight",
-            "POST /fog_light": "handleFogLight",
-            "POST /strobe_cont": "handleStrobeCont",
         }
         for endpoint, handler in new_endpoints.items():
             method, path = endpoint.split()
@@ -1052,8 +1060,10 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(handler, self.dash, f"Missing handler: {handler}")
 
     def test_phase1_status_fields_exist(self) -> None:
-        """Phase 1 新增 /status 字段应在 handleStatus() JSON 中输出"""
-        fields = ["vehicleOta", "autoShutdown", "wifiAutoOff", "fogStrategy", "strobeCont", "dndVolume", "dndSpeed"]
+        """Phase 1 新增 /status 字段应在 handleStatus() JSON 中输出。
+        5.0.0-beta04: autoShutdown/wifiAutoOff/fogStrategy/strobeCont removed
+        with the power-mgmt and light-stunt modules (tasks 2/3)."""
+        fields = ["vehicleOta", "dndVolume", "dndSpeed"]
         for field in fields:
             with self.subTest(field=field):
                 # In C++ source, JSON keys appear as \"fieldName\":
@@ -1066,119 +1076,6 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("canActive", check_ad.group(0))
         self.assertIn("dashOtaGuardAllowInjection()", check_ad.group(0))
         self.assertIn("CAN_ID_OTA_STATUS", self.handlers)
-
-    def test_phase1_power_mgmt_partial_update_and_wake_pin(self) -> None:
-        """Power management updates should preserve omitted fields and use configurable wake pin."""
-        power = re.search(r"static void handlePowerMgmt\(\).*?server\.send\(200", self.dash, re.S)
-        self.assertIsNotNone(power)
-        body = power.group(0)
-        self.assertIn('if (server.hasArg("autoShutdown"))', body)
-        self.assertIn('if (server.hasArg("wifiAutoOff"))', body)
-        self.assertIn("dashArgTruthy(server.arg(\"autoShutdown\"))", body)
-        self.assertIn("dashArgTruthy(server.arg(\"wifiAutoOff\"))", body)
-        power_header = (ROOT / "include" / "dash_power_mgmt.h").read_text(encoding="utf-8")
-        self.assertIn("DASH_WAKE_PIN", power_header)
-        self.assertIn("TWAI_RX_PIN", power_header)
-        self.assertIn("dashPowerMgmtConfigureWake()", power_header)
-
-    def test_50b1_power_mgmt_runtime_fixes(self) -> None:
-        """5.0-beta01: auto shutdown wake polarity, STA auto-off suppression +
-        restore path, and /status idle observability keys."""
-        power_header = (ROOT / "include" / "dash_power_mgmt.h").read_text(encoding="utf-8")
-        # CAN idle bus is recessive (RXD HIGH): wake must arm on level 0 so
-        # only dominant traffic wakes the device (level 1 woke instantly).
-        self.assertIn("esp_sleep_enable_ext0_wakeup(DASH_WAKE_PIN, 0)", power_header)
-        self.assertNotIn("esp_sleep_enable_ext0_wakeup(DASH_WAKE_PIN, 1)", power_header)
-        # Web activity arms a one-shot restore; the disabled flag itself stays
-        # set until the main loop consumes it.
-        self.assertIn("wifiStaRestorePending", power_header)
-        self.assertIn("dashPowerMgmtConsumeStaRestore", power_header)
-
-        # dashCheckWifi must stay suppressed while STA is idle-disabled,
-        # otherwise its rotation drags WIFI_AP_STA back within seconds.
-        check_wifi = re.search(r"static void dashCheckWifi\(\)\s*\{.*?\n\}", self.dash, re.S)
-        self.assertIsNotNone(check_wifi)
-        self.assertIn("wifiNetworkCount == 0 || wifiStaDisabled", check_wifi.group(0))
-
-        # Main loop: restore branch + pre-sleep serial log.
-        loop = re.search(r"void mcpDashboardLoop\(\).*?\n\}", self.dash, re.S)
-        self.assertIsNotNone(loop)
-        loop_body = loop.group(0)
-        self.assertIn("dashPowerMgmtConsumeStaRestore()", loop_body)
-        self.assertIn("dashScheduleSTAConnect(1500)", loop_body)
-        self.assertIn("[PWR] Web activity detected, restoring WiFi STA", loop_body)
-        self.assertIn("[PWR] CAN idle >5min", loop_body)
-        self.assertIn("fflush(stdout)", loop_body)
-
-        # /status emission (bare numeric chain rule: ,"key": after numbers/bools).
-        for token in [
-            'j += ",\\"canIdleMs\\":',
-            'j += ",\\"webIdleMs\\":',
-            'j += ",\\"wifiStaDisabled\\":',
-        ]:
-            with self.subTest(token=token):
-                self.assertIn(token, self.dash)
-
-        # UI power card read-only idle line consumes the new keys.
-        # 5.0.0-beta02: the card moved to the hardware page with hw-* ids.
-        self.assertIn('id="hw-pwr-idle"', self.ui)
-        self.assertIn("d.canIdleMs", self.ui)
-        self.assertIn("d.wifiStaDisabled", self.ui)
-        # Simulator mirrors the three keys (beta07 lesson: a missing mirror
-        # field leaves the UI idle line dead in simulator smoke).
-        for token in (
-            '"canIdleMs":',
-            '"webIdleMs":',
-            '"wifiStaDisabled": False',
-        ):
-            self.assertIn(token, self.simulator)
-
-    def test_50b2_power_toggles_object_form_and_hardware_page(self) -> None:
-        """5.0.0-beta02: the power switches (and HW3 slew) must post object
-        payloads — a string second arg to postForm makes `for...in` iterate
-        character indices, sending `0=t&1=r…` so the backend never sees the
-        argument and the poll snaps the toggle back (dead-switch symptom).
-        The power card also moved to the hardware page (phone-reachable)."""
-        # Object-form call sites for the three formerly string-form toggles.
-        self.assertIn("postForm('/power_mgmt',{autoShutdown:on?'1':'0'})", self.ui)
-        self.assertIn("postForm('/power_mgmt',{wifiAutoOff:on?'1':'0'})", self.ui)
-        self.assertIn(
-            "postForm('/config',{hw3OffsetSlew:(tgl&&tgl.checked?'1':'0')})", self.ui
-        )
-        # Anti-regression: NO postForm call site may pass a string literal
-        # as the body anywhere in the source UI (one convention only).
-        self.assertEqual(re.findall(r"postForm\([^,]+,\s*'", self.ui), [])
-
-        # Power card lives on the hardware page (between pg-hardware and the
-        # next page container), with the renamed hw-* ids on both surfaces
-        # (minifier strips attribute quotes in the generated header).
-        hw_open = self.ui.find('id="pg-hardware"')
-        next_page = re.compile(r'id="pg-[a-z]+"').search(self.ui, hw_open + 10)
-        card = self.ui.find('id="hw-auto-shutdown"')
-        self.assertGreater(hw_open, -1)
-        self.assertIsNotNone(next_page)
-        self.assertGreater(card, hw_open)
-        self.assertLess(card, next_page.start())
-        for token in (
-            'id="hw-auto-shutdown"',
-            'id="hw-wifi-auto-off"',
-            'id="hw-pwr-idle"',
-            "toggleAutoShutdown(this.checked)",
-            "toggleWifiAutoOff(this.checked)",
-        ):
-            self.assertIn(token, self.ui)
-        for token in ("id=hw-auto-shutdown", "id=hw-wifi-auto-off", "id=hw-pwr-idle"):
-            self.assertIn(token, self.ui_gen)
-        # Old overview-prefixed ids must be fully gone (HTML and JS).
-        for gone in ("ov-auto-shutdown", "ov-wifi-auto-off", "ov-pwr-idle"):
-            self.assertNotIn(gone, self.ui)
-            self.assertNotIn(gone, self.ui_gen)
-        # poll() syncs the renamed ids.
-        self.assertIn("$('hw-auto-shutdown')", self.ui)
-        self.assertIn("$('hw-wifi-auto-off')", self.ui)
-        # Phone reachability: the dual-CAN "more" panel keeps the hardware
-        # entry (the card's only phone surface).
-        self.assertIn('data-page="pg-hardware" data-mob="1"', self.ui)
 
     def test_50b1_legacy_experimental_switch_nvs_reset(self) -> None:
         """5.0-beta01: one-time NVS reset of the five removed legacy switches,
@@ -1500,7 +1397,12 @@ class DashboardApiContractTests(unittest.TestCase):
         ]
         for speed_limit, auto_offset in expected_rows:
             with self.subTest(speed_limit=speed_limit):
-                self.assertIn(f"<tr><td>{speed_limit}</td><td>{auto_offset}</td></tr>", panel)
+                # 5.0.0-beta04 task 8c: the offset cell carries data-i18n —
+                # match td content regardless of attributes.
+                self.assertRegex(
+                    panel,
+                    rf"<tr><td>{re.escape(speed_limit)}</td><td[^>]*>{re.escape(auto_offset)}</td></tr>",
+                )
         self.assertNotIn("≤ 50 km/h", panel)
         self.assertNotIn("51-70 km/h", panel)
         self.assertNotIn("71-100 km/h", panel)
@@ -1660,7 +1562,6 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         runtime_body = runtime.group(0)
         for token in [
-            "dashHandler->bionicSteering = dashBionicSteering",
             "dashHandler->isaChimeSuppress = nvsIsaChimeSuppress",
             "dashHandler->banShieldEnable = nvsBanShieldEnable",
             "dashHandler->legacyOffset = nvsLegacyOffset",
@@ -1671,7 +1572,6 @@ class DashboardApiContractTests(unittest.TestCase):
         nvs_sync = re.search(r"static void dashApplyNvsRuntimeSwitches\(\).*?\n}\n", self.dash, re.S)
         self.assertIsNotNone(nvs_sync)
         nvs_body = nvs_sync.group(0)
-        self.assertIn("handlerPool[i]->bionicSteering = dashBionicSteering", nvs_body)
         self.assertIn("handlerPool[i]->banShieldEnable = nvsBanShieldEnable", nvs_body)
         self.assertIn("dashApplyNvsRuntimeSwitches();\n    dashSwapHandler(hwMode);", self.dash)
 
@@ -1697,24 +1597,6 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn("dashInstantEngageEnabled", body)
         self.assertNotIn("dashSoftEngageEnabled", body)
 
-    def test_phase3_defense_config_json_includes_bionic_status(self) -> None:
-        """defense_config JSON must report bionic_disabled for UI warning."""
-        json_fn = re.search(r"static String dashDefenseConfigJson\(\).*?return j;", self.dash, re.S)
-        self.assertIsNotNone(json_fn)
-        body = json_fn.group(0)
-        self.assertIn('\\"bionic_disabled\\"', body)
-        self.assertIn('\\"dnd_volume\\"', body)
-        self.assertIn('\\"legacy_scroll_dnd\\"', body)
-        self.assertIn('\\"dnd_speed\\"', body)
-        self.assertIn('\\"abort_guard\\"', body)
-        # #108 steer-jerk defense keys removed in 4.5.0-beta02.
-        self.assertNotIn('\\"minimal_inject\\"', body)
-        self.assertNotIn('\\"instant_engage\\"', body)
-        self.assertNotIn('\\"soft_engage\\"', body)
-        self.assertIn("dashAppendLegacySafetyControlsJson", body)
-        self.assertIn("bionicDisabled()", body)
-        self.assertIn("dashBionicDisabled", body)
-
     def test_phase3_defense_ui_has_legacy_045_toggle(self) -> None:
         """Defense page keeps active controls and removes Legacy 0x3C2 speed DND.
         """
@@ -1724,14 +1606,14 @@ class DashboardApiContractTests(unittest.TestCase):
         toggles = [
             'id="def-master-tgl"',
             'id="hw3-slew-tgl"',
-            'id="def-bionic-tgl"',
             'id="def-sound-tgl"',
             'id="def-dnd-vol-tgl"',
             'id="def-speed-nd-tgl"',
             'id="def-apeap-tgl"',
             'id="def-abort-guard-tgl"',
         ]
-        self.assertEqual(len(toggles), 8)
+        # 5.0.0-beta04 task 7: def-bionic-tgl removed with the Legacy NAG UI
+        self.assertEqual(len(toggles), 7)
         for tid in toggles:
             with self.subTest(toggle=tid):
                 self.assertIn(tid, body)
@@ -1750,14 +1632,6 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("CAN1 原生 0x045", body)
         # Legacy NAG reuses the existing persisted bionic switch/API contract.
         self.assertNotIn('id="def-epnag-tgl"', body)
-
-    def test_phase3_defense_ui_legacy_nag_runtime_status(self) -> None:
-        """UI must expose verified Legacy NAG runtime state without an experiment badge."""
-        self.assertIn("Legacy 0x370 NAG 主路径", self.ui)
-        for element_id in ["legacy-nag-mode", "legacy-nag-bus", "legacy-nag-rxtx",
-                           "legacy-nag-collision", "legacy-nag-state"]:
-            self.assertIn(f'id="{element_id}"', self.ui)
-        self.assertIn("updateLegacyNagStatus", self.ui)
 
     def test_legacy_scroll_dnd_diagnostics_are_exposed(self) -> None:
         for token in [
@@ -1795,29 +1669,6 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("bionicDisabled()", body)
         self.assertIn("resetBionic", body)
 
-    def test_phase3_defense_runtime_and_persistence_are_wired(self) -> None:
-        """Defense config should drive Nag/Bionic runtime and persist DND switches."""
-        self.assertIn("nagKillerRuntime = canActive;", self.dash)
-        self.assertNotIn("nagKillerRuntime = canActive && dashDefenseEnabled", self.dash)
-        self.assertNotIn("hw3OffsetSlew = dashDefenseEnabled", self.dash)
-        self.assertIn("dashHandler->resetBionic((uint32_t)millis())", self.dash)
-        self.assertIn('prefs.putBool("def_dv", dashDndVolume);', self.dash)
-        self.assertIn('prefs.putBool("def_ds", dashDndSpeed);', self.dash)
-        self.assertIn('dashDndVolume = prefs.getBool("def_dv", false);', self.dash)
-        self.assertIn('dashDndSpeed = prefs.getBool("def_ds", false);', self.dash)
-        self.assertIn("slew_rate_enabled", self.dash)
-        self.assertIn("defenseEnabled", self.dash)
-        self.assertIn("bionicSteering", self.dash)
-        self.assertIn("counterCollisionObserved", self.dash)
-        self.assertIn("expectedNativeFollowerObserved", self.dash)
-        self.assertIn("legacy-nag-collision", self.ui)
-        status = re.search(r"static void handleStatus\(\).*?server\.send", self.dash, re.S)
-        self.assertIsNotNone(status)
-        self.assertIn("dashDndSpeed ? \"true\" : \"false\"", status.group(0))
-        wheel_diag = re.search(r"appendWheelDndDiagJson\(String &j, unsigned long now\).*?\n}", self.dash, re.S)
-        self.assertIsNotNone(wheel_diag)
-        self.assertIn("dndActionType", wheel_diag.group(0))
-
     def test_phase3_handlers_includes_bionic_header(self) -> None:
         """handlers.h must include dash_bionic_steer.h."""
         self.assertIn('#include "dash_bionic_steer.h"', self.handlers)
@@ -1836,22 +1687,12 @@ class DashboardApiContractTests(unittest.TestCase):
             "driver.send(echo)",
         ]:
             self.assertIn(token, body)
-        for token in [
-            '"legacyNag"',
-            '"verified":false',
-            '"vehicleTest":"pending_beta16_vehicle_test"',
-            '"gearGateRequired":false',
-            '"apContextStatusMax":6',
-            '"strategy":"continuous_absolute"',
-            '"torqueModel":"modec_488_one_sided"',
-            '"directionSource":"0x488"',
-            '"blockedReason"',
-            '"tx370"',
-            '"coveragePct"',
-            '"txRetryOk"',
-            "dashLegacyNagBusName",
-        ]:
-            self.assertIn(token, self.dash)
+        # 5.0.0-beta04 task 7: the /status legacyNag JSON blob and its UI were
+        # removed; the engine stays dormant (bionicSteering default false).
+        # dashLegacyNagBusName survives because it feeds the P0 speed-offset
+        # targetBus selection.
+        self.assertIn("dashLegacyNagBusName", self.dash)
+        self.assertNotIn('"legacyNag"', self.dash)
 
     def test_legacy_fsd_activation_honors_optional_strict_ap_gate(self) -> None:
         """Legacy AP gate must use 0x399 APActive, never Parked/Summoning."""
@@ -1895,132 +1736,6 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("dashLegacyHandlerActive()", self.dash)
         self.assertIn("dashLegacyHandlerActive() ? dashLegacyApInjectionAllowed()", self.dash)
 
-    # ── Phase 4: Light Stunt System ───────────────────────────
-
-    def test_phase4_fog_light_header_exists(self) -> None:
-        """dash_fog_light.h must exist with core API surface."""
-        fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
-        for symbol in ["DashFogLight", "startStrobe", "startF1Pilot",
-                        "startContinuous", "stop", "tick", "buildFrame",
-                        "isActive", "kModeOff", "kModeStrobe",
-                        "kModeF1Pilot", "kModeContinuous"]:
-            with self.subTest(symbol=symbol):
-                self.assertIn(symbol, fog)
-
-    def test_phase4_fog_light_safety_gear_check(self) -> None:
-        """Fog light must auto-stop when gearRaw != 4 (Drive)."""
-        fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
-        self.assertIn("gearRaw != 4", fog)
-        self.assertIn("if (isActive())\n                stop()", fog)
-
-    def test_phase4_fog_light_uses_can273_constants(self) -> None:
-        """Fog light must use the 0x273 CAN frame constants from can_frame_types.h."""
-        fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
-        # Includes can_frame_types.h which defines CAN_ID_REAR_FOG_LIGHT
-        self.assertIn("can_frame_types.h", fog)
-        self.assertIn("FOG_BASE_2_ON", fog)
-        self.assertIn("FOG_BASE_2_OFF", fog)
-
-    def test_phase4_fog_light_checksum(self) -> None:
-        """Fog frames must include checksum calculation for 0x273."""
-        fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
-        self.assertIn("0x73u + 0x02u", fog)  # CAN ID 0x273 bytes
-        self.assertIn("data[7]", fog)         # checksum byte
-
-    def test_phase4_fog_light_f1_timing(self) -> None:
-        """F1 pilot mode must use 135ms flash + 1500ms pause."""
-        fog = (ROOT / "include" / "dash_fog_light.h").read_text(encoding="utf-8")
-        self.assertIn("kF1FlashDurationMs{135}", fog)
-        self.assertIn("kF1PauseMs{1500}", fog)
-        self.assertIn("kF1FlashCount{3}", fog)
-
-    def test_phase4_fog_handler_has_trigger_param(self) -> None:
-        """/fog_light must accept trigger parameter for execution."""
-        fog_handler = re.search(r"static void handleFogLight\(\).*?server\.send", self.dash, re.S)
-        self.assertIsNotNone(fog_handler)
-        body = fog_handler.group(0)
-        self.assertIn('server.hasArg("trigger")', body)
-        self.assertIn("dashFogCtrl.startStrobe(", body)
-        self.assertIn("dashFogCtrl.startF1Pilot(", body)
-        self.assertIn("dashFogCtrl.startContinuous(", body)
-        self.assertIn("dashFogOffRequested = true", body)
-        self.assertIn("dashFogCtrl.isActive()", body)
-        self.assertIn('driverSupported', body)
-        self.assertIn('reason', body)
-        self.assertIn('"driver_not_supported"', body)
-
-    def test_phase4_strobe_cont_is_functional(self) -> None:
-        """/strobe_cont must be functional, not a stub."""
-        strobe_handler = re.search(r"static void handleStrobeCont\(\).*?server\.send", self.dash, re.S)
-        self.assertIsNotNone(strobe_handler)
-        body = strobe_handler.group(0)
-        self.assertNotIn('"Phase 4"', body)
-        self.assertIn("dashFogCtrl.startStrobe(0", body)  # 0 = infinite
-        self.assertIn("dashFogOffRequested = true", body)
-        self.assertIn('driverSupported', body)
-        self.assertIn('reason', body)
-
-    def test_phase4_status_strobeCont_is_dynamic(self) -> None:
-        """/status strobeCont must reflect actual state, not hardcoded."""
-        # The old code was: j += ",\"strobeCont\":false";
-        # The new code uses dashFogCtrl.isActive()
-        self.assertNotIn('"strobeCont\\":false', self.dash)
-        self.assertIn("dashFogCtrl.isActive()", self.dash)
-
-    def test_phase4_dashboard_includes_fog_light_header(self) -> None:
-        """Dashboard must include dash_fog_light.h."""
-        self.assertIn('#include "dash_fog_light.h"', self.dash)
-
-    def test_phase4_dashboard_has_fog_ctrl_instance(self) -> None:
-        """Dashboard must have a DashFogLight instance."""
-        self.assertIn("DashFogLight dashFogCtrl", self.dash)
-        self.assertIn("dashFogOffRequested", self.dash)
-
-    def test_phase4_fog_fail_off_is_owned_by_can_task(self) -> None:
-        """CAN task should send a final OFF frame on stop or unsafe/stale gear."""
-        self.assertIn("gearMs", self.dash)
-        self.assertIn("t2canGearIsFreshDrive", self.main)
-        self.assertIn("kT2canGearFreshMs", self.main)
-        self.assertIn("dashFogCtrl.buildFrame(offData, false)", self.main)
-        self.assertIn("CAN_ID_REAR_FOG_LIGHT", self.main)
-        self.assertIn("dashFogOffRequested || (active && !safeGear)", self.main)
-
-    def test_phase4_ui_has_strobe_page(self) -> None:
-        """UI must have pg-strobe page with all controls."""
-        strobe_page = re.search(r'id="pg-strobe".*?id="pg-defense"', self.ui, re.S)
-        self.assertIsNotNone(strobe_page)
-        body = strobe_page.group(0)
-        for element in ['id="fog-strategy"', 'id="strobe-count"',
-                        'id="strobe-freq"', 'fogTrigger(\'strobe\')',
-                        'fogTrigger(\'f1\')', 'fogTrigger(\'continuous\')',
-                        'fogTrigger(\'stop\')', 'id="strobe-status"',
-                        'id="strobe-gear"']:
-            with self.subTest(element=element):
-                self.assertIn(element, body)
-
-    def test_phase4_ui_sidebar_has_stroke_nav(self) -> None:
-        """Sidebar must have pg-stroke navigation item."""
-        self.assertIn('data-page="pg-strobe"', self.ui)
-        self.assertIn('灯光特技', self.ui)
-
-    def test_phase4_ui_mobile_nav_has_stroke(self) -> None:
-        """Mobile nav must have pg-stroke item."""
-        # Count mobile nav items for pg-strobe
-        self.assertEqual(self.ui.count('data-page="pg-strobe"'), 2)  # sidebar + mobile
-
-    def test_phase4_js_has_fog_functions(self) -> None:
-        """JS must have loadStrobePage, fogTrigger, saveFogStrategy."""
-        for fn in ["loadStrobePage", "fogTrigger", "saveFogStrategy"]:
-            with self.subTest(fn=fn):
-                self.assertIn(f"async function {fn}", self.ui)
-        self.assertIn("这里仅保存默认策略", self.ui)
-        self.assertIn("这些按钮才会触发实际灯光动作", self.ui)
-        self.assertIn("fetchJson('/fog_light')", self.ui)
-
-    def test_phase4_js_navigates_to_strobe_page(self) -> None:
-        """Page navigation must load strobe page data when lighting bus is supported (gated off for single-CAN)."""
-        self.assertIn("pageId==='pg-strobe'&&CAP.lightingBusSupported&&!isSingleCan())loadStrobePage()", self.ui)
-
     def test_phase5a_shift_page_loads_read_only_telemetry(self) -> None:
         """Auto-shift placeholder page must populate its read-only telemetry fields (gated off for single-CAN)."""
         self.assertIn("/gear_assist_status", self.ui)
@@ -2046,7 +1761,7 @@ class DashboardApiContractTests(unittest.TestCase):
             "setStatusTriplet('drive',label,label,statusText",
             "saved=await postForm('/drive_profile',{profile:mode});",
             "var savedMode=saved&&saved.value!==undefined?driveModeFromProfile(saved.value,saved.profile):mode;",
-            "updateDriveSurfaces(savedMode,'已保存');",
+            "updateDriveSurfaces(savedMode,T('已保存'));",
             "setTimeout(poll,300);",
         ]:
             with self.subTest(token=token):
@@ -2134,7 +1849,6 @@ class DashboardApiContractTests(unittest.TestCase):
             'appendCapabilitiesJson',
             '\\"cap\\"',
             'dashCapabilityLegacyFsd',
-            'dashCapabilityBionicSteering',
             'dashCapabilityBanShield',
             'dashCapabilityLegacyMppCustom',
         ]:
@@ -2146,7 +1860,6 @@ class DashboardApiContractTests(unittest.TestCase):
         for token in [
             ',\\"legacyFsd\\":\\"',       # j += ",\"legacyFsd\":\""
             ',\\"serviceMode\\":\\"can_b_direct\\"',  # inline composed
-            ',\\"bionicSteering\\":\\"',   # j += ",\"bionicSteering\":\""
             ',\\"legacyMppCustom\\":\\"',  # j += ",\"legacyMppCustom\":\""
             ',\\"gearAssist\\":\\"not_implemented\\"}',  # inline composed, closes cap object
         ]:
@@ -2243,9 +1956,12 @@ class DashboardApiContractTests(unittest.TestCase):
             "PRIMARY",
             "防封",
         ]
+        # 5.0.0-beta04 task 8c: strip the I18N dict — EN labels there are
+        # translation values, not hardcoded default copy.
+        ui_no_dict = re.sub(r"var I18N=\{.*?\n\};", "", self.ui, flags=re.S)
         for token in forbidden_default_copy:
             with self.subTest(token=token):
-                self.assertNotIn(token, self.ui)
+                self.assertNotIn(token, ui_no_dict)
 
     def test_atlas_redesign_cockpit_home_structure_is_present(self) -> None:
         """Overview page must become the driving-first cockpit home while preserving existing IDs."""
@@ -2350,8 +2066,9 @@ class DashboardApiContractTests(unittest.TestCase):
             'class="mobile-risk-note"',
             '现场遥控',
             '长按启用',
-            '危险操作已收拢到首页',
-            '仅保留现场安全操作',
+            # 5.0.0-beta04 task 1: emergency controls moved into the mobile
+            # remote page; risk note now explains the confirm-first actions.
+            '危险操作需点击确认：重启设备会中断当前模块；重置计数会清零统计。',
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
@@ -2459,7 +2176,7 @@ class DashboardApiContractTests(unittest.TestCase):
         jitter = body.index('id="def-jitter-tgl"')
         self.assertLess(master, gate, "defense master toggle must sit above the AP gate")
         self.assertLess(gate, jitter, "AP gate must sit above the 8.3.6 JITTER toggle")
-        self.assertLess(body.index('id="jitter-effective"'), body.index('id="def-bionic-tgl"'))
+        self.assertLess(jitter, body.index('id="jitter-effective"'), "jitter diag grid must follow its toggle")
         # (b) The precondition copy + localized gate-off reason must exist in
         # both the source and generated UI.
         for surface in (self.ui, self.ui_gen):

@@ -41,11 +41,13 @@ class RemoveBottomBlocksTests(UiV11RedesignTests):
 
 
 class Can2ToApTests(UiV11RedesignTests):
-    def test_ap_metric_replaces_can2(self):
-        self.assert_id_present("ov-ap")          # 新 AP 激活格
+    def test_ap_metric_coexists_with_can2(self):
+        self.assert_id_present("ov-ap")          # AP 激活格
         self.assert_present("AP 激活")
-        # 原 CAN2 metric 的 id 不应再作为 CAN2 指标出现
-        self.assert_absent('<div class="lbl">CAN2</div><div class="val" id="s-can2">')
+        # beta04 任务4：双CAN 时 CAN2 状态块回归（5 列满行），单CAN 隐藏回 4 列
+        self.assert_id_present("s-can2")
+        self.assert_present('data-single-hide="1" data-cap="can2"')
+        self.assert_present('id="ov-can-row"')
 
     def test_ap_update_js_present(self):
         self.assert_present("setText('ov-ap'")
@@ -212,7 +214,8 @@ class MobileNavTests(UiV11RedesignTests):
     def test_dual_can_mobile_nav_is_preserved(self):
         self.assert_present('id="mob-tabs-dual"')
         self.assert_present('id="mob-more" data-single-hide="1"')
-        for page in ["pg-bus2", "pg-strobe", "pg-shift"]:
+        # beta04 任务2：pg-strobe（灯光特技）已整页删除
+        for page in ["pg-bus2", "pg-shift"]:
             self.assertRegex(SRC, rf'id="mob-more"[\s\S]*data-page="{page}"')
 
 
@@ -244,12 +247,13 @@ class DrivePageCockpitTests(UiV11RedesignTests):
                          "page-title 应已换皮为 ck-head")
 
     def test_drive_card_active_uses_accent_palette(self):
-        # 旧紫色 active 规则退役，改用驾驶舱 cyan/indigo 色系（--ds-accent-grad 两端）
+        # beta04 8b 战术遥测：唯一强调红 #E61919（紫/cyan 均退役）
         m = re.search(r"\.drive-card\.active\s*\{([^}]*)\}", SRC)
         self.assertIsNotNone(m, "缺少 .drive-card.active 规则")
         body = m.group(1)
         self.assertNotIn("124,58,237", body, "drive-card active 仍用旧紫色")
-        self.assertIn("14,165,233", body, "drive-card active 未用 cyan 端配色")
+        self.assertNotIn("14,165,233", body, "drive-card active 仍用 cyan 端配色")
+        self.assertIn("230,25,25", body, "drive-card active 未用强调红")
 
     def test_drive_modes_and_ids_preserved(self):
         # 功能零增减：6 档 onclick + 关键 id 全保留
@@ -320,15 +324,17 @@ class DefensePageCockpitTests(UiV11RedesignTests):
                          "page-title 应已换皮为 ck-head")
 
     def test_defense_toggles_and_ids_preserved(self):
-        # 7 开关 + 保护参数 + Legacy NAG运行状态 + 三态全保留
-        for i in ["hw3-slew-tgl", "def-bionic-tgl", "def-sound-tgl",
+        # 5 开关 + 保护参数 + 三态全保留；beta04 任务7 删除 bionic/NAG UI
+        for i in ["hw3-slew-tgl", "def-sound-tgl",
                   "def-dnd-vol-tgl", "def-speed-nd-tgl",
-                  "def-apeap-tgl", "legacy-nag-mode", "legacy-nag-bus",
-                  "legacy-nag-rxtx", "legacy-nag-collision", "legacy-nag-state",
+                  "def-apeap-tgl",
                   "def-rate", "def-min", "def-cnt", "def-cur",
                   "def-dot", "def-status",
                   "st-defense-ui", "st-defense-nvs", "st-defense-run"]:
             self.assert_id_present(i)
+        for gone in ["def-bionic-tgl", "legacy-nag-mode", "legacy-nag-bus",
+                     "legacy-nag-rxtx", "legacy-nag-collision", "legacy-nag-state"]:
+            self.assert_absent(f'id="{gone}"')
 
 
 class OtaPageCockpitTests(UiV11RedesignTests):

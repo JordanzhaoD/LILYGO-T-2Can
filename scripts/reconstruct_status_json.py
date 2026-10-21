@@ -38,7 +38,6 @@ FUNCS = [
     "dashAppendLegacySafetyControlsJson",
     "appendJitterDiagJson",
     "dashDefenseConfigJson",
-    "appendLegacyNagDiagJson",
     "handleVehicleOtaStatus",
     "dashCapabilitiesJson",
 ]

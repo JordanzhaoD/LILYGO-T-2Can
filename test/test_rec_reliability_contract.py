@@ -129,7 +129,8 @@ class RecUiFeedbackContract(unittest.TestCase):
 
     def test_ui_defaults_to_120_second_nag_capture(self):
         self.assertIn('id="rec-duration"', U)
-        self.assertIn('<option value="120" selected>', U)
+        # 5.0.0-beta04 task 8c: option labels carry data-i18n — attribute-tolerant match
+        self.assertRegex(U, r'<option value="120" selected[^>]*>')
         self.assertIn('value="045,118,129,186,238,292,370,389,399,3C2,3EE,3FD,47D,47F,488,5D9"', U)
         self.assertIn("pollRecStatus", U)
 
