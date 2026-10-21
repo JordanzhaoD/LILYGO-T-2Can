@@ -828,21 +828,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
 </div>
 
-<!-- 功耗管理（5.0.0-beta02 从首页迁至硬件页：手机端 desktop-home 隐藏，
-     硬件页在手机「更多→硬件模式」与桌面侧边栏双端可达） -->
-<div class="card">
-  <div class="card-title">功耗管理</div>
-  <div class="setting-row">
-    <div><div class="setting-name">自动关机</div><div class="setting-desc">5 分钟无 CAN 数据自动休眠。</div></div>
-    <label class="tgl"><input type="checkbox" id="hw-auto-shutdown" onchange="toggleAutoShutdown(this.checked)"><div class="tgl-track"></div></label>
-  </div>
-  <div class="setting-row">
-    <div><div class="setting-name">WiFi 自动关闭</div><div class="setting-desc">5 分钟无操作关闭网络中转。</div></div>
-    <label class="tgl"><input type="checkbox" id="hw-wifi-auto-off" onchange="toggleWifiAutoOff(this.checked)"><div class="tgl-track"></div></label>
-  </div>
-  <div class="setting-desc" id="hw-pwr-idle" style="margin-top:6px">CAN 空闲 --s · Web 空闲 --s · STA 在线</div>
-</div>
-
 <!-- 插件管理（驾驶舱风格，全中文） -->
 <div class="card cockpit-card" id="plugins-card">
   <div class="ck-head"><h3><span>🧩</span>插件管理</h3><span class="ck-chip ok" id="plugins-count-pill">已装 0 个</span></div>
@@ -2180,18 +2165,11 @@ async function poll(){
   setText('m-drive',driveModeLabel(driveModeFromProfile(d.driveProfile,d.driveProfileName)));
   setText('m-speed',d.soff!==undefined?d.soff:'--');
   setText('m-defense',d.hw3OffsetSlew?'ON':'OFF');
-  // Phase 1: OTA + 功耗管理状态
+  // OTA status
   setCls('s-vota','stat-val '+(d.vehicleOta?'v-err':'v-ok'));
   setText('s-vota',d.vehicleOta?'OTA 进行中':'正常');
   var otaCnt=$('s-vota-cnt');
   if(otaCnt) fetchJson('/vehicle_ota_status').then(function(o){if(o)setText('s-vota-cnt',o.otaConfirmCount||0)}).catch(function(){});
-  var ashut=$('hw-auto-shutdown');if(ashut)ashut.checked=!!d.autoShutdown;
-  var woff=$('hw-wifi-auto-off');if(woff)woff.checked=!!d.wifiAutoOff;
-  var pwrIdle=$('hw-pwr-idle');
-  if(pwrIdle){
-    var canIdleS=Math.round((d.canIdleMs||0)/1000),webIdleS=Math.round((d.webIdleMs||0)/1000);
-    pwrIdle.textContent='CAN 空闲 '+canIdleS+'s · Web 空闲 '+webIdleS+'s · '+(d.wifiStaDisabled?'STA 已自动关闭':'STA 在线');
-  }
   var alertText=[];
   if(!d.can)alertText.push('CAN 离线');
   if(d.txerr)alertText.push('TX Err '+d.txerr);
@@ -2865,18 +2843,6 @@ async function saveDefenseConfig(){
   loadDefenseConfig();
 }
 
-// ── CAN2 ───────────────────────────────────────────────────
-// Phase 1: 功耗管理 toggle
-// 5.0.0-beta02: 必须传对象给 postForm——字符串形式曾把请求体变成
-// 0=t&1=r… 乱码（for...in 遍历字符下标），开关永远存不上、被轮询弹回。
-async function toggleAutoShutdown(on){
-  await postForm('/power_mgmt',{autoShutdown:on?'1':'0'});
-  poll();
-}
-async function toggleWifiAutoOff(on){
-  await postForm('/power_mgmt',{wifiAutoOff:on?'1':'0'});
-  poll();
-}
 
 async function pollCAN2(){
   var d=await fetchJson('/bus2_ids');

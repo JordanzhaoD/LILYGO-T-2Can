@@ -54,8 +54,6 @@ class SimState:
         # 4.5.0-beta12 (LittleGong port 1): OTA guard override mirror.
         self.ota_guard_override = False
         self.ota_stale_clears = 0
-        self.auto_shutdown = False
-        self.wifi_auto_off = False
         self.speed_strategy = "auto"
         self.speed_custom = {"manualPct": 0, "autoMinPct": -5, "autoMaxPct": 15, "cp1": 0, "cp2": 0, "cp3": 0, "cp4": 0}
         self.legacy_speed_bus = "Auto"
@@ -64,7 +62,6 @@ class SimState:
         self.light_enabled = False
         self.light_count = 3
         self.light_frequency = "medium"
-        self.rear_fog_value = 0
         self.burst_enabled = False
         self.burst_count = 3
         self.burst_on_ms = 120
@@ -196,18 +193,6 @@ class SimState:
             "soff": self.hw3_offset_last,
             "gtwap": self.gateway_ap,
             "vehicleOta": self.vehicle_ota,
-            "autoShutdown": self.auto_shutdown,
-            "wifiAutoOff": self.wifi_auto_off,
-            # 5.0-beta01 power observability: the overview power card's
-            # read-only idle line reads these from /status. The simulated
-            # bus always has traffic and the polling panel counts as web
-            # activity, so both idle timers stay small and the STA flag
-            # reads "online" (firmware emits the same keys).
-            "canIdleMs": (self.uptime() % 30) * 1000 + 250,
-            "webIdleMs": (self.uptime() % 3) * 1000 + 600,
-            "wifiStaDisabled": False,
-            "fogStrategy": self.rear_fog_value,
-            "strobeCont": False,
             "dndVolume": self.dnd_volume,
             "dndSpeed": self.dnd_speed,
             # AP gate pair (renderApInjectionState reads these from /status).
@@ -516,8 +501,6 @@ class Handler(BaseHTTPRequestHandler):
                     "fused_fresh_ms": 1000,
                 }
             )
-        elif path == "/power_mgmt":
-            self.send_obj({"autoShutdown": STATE.auto_shutdown, "wifiAutoOff": STATE.wifi_auto_off})
         elif path == "/dns_rules":
             blacklist = _dns_rules(STATE.gateway_blacklist)
             whitelist = _dns_rules(STATE.gateway_whitelist)
@@ -551,8 +534,6 @@ class Handler(BaseHTTPRequestHandler):
                     "count": STATE.light_count,
                     "frequency": STATE.light_frequency,
                     "frequency_value": {"slow": 0, "medium": 1, "fast": 2}.get(STATE.light_frequency, 1),
-                    "rear_fog_strategy": ["off", "strobe", "f1", "continuous"][STATE.rear_fog_value],
-                    "rear_fog_value": STATE.rear_fog_value,
                 }
             )
         elif path == "/burst":
@@ -658,8 +639,6 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 }
             )
-        elif path == "/fog_light":
-            self.send_obj({"ok": True, "active": False, "reason": "idle", "strategy": STATE.rear_fog_value})
         elif path == "/vehicle_ota_status":
             self.send_obj(
                 {
@@ -1038,12 +1017,6 @@ class Handler(BaseHTTPRequestHandler):
                     "smooth_rate_kph_s": STATE.legacy_speed_rate,
                 }
             )
-        elif path == "/power_mgmt":
-            if "autoShutdown" in form:
-                STATE.auto_shutdown = self.form_bool(form["autoShutdown"])
-            if "wifiAutoOff" in form:
-                STATE.wifi_auto_off = self.form_bool(form["wifiAutoOff"])
-            self.send_obj({"autoShutdown": STATE.auto_shutdown, "wifiAutoOff": STATE.wifi_auto_off})
         elif path == "/dns_rules":
             if "enabled" in form:
                 STATE.gateway_enabled = self.form_bool(form["enabled"])
@@ -1069,9 +1042,6 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.light_count = max(1, min(20, int(form["count"] or STATE.light_count)))
             if "frequency" in form:
                 STATE.light_frequency = str(form["frequency"])
-            if "rear_fog_strategy" in form:
-                strategy = str(form["rear_fog_strategy"])
-                STATE.rear_fog_value = {"off": 0, "strobe": 1, "f1": 2, "continuous": 3}.get(strategy, int(strategy or 0) if strategy.isdigit() else 0)
             self.send_obj({"ok": True})
         elif path == "/burst":
             if "enabled" in form:
@@ -1105,12 +1075,6 @@ class Handler(BaseHTTPRequestHandler):
             if "jitter" in form:
                 STATE.jitter = self.form_bool(form["jitter"])
             self.send_obj({"ok": True})
-        elif path == "/fog_light":
-            if "fogStrategy" in form:
-                STATE.rear_fog_value = max(0, min(3, int(form["fogStrategy"] or 0)))
-            self.send_obj({"ok": True, "active": False, "reason": "idle"})
-        elif path == "/strobe_cont":
-            self.send_obj({"ok": True, "active": False})
         elif path == "/led_brightness":
             STATE.led_brightness = max(0, min(255, int(form.get("b", STATE.led_brightness) or 0)))
             self.send_obj({"ok": True})

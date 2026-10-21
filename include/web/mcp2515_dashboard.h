@@ -45,7 +45,6 @@
 #include "web/mcp2515_dashboard_ui.h"
 #include "dash_ota_guard.h"
 #include "dash_3ee_cadence.h"
-#include "dash_power_mgmt.h"
 #include "dash_wheel_dnd.h"
 #include "dash_legacy_wheel_045_dnd.h"
 #include "dash_jitter_procedure.h"
@@ -1163,8 +1162,6 @@ static void mcpDashOnFrame(const CanFrame &f)
     // beta12 (LittleGong port 2): 0x3EE mux0 carrier cadence observation —
     // the qualification window lives or dies by this rhythm (no behavior).
     dash3eeCadence.observe(f, static_cast<uint32_t>(now));
-    // Phase 1: 功耗管理 — 记录 CAN 活动
-    dashPowerMgmtTouchCan();
     if (dashWriteProbe.active && dashWriteProbe.state != kDashWriteProbeFailed && dashWriteProbeMatches(f))
     {
         dashWriteProbe.hasRx = true;
@@ -2232,9 +2229,6 @@ static void dashLoadPrefs()
 
     updateBetaChannel = prefs.getBool("update_beta", false);
     autoUpdateEnabled = prefs.getBool("auto_upd", false);
-    // Phase 1: 功耗管理 NVS 加载
-    autoShutdownEnabled = prefs.getBool(NVS_KEY_AUTO_SHUTDOWN, false);
-    wifiAutoOffEnabled = prefs.getBool(NVS_KEY_WIFI_AUTO_OFF, false);
     prefs.end();
 
     if (migratedHw)
@@ -3267,17 +3261,6 @@ static void handleStatus()
     // ── Phase 1 新增状态字段 ──────────────────────────────────────────
     j += ",\"vehicleOta\":";
     j += vehicleOtaActive ? "true" : "false";
-    j += ",\"autoShutdown\":";
-    j += autoShutdownEnabled ? "true" : "false";
-    j += ",\"wifiAutoOff\":";
-    j += wifiAutoOffEnabled ? "true" : "false";
-    // 功耗可观测性：两个空闲计时 + STA 是否已被自动关闭（UI 功耗卡只读行）
-    j += ",\"canIdleMs\":";
-    j += (unsigned long)(millis() - lastCanActivityMs);
-    j += ",\"webIdleMs\":";
-    j += (unsigned long)(millis() - lastWebActivityMs);
-    j += ",\"wifiStaDisabled\":";
-    j += wifiStaDisabled ? "true" : "false";
     j += ",\"dndVolume\":";
     j += dashDndVolume ? "true" : "false";
     j += ",\"dndSpeed\":";
@@ -4343,39 +4326,9 @@ static void handleLegacyFsdConfig()
 
 // ── Phase 1 新增端点 ──────────────────────────────────────────────
 
-// POST/GET /power_mgmt — 功耗管理配置
-static void handlePowerMgmt()
-{
-    dashPowerMgmtTouchWeb();
-    if (server.hasArg("autoShutdown") || server.hasArg("wifiAutoOff"))
-    {
-        if (server.hasArg("autoShutdown"))
-        {
-            autoShutdownEnabled = dashArgTruthy(server.arg("autoShutdown"));
-            if (autoShutdownEnabled)
-                dashPowerMgmtConfigureWake();
-        }
-        if (server.hasArg("wifiAutoOff"))
-            wifiAutoOffEnabled = dashArgTruthy(server.arg("wifiAutoOff"));
-        prefs.begin(PREFS_NS, false);
-        prefs.putBool(NVS_KEY_AUTO_SHUTDOWN, autoShutdownEnabled);
-        prefs.putBool(NVS_KEY_WIFI_AUTO_OFF, wifiAutoOffEnabled);
-        prefs.end();
-        dashLog(String("[CFG] Power mgmt: shutdown=") + (autoShutdownEnabled ? "ON" : "OFF") +
-                " wifi_off=" + (wifiAutoOffEnabled ? "ON" : "OFF"));
-    }
-    String json = "{\"autoShutdown\":";
-    json += autoShutdownEnabled ? "true" : "false";
-    json += ",\"wifiAutoOff\":";
-    json += wifiAutoOffEnabled ? "true" : "false";
-    json += "}";
-    server.send(200, "application/json", json);
-}
-
 // GET /vehicle_ota_status — 车辆OTA状态
 static void handleVehicleOtaStatus()
 {
-    dashPowerMgmtTouchWeb();
     String json = "{\"vehicleOta\":";
     json += vehicleOtaActive ? "true" : "false";
     json += ",\"otaConfirmCount\":";
@@ -5597,11 +5550,7 @@ static void performAutoUpdate(); // forward decl, defined below
 static void dashCheckWifi()
 {
     static unsigned long lastCheck = 0;
-    // Power management: STA was auto-disabled after web idle — suppress the
-    // reconnect rotation here until dashPowerMgmtConsumeStaRestore() re-arms
-    // it, otherwise this loop would drag WIFI_AP_STA back within seconds and
-    // undo the idle shutdown.
-    if (wifiNetworkCount == 0 || wifiStaDisabled)
+    if (wifiNetworkCount == 0)
         return;
     unsigned long now = millis();
     if (!staConnected && !staConnectAttemptActive && staRetryAt > 0 && (long)(now - staRetryAt) >= 0)
@@ -6837,8 +6786,6 @@ static void handleSettingsExport()
     bool storedDndVolume = dashDndVolume;
     bool storedDndSpeed = dashDndSpeed;
     bool storedApEapCompatible = dashApEapCompatible;
-    bool storedAutoShutdown = autoShutdownEnabled;
-    bool storedWifiAutoOff = wifiAutoOffEnabled;
     bool storedAutoMode = nvsAutoModeEnabled;
     bool storedTlsscBypass = nvsTlsscBypass;
     bool storedEvd = nvsEmergencyVehicleDetection;
@@ -6897,8 +6844,6 @@ static void handleSettingsExport()
         storedDndVolume = p.getBool("def_dv", dashDndVolume);
         storedDndSpeed = p.getBool("def_ds", dashDndSpeed);
         storedApEapCompatible = p.getBool("def_apeap", dashApEapCompatible);
-        storedAutoShutdown = p.getBool(NVS_KEY_AUTO_SHUTDOWN, autoShutdownEnabled);
-        storedWifiAutoOff = p.getBool(NVS_KEY_WIFI_AUTO_OFF, wifiAutoOffEnabled);
         storedAutoMode = p.getBool("fa", nvsAutoModeEnabled);
         storedTlsscBypass = p.getBool("fb", nvsTlsscBypass);
         storedEvd = p.getBool("fc", nvsEmergencyVehicleDetection);
@@ -7031,8 +6976,6 @@ static void handleSettingsExport()
     j += ",\"dndVolume\":" + String(storedDndVolume ? "true" : "false");
     j += ",\"dndSpeed\":" + String(storedDndSpeed ? "true" : "false");
     j += ",\"apEapCompatible\":" + String(storedApEapCompatible ? "true" : "false") + "}";
-    j += ",\"power\":{\"autoShutdown\":" + String(storedAutoShutdown ? "true" : "false");
-    j += ",\"wifiAutoOff\":" + String(storedWifiAutoOff ? "true" : "false") + "}";
     j += ",\"fsdRuntime\":{\"autoMode\":" + String(storedAutoMode ? "true" : "false");
     j += ",\"tlsscBypass\":" + String(storedTlsscBypass ? "true" : "false");
     j += ",\"evd\":" + String(storedEvd ? "true" : "false");
@@ -7309,14 +7252,6 @@ static void handleSettingsImport()
             p.putBool("def_ds", defense["dndSpeed"].as<bool>());
         if (defense["apEapCompatible"].is<bool>())
             p.putBool("def_apeap", defense["apEapCompatible"].as<bool>());
-    }
-    if (doc["power"].is<JsonObject>())
-    {
-        JsonObject power = doc["power"].as<JsonObject>();
-        if (power["autoShutdown"].is<bool>())
-            p.putBool(NVS_KEY_AUTO_SHUTDOWN, power["autoShutdown"].as<bool>());
-        if (power["wifiAutoOff"].is<bool>())
-            p.putBool(NVS_KEY_WIFI_AUTO_OFF, power["wifiAutoOff"].as<bool>());
     }
     if (doc["fsdRuntime"].is<JsonObject>())
     {
@@ -8087,8 +8022,6 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     // For better entropy, re-seed from millis() at boot via appActiveHandler.
     // NagHandler::bionic.init() is called on first handleMessage via needsNewPhase.
 
-    // Phase 1: 初始化功耗管理
-    dashPowerMgmtInit();
 
     ArduinoOTA.setHostname("ev-open-can-tools");
     ArduinoOTA.setPassword(DASH_OTA_PASS);
@@ -8124,8 +8057,6 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/legacy_fsd_config", HTTP_POST, handleLegacyFsdConfig);
     server.on("/gear_assist_status", HTTP_GET, handleGearAssistStatus);
     // Phase 1 新增端点
-    server.on("/power_mgmt", HTTP_GET, handlePowerMgmt);
-    server.on("/power_mgmt", HTTP_POST, handlePowerMgmt);
     server.on("/vehicle_ota_status", HTTP_GET, handleVehicleOtaStatus);
     server.on("/hotspot_config", HTTP_GET, handleHotspotConfig);
     server.on("/hotspot_config", HTTP_POST, handleHotspotConfig);
@@ -8225,34 +8156,6 @@ static void mcpDashboardLoop()
 #if defined(DASH_RGB_STATUS_LED)
     appRefreshStatusLed(false);
 #endif
-    // Phase 1: WiFi自动关闭检查（flag-based，不直接调WiFi.mode）
-    if (dashPowerMgmtShouldDisableWifi())
-    {
-        WiFi.mode(WIFI_AP);
-        dashPowerMgmtMarkWifiDisabled();
-        // 同步 STA 状态机，防止 web 任务的重连循环立刻把它拉回
-        staConnected = false;
-        staConnectAttemptActive = false;
-        staRetryAt = 0;
-        dashLog("[PWR] WiFi STA auto-off (idle timeout)");
-    }
-    // Web 活动（面板重新打开）→ 恢复 STA。delay 1500ms 错开刚建立的 AP 会话
-    else if (dashPowerMgmtConsumeStaRestore())
-    {
-        if (WiFi.getMode() != WIFI_AP_STA)
-            WiFi.mode(WIFI_AP_STA);
-        dashScheduleSTAConnect(1500);
-        dashLog("[PWR] Web activity detected, restoring WiFi STA");
-    }
-    // Phase 1: 自动关机检查（deep sleep）—— 日志放在 loop 层
-    // （dash_power_mgmt.h 无 dashLog/Serial 依赖），确保睡前理由落串口
-    if (autoShutdownEnabled && (millis() - lastCanActivityMs) > CAN_TIMEOUT_MS)
-    {
-        dashLog("[PWR] CAN idle >5min, entering deep sleep (wake on CAN traffic)");
-        // ESP-IDF6 shim 的 SerialClass 走 stdio 且无 flush() 成员，用可移植形式
-        fflush(stdout);
-    }
-    dashPowerMgmtTick();
 }
 
 #endif
