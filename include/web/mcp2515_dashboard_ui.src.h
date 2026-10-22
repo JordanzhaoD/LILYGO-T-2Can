@@ -1144,7 +1144,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name">Service Mode</div>
-      <div class="setting-desc" data-i18n="按 VCSEC 规格发送 0x339 四帧脉冲到 CAN2（byte5 bit7）">按 VCSEC 规格发送 0x339 四帧脉冲到 CAN2（byte5 bit7）</div>
+      <div class="setting-desc" data-i18n="进入 Service 需在车机屏幕操作，本页仅显示状态">进入 Service 需在车机屏幕操作，本页仅显示状态</div>
     </div>
     <label class="tgl">
       <input type="checkbox" id="svc-mode-tgl" onchange="toggleServiceMode()">
@@ -2061,7 +2061,7 @@ var I18N={
   '待检测':'Pending','忽略车辆 OTA 守卫':'Ignore Vehicle OTA Guard','成功':'OK',
   '失败':'fail','所有速度限制统一使用同一个偏移百分比':'One offset percent for every speed limit','手动':'Manual',
   '手动偏移':'Manual Offset','执行爆闪':'Run Burst','扫描结果':'Scan Results',
-  '按 VCSEC 规格发送 0x339 四帧脉冲到 CAN2（byte5 bit7）':'Sends the 0x339 four-frame pulse to CAN2 per VCSEC spec (byte5 bit7)','换挡':'Shift','换挡策略预览':'Shift Strategy Preview',
+  '进入 Service 需在车机屏幕操作，本页仅显示状态':'Service Mode is enabled on the vehicle touchscreen; this page shows status only','换挡':'Shift','换挡策略预览':'Shift Strategy Preview',
   '控制':'Control','控制器':'Controller','控制当前 FSD 注入模块启停；状态会同步保存。':'Controls the FSD injection module on/off; state is saved.',
   '控制面板':'Control Panel','插件管理':'Plugin Manager','收尾中':'Finalizing',
   '收尾中...':'Finalizing...','数据':'Data','文件':'File',
