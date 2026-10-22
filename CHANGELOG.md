@@ -23,16 +23,18 @@
 
 ### Changed
 
-- **UI restyle: Tactical Telemetry.** Square corners everywhere (radius
-  discipline), a single aviation-red accent (`#E61919`), solid instrument
-  panels (translucency and blur removed), monospaced data values, and
-  micro-label tracking — per the industrial-brutalist system the vehicle
-  UI standardizes on.
+- **UI restyle rolled back to the beta03 look.** An interim
+  square-corner "Tactical Telemetry" theme was rejected in review; the
+  rounded radius scale (xl 28px / lg 20px), the purple `#7c3aed`
+  accent with cyan/indigo gradients, and the translucent glass panels
+  with backdrop blur are restored. Monospaced data values and
+  micro-label tracking are kept; semantic reds (danger buttons,
+  hold-to-arm, error states) remain untouched.
 - **Daylight mode rebuilt.** Theme switching now toggles a root `light`
   class driving two complete CSS variable sets (including the cockpit
   layer, previously stuck dark); 26 hardcoded dark rgba values became
-  variables. The light palette is Swiss Industrial Print (paper
-  `#F4F4F0`, carbon ink).
+  variables. The light palette keeps paper surfaces (`#F4F4F0`) with
+  carbon ink, now carrying the same purple accent as dark mode.
 - **Bilingual switching rebuilt.** Static copy carries `data-i18n`
   attributes (~490 nodes), dynamic strings route through `T()`, the I18N
   dictionary grew to ~600 entries, and a language switch re-renders the

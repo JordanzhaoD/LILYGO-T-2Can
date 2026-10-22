@@ -272,13 +272,15 @@ class DrivePageCockpitTests(UiV11RedesignTests):
                          "page-title 应已换皮为 ck-head")
 
     def test_drive_card_active_uses_accent_palette(self):
-        # beta04 8b 战术遥测：唯一强调红 #E61919（紫/cyan 均退役）
+        # beta04 风格回退：恢复 beta03 圆角紫青配色，弃用 8b 战术红
         m = re.search(r"\.drive-card\.active\s*\{([^}]*)\}", SRC)
         self.assertIsNotNone(m, "缺少 .drive-card.active 规则")
         body = m.group(1)
-        self.assertNotIn("124,58,237", body, "drive-card active 仍用旧紫色")
-        self.assertNotIn("14,165,233", body, "drive-card active 仍用 cyan 端配色")
-        self.assertIn("230,25,25", body, "drive-card active 未用强调红")
+        self.assertNotIn("230,25,25", body, "drive-card active 残留 8b 强调红")
+        self.assertIn("linear-gradient(160deg", body, "drive-card active 未恢复 beta03 渐变底")
+        self.assertIn("14,165,233", body, "drive-card active 未恢复 cyan 端配色")
+        self.assertIn("99,102,241", body, "drive-card active 未恢复 indigo 端配色")
+        self.assertIn("#38bdf8", body, "drive-card active 未恢复 beta03 青色描边")
 
     def test_drive_modes_and_ids_preserved(self):
         # 功能零增减：6 档 onclick + 关键 id 全保留
