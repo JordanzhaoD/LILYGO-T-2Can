@@ -863,7 +863,11 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('VCSEC_serviceDiagnosticRequest', self.readme)
         self.assertIn('00 00 00 00 00 80 00 00', self.readme)
         self.assertIn('00 00 00 00 00 00 00 00', self.readme)
-        self.assertIn('四帧脉冲', self.ui)
+        # 2026-10-22 service-center full-bus capture: the car's VCSEC session
+        # drops our plaintext 0x339 frames, so one-click entry is impossible;
+        # the UI copy now points at the touchscreen and keeps status display.
+        self.assertIn('进入 Service 需在车机屏幕操作，本页仅显示状态', self.ui)
+        self.assertIn('Service Mode is enabled on the vehicle touchscreen', self.ui)
 
     def test_mcp2515_bus2_spi_and_filter_support(self) -> None:
         """MCP2515 driver should support returning from accept-all to filtered mode and use 10MHz SPI."""
