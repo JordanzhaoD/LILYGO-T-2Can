@@ -38,13 +38,18 @@ partitions/otadata 两件经逐字节比对跨环境一致；bootloader 三环�
 
 ## 验证记录
 
-- pytest 217 passed + 690 subtests（含新增 i18n 词典守卫、5 块指标、
-  速度页/CAN2 页顺序断言）
+- pytest 218 passed + 690 subtests（含新增 i18n 词典守卫、CAN 行字形自适应
+  + 颜色守卫、速度页/CAN2 页顺序断言）
 - native 逐环境全绿：642/642 用例 / 22 环境（PIO 逐 env，未用裸 `pio test`；native 测试源码相对 beta03 零改动）
 - ESP 3 发布环境重建 SUCCESS（CMakeCache 已清）；六镜像自检：0xE9@0x0 +
   0xE9@0x20000、版本串 beta04 在场 / beta03=0、删除模块 token
   （pg-strobe / power_mgmt / def-bionic-tgl / legacy-nag-strategy）不在
   app 镜像
+- 终审（全新上下文审查）Important 修复：1280 下 5 列 CAN 行实值裁剪 →
+  .m5 专属字号阶梯（18/16/14/12px）+ ellipsis 兜底 + v-* 颜色复合选择器
+  复活（存量缺陷）+ loadTemp 改 classList 增删保留 val/档位类；浏览器最坏
+  值矩阵（Offline×2 / Waiting / 999.9 Hz / 100.5°C 红）1280×800 全部
+  scrollWidth ≤ clientWidth（fix1-canrow-worstcase-1280.png）
 - minified UI 终检：删除项全缺席，s-can2 / fitCockpitVals / vf-md|sm|xs /
   svc-mode-status / ov-can-row / cockpit-metrics.m5 / html.light /
   rebootDevice / resetStats 全在场
