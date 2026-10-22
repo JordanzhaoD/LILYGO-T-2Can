@@ -603,10 +603,15 @@ void test_v1191_reengage_success_keeps_protection_alive()
     p.observeDasStatus(1, 6200);
     p.observeDasStatus(2, 6300);
     TEST_ASSERT_EQUAL_UINT32(1, p.diag().requests); // unchanged
-    // A fresh legitimate FSD engagement re-arms normally: the protection
-    // is per-engagement, not once-per-drive.
+    // A fresh engagement re-enters Arming (monitoring continues), but
+    // beta04 keeps the cancel gate spent for the rest of the session:
+    // 2026-09-28 field data showed each self-driven re-engage (stalk
+    // held at Pos2) was cancelled 1-19 ms after lane capture — 14/25
+    // captures killed, the procedure dismantling its own landings.
     p.observeDasStatus(3, 6400);
     TEST_ASSERT_EQUAL(JitterPhase::Arming, p.diag().phase);
+    p.observeDasStatus(6, 6450);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().cancels); // no second cancel
 }
 
 void test_v1191_bounce_12_fires_one_request()
@@ -752,7 +757,10 @@ void test_v1192_landing_split_fsd_vs_eap()
     p.observeNative045(kNative045, 6100);
     TEST_ASSERT_EQUAL(JitterAction::None, p.tick(6101, out)); // timeout
     TEST_ASSERT_EQUAL_UINT8(0, p.diag().failedCycles);        // success billing
-    // An EAP landing on the next cycle counts separately.
+    // beta04: the landing locks the cancel gate for the session — the
+    // split counting below needs a FRESH session, so Park re-opens it.
+    p.setVehicleParked(true);
+    p.setVehicleParked(false);
     p.observeDasStatus(1, 6200); // Idle -> Normal
     p.observeNative3eeMux0(kNative045, 6250);
     p.observeDasStatus(3, 6300); // -> Arming
@@ -766,6 +774,69 @@ void test_v1192_landing_split_fsd_vs_eap()
     TEST_ASSERT_EQUAL_STRING("reEngagedEap", d.reason);
     TEST_ASSERT_EQUAL_UINT32(2, d.requests);
     TEST_ASSERT_EQUAL_UINT32(2, d.cancels);
+}
+
+// ─── 5.0.0-beta04 landing lock (jitter cancel-loop fix, Plan A) ──────
+
+// 2026-09-28 dual-CAN field data ((7)/(8) recordings): after a successful
+// re-engagement the 5 s deadline expiry called fullReset("timeout"),
+// which zeroed cycles_ — so the car's own s2->s3 re-engage (stalk held
+// at Pos2, no human input) opened a FRESH period and the s6 lane capture
+// was cancelled again. 14/25 captures died 1-19 ms in, one loop every
+// 10-13 s, entirely self-driven. Plan A: a 3/6 landing this drive
+// session keeps the cancel gate spent across the timeout; only a
+// session boundary (Park / permit loss / gate off / switch off /
+// apError) re-arms it.
+void test_beta04_landing_locks_cancel_gate_across_timeout()
+{
+    DashJitterProcedure p;
+    arm(p);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);   // s1,s3 -> Arming; s6 -> cancel #1
+    p.observeDasStatus(1, 1040); // cancelSeen
+    p.observeDasStatus(2, 1050); // re-request #1 (deadline 6050)
+    p.observeDasStatus(3, 1200); // EAP landing -> locks the session
+    p.observeDasStatus(6, 1300); // FSD upgrade — no cancel here
+    uint8_t out[8];
+    p.observeNative045(kNative045, 6100);
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(6101, out)); // timeout
+    TEST_ASSERT_EQUAL(JitterPhase::Idle, p.diag().phase);
+    // The car drops FSD and re-engages on its own (stalk held): the new
+    // period must NOT re-arm the cancel — this is the loop from the data.
+    p.observeDasStatus(1, 6500);                 // Idle -> Normal
+    p.observeDasStatus(3, 6600);                 // -> Arming (fresh period)
+    TEST_ASSERT_EQUAL_UINT8(1, p.diag().cycles); // gate still spent
+    p.observeDasStatus(6, 6700);                 // lane capture — must survive
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().cancels);
+    TEST_ASSERT_EQUAL(JitterPhase::Arming, p.diag().phase); // no Disengaging
+    // It stands down via timeout, passively — no further cancels.
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(11701, out));
+    TEST_ASSERT_EQUAL(JitterPhase::Idle, p.diag().phase);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag().cancels);
+}
+
+void test_beta04_park_reopens_cancel_budget_after_landing_lock()
+{
+    DashJitterProcedure p;
+    arm(p);
+    p.observeNative045(kNative045, 1000);
+    reachDisengaging(p, 1010);
+    p.observeDasStatus(1, 1040);
+    p.observeDasStatus(2, 1050);
+    p.observeDasStatus(3, 1200); // landed this session
+    uint8_t out[8];
+    TEST_ASSERT_EQUAL(JitterAction::None, p.tick(6051, out)); // timeout, locked
+    TEST_ASSERT_EQUAL_UINT8(1, p.diag().cycles);
+    // Park is the session boundary: the next drive re-arms the cancel
+    // (anti-jerk protection must be back for a fresh departure).
+    p.setVehicleParked(true);
+    TEST_ASSERT_EQUAL_UINT8(0, p.diag().cycles); // gate re-opened
+    p.setVehicleParked(false);
+    p.observeDasStatus(1, 7000); // Idle -> Normal
+    p.observeDasStatus(3, 7010); // -> Arming
+    p.observeDasStatus(6, 7020); // fresh session: cancel fires
+    TEST_ASSERT_EQUAL_UINT32(2, p.diag().cancels);
+    TEST_ASSERT_EQUAL(JitterPhase::Disengaging, p.diag().phase);
 }
 
 // ─── 5.0.0-beta03 EAP-landing one-shot (Plan A) ───────────────────────
@@ -939,6 +1010,10 @@ int main()
     RUN_TEST(test_v1192_refresh_skipped_without_fresh_template);
     RUN_TEST(test_v1192_pending_refresh_dies_with_reset);
     RUN_TEST(test_v1192_landing_split_fsd_vs_eap);
+
+    // 5.0.0-beta04 landing lock (Plan A)
+    RUN_TEST(test_beta04_landing_locks_cancel_gate_across_timeout);
+    RUN_TEST(test_beta04_park_reopens_cancel_budget_after_landing_lock);
 
     // 5.0.0-beta03 EAP-landing one-shot (Plan A)
     RUN_TEST(test_beta03_landing_shot_fires_at_eap_landing);
