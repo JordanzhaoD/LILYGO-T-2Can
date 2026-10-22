@@ -59,6 +59,12 @@ class SimState:
         self.legacy_speed_bus = "Auto"
         self.legacy_speed_smooth = True
         self.legacy_speed_rate = 5
+        # beta04 P0 fix: the firmware persists mode/manual/cp through
+        # /legacy_speed_config (dashLegacySpeedConfigJson) — the mock must
+        # too, or the UI mode cards snap back to "off" after every save.
+        self.legacy_speed_mode = "off"
+        self.legacy_speed_manual = 0
+        self.legacy_speed_cp = [50, 30, 20, 10]
         self.light_enabled = False
         self.light_count = 3
         self.light_frequency = "medium"
@@ -140,6 +146,44 @@ class SimState:
     def uptime(self) -> int:
         return int(time.monotonic() - self.started)
 
+    def legacy_speed_config(self) -> dict[str, Any]:
+        # Mirrors firmware dashLegacySpeedConfigJson(): every key the UI's
+        # applyLegacySpeedConfig() consumes must be present.
+        return {
+            "ok": True,
+            "bus": self.legacy_speed_bus,
+            "mode": self.legacy_speed_mode,
+            "mode_value": {"off": 0, "manual": 1, "auto": 2, "custom": 3}[self.legacy_speed_mode],
+            "manual_offset_kph": self.legacy_speed_manual,
+            "custom_pct": list(self.legacy_speed_cp),
+            "smooth_down": self.legacy_speed_smooth,
+            "smooth_rate_kph_s": self.legacy_speed_rate,
+            "source_priority": ["0x2F8", "0x399"],
+            "gps_fresh_ms": 3000,
+            "fused_fresh_ms": 1000,
+        }
+
+    def apply_legacy_speed_form(self, form: dict[str, str]) -> None:
+        # Mirrors firmware handleLegacySpeedConfig() parsing (mode names +
+        # numeric aliases, manual clamped to 0..33, cp clamped to 0..63).
+        if "mode" in form:
+            mode = str(form["mode"]).strip().lower()
+            aliases = {"off": "off", "0": "off", "manual": "manual", "1": "manual",
+                       "auto": "auto", "2": "auto", "custom": "custom", "3": "custom"}
+            self.legacy_speed_mode = aliases.get(mode, "off")
+        if "manual_offset_kph" in form:
+            try:
+                self.legacy_speed_manual = max(0, min(33, int(form["manual_offset_kph"] or 0)))
+            except ValueError:
+                pass
+        for i in range(4):
+            key = f"cp{i + 1}"
+            if key in form:
+                try:
+                    self.legacy_speed_cp[i] = max(0, min(63, int(form[key] or 0)))
+                except ValueError:
+                    pass
+
     def legacy_fsd_config(self) -> dict[str, Any]:
         return {
             "policy": self.legacy_fsd_policy,
@@ -198,7 +242,23 @@ class SimState:
             # apDelayMs removed in 4.5.0-beta06 (AP-settle delay deleted).
             "apGateEnabled": self.ap_gate,
             "apAutoRestore": self.ap_auto_restore,
-            "apInjectionState": "armed" if self.ap_gate else "blocked",
+            # Firmware semantics (dashApInjectionStateName): gate OFF means
+            # pass-through (armed/injecting), never "blocked"; gate ON
+            # waits for AP activity first. The old mock inverted this.
+            "apInjectionState": (
+                "injecting" if self.ad else "armed"
+            ) if not self.ap_gate else (
+                "injecting" if self.ad else "waiting_ap"
+            ),
+            "fsdDiag": {
+                # Mirrors firmware appendFsdDiagJson(): renderLegacyTruth()
+                # drives the overview policy cards from fsdDiag.policy.
+                "policy": self.legacy_fsd_policy,
+                "triggered": False,
+                "triggerSource": "none",
+                "mux0": {"rx": 120, "tx": 8, "lastSkip": "none"},
+                "mux1": {"rx": 96, "tx": 0, "lastSkip": "mux1_disabled"},
+            },
             "wheelDndDiag": {
                 "enabled": self.dnd_volume,
                 "armed": self.dnd_volume and self.defense_enabled and self.hw == 0,
@@ -488,17 +548,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/speed_custom":
             self.send_obj({"ok": True, **STATE.speed_custom})
         elif path == "/legacy_speed_config":
-            self.send_obj(
-                {
-                    "ok": True,
-                    "bus": STATE.legacy_speed_bus,
-                    "smooth_down": STATE.legacy_speed_smooth,
-                    "smooth_rate_kph_s": STATE.legacy_speed_rate,
-                    "source_priority": ["0x2F8", "0x399"],
-                    "gps_fresh_ms": 3000,
-                    "fused_fresh_ms": 1000,
-                }
-            )
+            self.send_obj(STATE.legacy_speed_config())
         elif path == "/dns_rules":
             blacklist = _dns_rules(STATE.gateway_blacklist)
             whitelist = _dns_rules(STATE.gateway_whitelist)
@@ -1000,20 +1050,14 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.speed_custom[key] = int(form[key] or 0)
             self.send_obj({"ok": True, **STATE.speed_custom})
         elif path == "/legacy_speed_config":
+            STATE.apply_legacy_speed_form(form)
             if "bus" in form and str(form["bus"]) in ("Auto", "CAN1", "CAN2"):
                 STATE.legacy_speed_bus = str(form["bus"])
             if "smooth_down" in form:
                 STATE.legacy_speed_smooth = self.form_bool(form["smooth_down"])
             if "smooth_rate_kph_s" in form:
                 STATE.legacy_speed_rate = max(1, min(20, int(form["smooth_rate_kph_s"] or 5)))
-            self.send_obj(
-                {
-                    "ok": True,
-                    "bus": STATE.legacy_speed_bus,
-                    "smooth_down": STATE.legacy_speed_smooth,
-                    "smooth_rate_kph_s": STATE.legacy_speed_rate,
-                }
-            )
+            self.send_obj(STATE.legacy_speed_config())
         elif path == "/dns_rules":
             if "enabled" in form:
                 STATE.gateway_enabled = self.form_bool(form["enabled"])
