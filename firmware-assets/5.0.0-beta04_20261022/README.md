@@ -1,7 +1,8 @@
 # 固件资产 v5.0.0-beta04（2026-10-22）— 全线三环境
 
-**相对 v5.0.0-beta03 的变化**：UI 精简八任务 + brutalist Tactical Telemetry 收拢
-+ 白天模式/中英文切换根治。**防甩 JITTER、速度偏移等驾驶功能引擎零改动**
+**相对 v5.0.0-beta03 的变化**：UI 精简八任务 + 白天模式/中英文切换根治
++ 风格回退（初版 brutalist Tactical Telemetry 被否决，恢复 beta03
+圆角紫青玻璃风格）。**防甩 JITTER、速度偏移等驾驶功能引擎零改动**
 （仅删 UI/配置面，引擎休眠保留）。
 
 ## 八任务一览
@@ -16,10 +17,13 @@
 6. CAN2 控制页：Service Mode 区上移 + svc-mode-status 状态行（零后端改动）
 7. 删除「Legacy 0x370 NAG 主路径」功能区（保守：接线全删、引擎休眠，
    bionicSteering 默认 false 永久关闭）
-8. Tactical Telemetry 收拢（直角/唯一强调红/mono 数据字体/实色面板）
-   + 白天模式根治（html.light 完整变量套，Swiss Industrial Print 纸面配色，
+8. 白天模式根治（html.light 完整变量套，纸面亮色 + 紫 accent 同暗色，
    27 处硬编码 rgba 变量化）+ i18n 根治（data-i18n 全量标记 + 词典补全 +
-   动态文案 T() + 切换即时重渲染 + pytest 词典守卫）
+   动态文案 T() + 切换即时重渲染 + pytest 词典守卫）+ 视觉风格：曾实施
+   Tactical Telemetry 直角红，评审否决后整体回退 —— 恢复 beta03 圆角
+   （xl 28px/lg 20px）、紫 #7c3aed 强调 + 青紫渐变、半透明玻璃面板
+   + backdrop blur；保留 mono 数据字体与 micro-label 字距；语义红
+   （危险按钮/hold-to-arm/错误态）不动
 
 ## 本目录内容（三环境全套）
 
@@ -55,6 +59,12 @@ partitions/otadata 两件经逐字节比对跨环境一致；bootloader 三环�
   rebootDevice / resetStats 全在场
 - 浏览器双主题×双语四象限目检通过（截图 docs/verification/ui-beta04/，
   不入资产）
+- 风格回退重产（2026-10-22 二次构建）：3 env 重编 SUCCESS；三 app 镜像
+  gzip UI blob 解压逐字节同源（216KB），8b 红 token（E61919/FF2A2A/
+  230,25,25/C61414）全零、紫 #7c3aed ×2（root+light）、radius-xl ×3；
+  SHA256SUMS 11 bin 全 OK；回退后浏览器暗/亮 1280 + 移动端 390 computed
+  核验（radiusXl 28px / panel rgba(15,23,42,.82) / blur 22px / accent
+  紫 / 无横向溢出），console 0 error 0 warning
 
 ## 升级（从 beta03）
 
