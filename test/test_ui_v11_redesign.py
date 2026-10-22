@@ -52,6 +52,31 @@ class Can2ToApTests(UiV11RedesignTests):
     def test_ap_update_js_present(self):
         self.assert_present("setText('ov-ap'")
 
+    def test_can_row_glyph_fit_and_color_alive(self):
+        # Final review fix: at 1280 the 5-column row leaves ~62px content
+        # boxes; the base tier ladder clips real values ("Online" sw67>cw62).
+        # The m5 row carries its own smaller tier ladder and .val gains an
+        # ellipsis guard so no value can clip silently.
+        self.assert_present('text-overflow: ellipsis')
+        self.assert_present('.cockpit-metrics.m5 .val.vf-md')
+        self.assert_present('.cockpit-metrics.m5 .val.vf-sm')
+        self.assert_present('.cockpit-metrics.m5 .val.vf-xs')
+        # Final review fix (pre-existing, folded in): v-* color utilities are
+        # 0,1,0 and lose to .cockpit-metric .val's color (0,2,0) — CAN
+        # online/offline and temp alarms render ink. Compound selectors win.
+        for cls in ('v-ok', 'v-err', 'v-warn', 'v-info', 'v-acc', 'v-dim'):
+            self.assert_present(f'.cockpit-metric .val.{cls}')
+        # Final review fix: loadTemp clobbered className, dropping .val AND
+        # the fit tier classes (16px/700, wrapping, outside nowrap; worst-case
+        # temp "100.5°C" overflowed until the next poll re-fit). Mutate only
+        # the color bucket classes instead.
+        idx = SRC.find('async function loadTemp()')
+        self.assertGreater(idx, 0)
+        body = SRC[idx:idx + 700]
+        self.assertIn("el.classList.remove('v-err','v-info','v-acc')", body)
+        self.assertIn("el.classList.add(t>60?'v-err':(t>45?'v-info':'v-acc'))", body)
+        self.assertNotIn("el.className=", body)
+
 
 class ApInjectionRedesignTests(UiV11RedesignTests):
     def test_ap_card_cockpit_structure(self):
