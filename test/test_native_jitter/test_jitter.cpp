@@ -776,7 +776,7 @@ void test_v1192_landing_split_fsd_vs_eap()
     TEST_ASSERT_EQUAL_UINT32(2, d.cancels);
 }
 
-// ─── 5.0.0-beta04 landing lock (jitter cancel-loop fix, Plan A) ──────
+// ─── 6.0.0-beta01 landing lock (jitter cancel-loop fix, Plan A) ──────
 
 // 2026-09-28 dual-CAN field data ((7)/(8) recordings): after a successful
 // re-engagement the 5 s deadline expiry called fullReset("timeout"),
@@ -1011,7 +1011,7 @@ int main()
     RUN_TEST(test_v1192_pending_refresh_dies_with_reset);
     RUN_TEST(test_v1192_landing_split_fsd_vs_eap);
 
-    // 5.0.0-beta04 landing lock (Plan A)
+    // 6.0.0-beta01 landing lock (Plan A)
     RUN_TEST(test_beta04_landing_locks_cancel_gate_across_timeout);
     RUN_TEST(test_beta04_park_reopens_cancel_budget_after_landing_lock);
 

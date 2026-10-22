@@ -1,6 +1,24 @@
 # Changelog
 
-## [5.0.0-beta04] - 2026-10-22
+## [6.0.0-beta01] - 2026-10-22
+
+### Fixed
+
+- **JITTER cancel loop killed the FSD landings it produced (Plan A).**
+  With the anti-jerk procedure armed, field data from 2026-09-28
+  (recordings (7)/(8)) showed FSD survival near zero: after a successful
+  0x42 re-engagement the 5 s deadline expiry zeroed `cycles_`, so the
+  car's own s2->s3 re-engage (stalk held, no human input) opened a fresh
+  period and the s6 lane capture was cancelled again — 14 of 25 captures
+  killed 1-19 ms in, one self-driven loop every 10-13 s. A 3/6 landing
+  this drive session (`landedThisSession_`) now keeps the cancel gate
+  spent across the timeout; only a session boundary (Park edge, permit
+  loss, gate off, switch off, apError) re-arms it. Park re-arms even
+  with no cycle running. One cancel + one re-request per session, the
+  original LittleGong intent; the 45-degree abort and carrier lock are
+  untouched. (This fix plus the UI work below ship together as the 6.0
+  line because the driving-engine change resets the minor-version
+  baseline.)
 
 ### Removed
 

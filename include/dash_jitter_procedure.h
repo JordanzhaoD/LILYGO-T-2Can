@@ -172,7 +172,7 @@ struct DashJitterProcedure
     uint8_t cycles_ = 0;
     uint32_t deadlineMs_ = 0;
     bool engagedAfterRequest_ = false; // vehicle re-engaged (3/6) after our 0x42
-    // 5.0.0-beta04 Plan A: a 3/6 landing this drive session keeps the
+    // 6.0.0-beta01 Plan A: a 3/6 landing this drive session keeps the
     // cancel gate spent across timeout resets (see fullReset).
     bool landedThisSession_ = false;
     uint8_t failedCycles_ = 0; // consecutive failed cycles this session
@@ -279,7 +279,7 @@ struct DashJitterProcedure
             }
             else
             {
-                // 5.0.0-beta04 Plan A: landedThisSession_ outlives a
+                // 6.0.0-beta01 Plan A: landedThisSession_ outlives a
                 // timeout reset (the machine sits Idle mid-drive), so the
                 // Park edge must re-arm the cancel gate even with no cycle
                 // running — the next departure needs the protection back.
@@ -308,7 +308,7 @@ struct DashJitterProcedure
         // nonzero 0x399 event); the triggering reason always wins for diag.
         phase_ = armed() ? JitterPhase::Idle : JitterPhase::Inert;
         reason_ = reason;
-        // 5.0.0-beta04 Plan A (2026-09-28 dual-CAN field data, recordings
+        // 6.0.0-beta01 Plan A (2026-09-28 dual-CAN field data, recordings
         // (7)/(8)): timeout after a successful 3/6 landing used to zero
         // cycles_, so the car's own s2->s3 re-engage (stalk held, no human
         // input) opened a fresh period and the s6 capture was cancelled
