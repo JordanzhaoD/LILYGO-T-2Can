@@ -1,5 +1,27 @@
 # Changelog
 
+## [6.0.0-beta02] - 2026-10-25
+
+### Fixed
+
+- **DNS filter rules silently vanished in the car (UI only; storage was
+  fine).** Field report on 6.0.0-beta01: opening Network Settings in-car
+  showed an empty rules box with the aggressive profile card highlighted,
+  reading as "config not saved / filtering dead". Bench verification of
+  the very board proved the storage chain intact (12/4 rules persisted
+  across reboot, dig queries blocked telemetry domains with 0.0.0.0), so
+  the regression was a visibility gap: a single failed `GET /dns_rules`
+  hit the early return in `loadGatewayDns`, and `fetchJson` only toasts
+  after 3 consecutive misses while any successful poll resets the
+  counter — a transient AP-side fetch failure (ESP32 single-radio STA
+  reconnect scans in-car) left the HTML defaults on screen with zero
+  feedback. Fixes: retry once after 500 ms; on persistent failure set
+  the DNS status triplet to an error state ("Load failed / tap Refresh /
+  rules not loaded") and clear profile-card highlights; the HTML default
+  profile card is now conservative-active to match factory auto-fill
+  (was aggressive-active). Three new i18n entries. No firmware-C++,
+  driving-engine, or persistence changes of any kind.
+
 ## [6.0.0-beta01] - 2026-10-22
 
 ### Fixed
