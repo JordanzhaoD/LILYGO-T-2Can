@@ -1593,8 +1593,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <input class="inp" id="dns-custom-ip" placeholder="输入 DNS IP 地址">
   </div>
   <div class="sel-cards c2" style="margin-top:6px" id="dns-profile">
-    <div class="sel-card" onclick="setDnsProfile('conservative')"><div class="sel-name" data-i18n="保守模式">保守模式</div></div>
-    <div class="sel-card active" onclick="setDnsProfile('aggressive')"><div class="sel-name" data-i18n="激进模式">激进模式</div></div>
+    <div class="sel-card active" onclick="setDnsProfile('conservative')"><div class="sel-name" data-i18n="保守模式">保守模式</div></div>
+    <div class="sel-card" onclick="setDnsProfile('aggressive')"><div class="sel-name" data-i18n="激进模式">激进模式</div></div>
   </div>
 </div>
 
@@ -1941,7 +1941,7 @@ var I18N={
   'OTA 升级':'OTA Update','网络设置':'Network','CAN 诊断':'CAN Diagnostics',
   '自动换挡':'Auto Shift','已连接':'Connected','未连接':'Disconnected',
   '连接丢失':'Connection Lost','FSD 注入':'FSD Injection','FSD 开关':'FSD Toggle',
-  '点击切换开关状态':'Tap to toggle','CAN Bus':'CAN Bus','帧率':'FPS',
+  '点击切换开关状态':'Tap to toggle','点「刷新」重试':'Tap Refresh to retry','CAN Bus':'CAN Bus','帧率':'FPS',
   '硬件版本':'Hardware Version','速度偏移':'Offset','芯片温度':'Chip Temp',
   'TX Errors':'TX Err','跟随距离':'Follow Dist','选择您的自动驾驶硬件版本':'Select your AD hardware version',
   '推荐':'Recommended','旧版':'Legacy','第三代':'Gen 3',
@@ -2025,7 +2025,7 @@ var I18N={
   '仅重复已启用插件生成的 0x7FF 修改帧':'Only repeats 0x7FF modified frames produced by enabled plugins','仅限制速度偏移值下降速率，不控制 FSD 防御或 NAG':'Limits only the offset drop rate; does not control FSD defense or NAG','从 CAN 总线实时读取的车辆状态数据':'Live vehicle state read from the CAN bus',
   '从 GitHub Release 检查与安装匹配当前硬件的 OTA 固件':'Check and install OTA firmware for this hardware from GitHub Releases','优先级':'Priority','低速区间':'Low Range',
   '低速区间 cp1':'Low Range cp1','保存中...':'Saving...','保存到防御配置，避免速度策略频繁扰动':'Save into defense config to avoid speed-strategy churn',
-  '保存后重启生效':'Reboot to apply after save','保存失败':'Save Failed','保存并重启':'Save & Reboot',
+  '保存后重启生效':'Reboot to apply after save','保存失败':'Save Failed','保存并重启':'Save & Reboot','加载失败':'Load Failed',
   '保存时会 POST /speed_strategy=fixed，并通过 /speed_custom 写入 manualPct。':'Saving POSTs /speed_strategy=fixed and writes manualPct via /speed_custom.','保存热点':'Save Hotspot','保存自定义偏移':'Save Custom Offset',
   '保守模式使用完整 12 条规则，激进模式使用最小 9 条规则':'Conservative mode uses the full 12 rules; aggressive uses the minimal 9','保留 AP/EAP 兼容策略位':'Keep AP/EAP compat policy bits','偏移 ':'Offset ',
   '停止失败':'Stop Failed','储备功能':'Reserved Feature','储备功能未开放':'Reserved feature, not yet available',
@@ -2100,7 +2100,7 @@ var I18N={
   '自动偏移算法':'Auto Offset Algorithm','自动识别':'Auto Detect','自定义':'Custom',
   '自定义 4 区间偏移':'Custom 4-Range Offset','自定义偏移':'Custom Offset','自定义规则':'Custom Rules',
   '舒适':'Comfort','舒适驾驶，温和加速':'Comfortable, gentle acceleration','规则 ':'Rule ',
-  '规则已保存':'Rules Saved','规则已应用，等待保存':'Rules applied, save pending','规则测试':'Rule Test',
+  '规则已保存':'Rules Saved','规则已应用，等待保存':'Rules applied, save pending','规则未读取':'Rules not loaded','规则测试':'Rule Test',
   '规则测试器':'Rule Tester','解析安装':'Parse & Install','触发源':'Trigger Source',
   '计数':'Count','许可丢失·已复位':'Permit Lost · Reset','设备信息':'Device Info',
   '设备在线':'Device Online','设备正在下载并写入 OTA 固件，完成后会自动重启。':'Device is downloading and flashing OTA firmware; it reboots when done.','设备重启后按保存值恢复 FSD 注入。':'FSD injection restores from the saved value after reboot.',
@@ -3552,7 +3552,9 @@ async function saveGateway(){
 // ── DNS Config ─────────────────────────────────────────────
 async function loadGatewayDns(){
   var d=await fetchJson('/dns_rules');
-  if(!d)return;
+  // transient fetch failure: retry once, then surface a visible error instead of a silent empty form
+  if(!d){await new Promise(function(resolve){setTimeout(resolve,500)});d=await fetchJson('/dns_rules')}
+  if(!d){updateDnsProfileCards('');setStatusTriplet('dns',T('加载失败'),T('点「刷新」重试'),T('规则未读取'),'err');return}
   var bl=$('dns-blacklist');if(bl)bl.value=d.blacklist||'';
   var wl=$('dns-whitelist');if(wl)wl.value=d.whitelist||'';
   setText('dns-bl-cnt',(d.black_count||0)+' '+T('域名'));
