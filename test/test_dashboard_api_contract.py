@@ -2168,6 +2168,11 @@ class DashboardApiContractTests(unittest.TestCase):
         for wf in (self.tests_workflow, self.release_workflow):
             with self.subTest(workflow=wf is self.tests_workflow and "tests" or "release"):
                 self.assertIn("pip install csscompressor htmlmin rjsmin", wf)
+                # htmlmin's sdist does `import cgi` in setup.py; cgi was removed
+                # in Python 3.13, so a floating "3.x" runner cannot even pip
+                # install it. Pin 3.12 across both workflows.
+                self.assertIn('python-version: "3.12"', wf)
+                self.assertNotIn('python-version: "3.x"', wf)
 
     def test_platformio_partition_tables_exist(self) -> None:
         """Every board_build.partitions CSV referenced by platformio.ini must

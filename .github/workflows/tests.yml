@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.x"
+          python-version: "3.12"
       - run: python scripts/check_release_metadata.py
 
   lint:
@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.x"
+          python-version: "3.12"
       - run: python -m unittest discover -s test -p 'test_*.py'
 
   native-tests:
@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.x"
+          python-version: "3.12"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
           build-essential git
       - run: pip install "platformio==${PLATFORMIO_VERSION}"
@@ -151,7 +151,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.x"
+          python-version: "3.12"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
           build-essential git
       - run: pip install "platformio==${PLATFORMIO_VERSION}"
