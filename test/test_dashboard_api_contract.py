@@ -2163,6 +2163,22 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("firmware-lilygo-t2can-dual", self.release_workflow)
         self.assertIn("release-assets/firmware-lilygo-t2can-dual.bin", self.release_workflow)
 
+    def test_platformio_partition_tables_exist(self) -> None:
+        """Every board_build.partitions CSV referenced by platformio.ini must
+        be tracked in the repo. CI builds those envs; a missing file fails at
+        configure time (esp32_ext_mcp2515 has been red on CI for this exact
+        reason — partitions_8mb_ota_3072k.csv was never re-added after the
+        3.0 layout migration)."""
+        ini = (ROOT / "platformio.ini").read_text(encoding="utf-8")
+        refs = re.findall(r"board_build\.partitions\s*=\s*(\S+\.csv)", ini)
+        self.assertGreaterEqual(len(refs), 9, "platformio.ini lost its partition refs?")
+        for csv_name in sorted(set(refs)):
+            with self.subTest(partitions=csv_name):
+                self.assertTrue(
+                    (ROOT / csv_name).is_file(),
+                    f"{csv_name} is referenced in platformio.ini but missing from the repo",
+                )
+
     def test_jitter_switch_is_wired_fail_closed(self) -> None:
         """4.5.0-beta15: the 8.3.6 JITTER toggle must persist, apply, and
         diagnose end to end (verbatim port of the single-CAN v1.19.2
