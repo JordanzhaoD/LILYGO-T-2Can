@@ -24,6 +24,7 @@
 
 #include "app.h"
 #include "dash_tx_evidence.h"
+#include "dash_legacy_stalk_burst.h"
 
 #ifdef DRIVER_T2CAN_DUAL
 #include "drivers/esp32_mcp2515_driver.h"
@@ -158,6 +159,11 @@ static constexpr uint16_t kT2canBus2MaxIds = 160;
 static T2canBus2Id g_bus2Ids[kT2canBus2MaxIds];
 static volatile uint16_t g_bus2IdCount = 0;
 
+// 最近真实 0x292 STW_ACTN_RQ 模板（Legacy Model X 拨杆帧，BDY 总线）。Fresh 平台
+// 走 0x249 SCCM_leftStalk，Legacy 走 0x292 STW_ACTN_RQ（见 dash_legacy_stalk_burst.h）。
+static LegacyStalkTemplate g_legacyStalkTpl;
+static constexpr uint32_t kLegacyStalkTemplateMaxAgeMs = 300; // 参照 V8.2 LIGHTING_TEMPLATE_MAX_AGE_MS
+
 // Latest rolling counter seen on the real 0x249 SCCMLeftStalk stream, so an
 // injected test frame can ride just after it with the next counter value.
 static volatile uint8_t g_stalkLastCounter = 0;
@@ -173,11 +179,26 @@ static void t2canRecordBus2(const CanFrame &f)
     if (f.id & 0x80000000UL)
         return; // standard 11-bit IDs only (Tesla lighting/stalk are standard)
     uint16_t sid = (uint16_t)(f.id & 0x7FF);
-    if (sid == 0x249 && f.dlc >= 2)
+    if (sid == 0x249 && f.dlc >= 2 && !dashLegacyHandlerActive())
     {
+        // Fresh platform only: 0x249 = SCCM_leftStalk. On Legacy Model X 0x249 is
+        // DAS_visualDebug — feeding it to the burst trigger there would be noise.
         g_stalkLastCounter = f.data[1] & 0x0F; // track real stalk counter
         uint8_t status = (f.data[1] >> 4) & 0x07;
         t2canBurstCheckTrigger(status, millis());
+    }
+    if (sid == CAN_ID_STW_ACTN_RQ && f.dlc >= 8)
+    {
+        // Legacy Model X: 0x292 = STW_ACTN_RQ (BDY). Capture the real template
+        // for mutation, and feed the burst trigger with normalized HiBm FLASH
+        // edges (1=flash active) so double-pull gesture detection works on both
+        // platforms.
+        g_legacyStalkTpl.capture(f.data, millis());
+        if (dashLegacyHandlerActive())
+        {
+            uint8_t active = (legacy_stalk::hibmStatus(f.data) == kLegacyHibmFlash) ? 1 : 0;
+            t2canBurstCheckTrigger(active, millis());
+        }
     }
     if (sid == 0x3C2 && f.dlc >= 8)
         t2canWheelDndRecordNative(f);
@@ -495,8 +516,61 @@ static void t2canBus2HealthTick()
     t2canSecondaryEflg = appDriverSecondary->mcp().getErrorFlags();
 }
 
+static void t2canStalkInjectTickLegacy()
+{
+    // Legacy 0x292 STW_ACTN_RQ 注入（BDY 总线）：变异最近真实模板的 HiBmLvr_Stat +
+    // counter + CRC，绝不从零合成（合成会清零雨刷/巡航/16 个按键位，触发副作用）。
+    // 模板过期（>300ms 未刷新）则中止注入并停掉进行中的 burst，避免发陈旧帧。
+    if (!appDriverSecondary || g_stalkInjStatus == 0)
+        return;
+    uint32_t now = millis();
+    if ((int32_t)(now - g_stalkInjUntil) >= 0)
+    {
+        g_stalkInjStatus = 0;
+        return;
+    }
+    // 碰撞降噪：骑真实 0x292 尾流注入，避开下一个真实帧(同 ID 不同数据→位错误→TEC→bus-off)。
+    if (!g_legacyStalkTpl.isFresh(now, kLegacyStalkTemplateMaxAgeMs))
+    {
+        if (t2canBurstIsRunning())
+            t2canBurstStop(true);
+        g_stalkInjStatus = 0;
+        return;
+    }
+    if (!g_legacyStalkTpl.inWake(now, 3, 20)) // 只在真实帧后 3-20ms 尾流窗口内发
+        return;
+    static uint32_t last = 0;
+    if (now - last < 25) // ≤真实 ~50ms 节奏一半，避免连发
+        return;
+    last = now;
+    // g_stalkInjStatus 语义沿用 Fresh：1=PULL→远光闪(FLASH)，2=PUSH→远光常亮(ON_PSD)
+    uint8_t hibm = (g_stalkInjStatus == 1)   ? kLegacyHibmFlash
+                   : (g_stalkInjStatus == 2) ? kLegacyHibmOnPsd
+                                             : kLegacyHibmIdle;
+    uint8_t cnt = static_cast<uint8_t>((legacy_stalk::counter(g_legacyStalkTpl.frame) + 1) & 0x0F);
+    uint8_t out[8];
+    legacy_stalk::buildFrame(g_legacyStalkTpl.frame, out, cnt, hibm, kLegacyTurnIdle);
+    CanFrame f = {};
+    f.id = CAN_ID_STW_ACTN_RQ;
+    f.dlc = 8;
+    memcpy(f.data, out, 8);
+    f.bus = T2CAN_SECONDARY_BUS;
+    stalkTxEvidence.recordAttempt(f.id, f.bus, f.dlc, f.data, now);
+    bool ok = t2canTxSecondaryCounted(f);
+    stalkTxEvidence.recordResult(ok);
+#ifdef ESP32_DASHBOARD
+    dashRecordCanFrame(f, ok ? 'T' : 'E');
+#endif
+}
+
 static void t2canStalkInjectTick()
 {
+    // 平台分流：Legacy Model X 用 0x292 STW_ACTN_RQ（BDY）；Fresh 仍走 0x249 SCCM_leftStalk。
+    if (dashLegacyHandlerActive())
+    {
+        t2canStalkInjectTickLegacy();
+        return;
+    }
     if (!appDriverSecondary || g_stalkInjStatus == 0)
         return;
     uint32_t now = millis();

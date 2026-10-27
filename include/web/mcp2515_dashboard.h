@@ -4635,7 +4635,8 @@ static void handleServiceMode()
     server.send(200, "application/json", j);
 }
 
-// Inject a short 0x249 stalk burst on bus B to test manual lighting:
+// Inject a short stalk burst on bus B to test manual lighting (platform-split):
+//   Fresh平台 0x249 SCCM_leftStalk；Legacy Model X 0x292 STW_ACTN_RQ（t2canStalkInjectTick 内分流）
 //   /stalk_test?mode=flash     -> PULL (超车闪)  ~400ms
 //   /stalk_test?mode=highbeam  -> PUSH (远光toggle) ~1000ms
 static void handleStalkTest()
@@ -4668,6 +4669,7 @@ static void handleStalkTest()
                 String("{\"ok\":") + (status ? "true" : "false") +
                     ",\"mode\":\"" + m + "\"" +
                     ",\"duration_ms\":" + String(dur) +
+                    ",\"stalk_platform\":" + (dashLegacyHandlerActive() ? "\"legacy0x292\"" : "\"fresh0x249\"") +
                     (status ? "" : ",\"error\":\"invalid mode\"") +
                     "}");
 }
@@ -4710,6 +4712,9 @@ static void handleBurst()
     j += t2canBurstLastTriggerMs();
     j += ",\"prev_status\":";
     j += t2canBurstPrevStatus();
+    j += ",\"stalk_platform\":\"";
+    j += dashLegacyHandlerActive() ? "legacy0x292" : "fresh0x249";
+    j += "\"";
     j += "}";
     server.send(200, "application/json", j);
 }
