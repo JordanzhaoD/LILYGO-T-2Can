@@ -1,5 +1,61 @@
 # Changelog
 
+## [6.0.0-beta03] - 2026-10-27
+
+### Fixed
+
+- **Legacy Model X: CAN2 flash burst was completely dead, and historically
+  died minutes after plug-in.** Two independent defects. (1) On 6.0.x the
+  burst only injected 0x249 SCCM_leftStalk (Model Y CRC); on the Legacy X
+  (MCU2 Intel) 0x249 is DAS_visualDebug, so the injection was structurally
+  ineffective. (2) The older lineage that did use the real stalk frame —
+  0x292 STW_ACTN_RQ (BDY bus), field-verified on this car — died after a
+  few minutes: the injected same-ID/different-data frame collided with the
+  real stalk module, the CAN bit error drove the TEC up, and the MCP2515
+  went bus-off (controller off the bus until power cycle — restart fixed
+  it, matching the symptom). Ported from the proven v4.3.0 beta.28/29
+  lineage: platform split at the existing `dashLegacyHandlerActive()`
+  seam — Legacy injects mutated clones of the latest real 0x292 template
+  (never synthesized from zero, which would wipe wiper/cruise/button
+  bits), Fresh keeps 0x249 untouched. Bus-off is cured at both ends:
+  wake-injection (emit only in the 3-20 ms window after a real 0x292,
+  >=25 ms throttle, 300 ms template max age stops the burst on stale
+  data) makes collisions near-zero, and the MCP2515 driver now checks
+  bus-off from `send()` too (was read-only, so injection silently died)
+  with the recovery cooldown cut 3000 -> 1000 ms. New pure-logic module
+  dash_legacy_stalk_burst.h with 11 native tests (bit semantics, CRC8
+  SAE J1850 vectors, template freshness, wake window). `/stalk_test` and
+  `/burst` JSON gain "stalk_platform": legacy0x292 / fresh0x249. The
+  proven-dead 0x238 service-mode path stays out. Fog light is NOT
+  ported: this lineage never had a verified X path (0x273/FOG_BASE is
+  dead code with no UI entry); needs its own capture.
+
+- **DND: left-wheel 0x045 volume drifted one direction during a hands-on
+  warning instead of returning to baseline.** Native tests isolated three
+  independent mechanisms: stranding (warning clear or physical wheel touch
+  between the positive tick and its inverse cancelled the inverse — net
+  +1 per stranded pair), a race (the inverse tick cloned a mid-episode
+  native frame and collided with the controller's next frame), and a cap
+  loophole (after the 3-pair episode limit the state returned to Idle
+  while the warning was still active, and the re-arm path fired a 4th
+  positive). The positive (+1) and inverse (-1) ticks are now one atomic
+  back-to-back burst: once the positive is on the bus the inverse is
+  unconditionally owed (new BurstSecondDue state; warning clear or
+  physical input mid-burst only logs it), >=3 ms apart inside a single
+  47 ms carrier-lock window aligned to the jitter pump, with burst start
+  requiring a fresh native carrier (else carrierLockBlocks rejects). The
+  inverse counter is max(native, lastTx)+1 so the pair reads as two
+  consecutive real frames; the cap guard covers the Idle re-arm path; TX
+  failure retries the inverse, >=2 consecutive failures auto-disarm; the
+  echo filter is now two-slot fingerprinted. Field acceptance: read
+  wheelDndDiag — positiveTx == negativeTx && burstSplitAborts == 0.
+  Dashboard: dndActionType renamed to left_045_atomic_pair; three new
+  diag keys (midBurstWarningClears / carrierLockBlocks /
+  burstSplitAborts); UI description updated (zh+en) and blob regenerated.
+  Full matrix: native_legacy_wheel_045_dnd 18/18 (rewritten), new
+  native_legacy_stalk_burst 11/11, native_mcp2515_recovery 4/4,
+  native_dashboard 11/11, pytest 228/701, ESP32 build SUCCESS.
+
 ## [6.0.0-beta02] - 2026-10-25
 
 ### Fixed
