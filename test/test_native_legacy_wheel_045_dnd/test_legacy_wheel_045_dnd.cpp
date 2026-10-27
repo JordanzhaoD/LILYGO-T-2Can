@@ -4,9 +4,11 @@
 
 // Spec for the atomic-pair burst redesign (6.0.0-beta03):
 //   f1 (+1 tick) and f2 (-1 tick) are one back-to-back burst — consecutive
-//   counters, >=3ms apart, same carrier-locked window. Volume net change is
-//   zero by construction; a warning clear can never strand f1 (the old
-//   "conditional balance" stranded a +1 on every short warning).
+//   counters, >=25ms apart (2026-10-27 capture: real left-scroll pulses are
+//   never <19-20ms apart; the car merges away our old 4-10ms inverse tick,
+//   netting -1 volume per pair), same carrier-locked window. Volume net
+//   change is zero by construction; a warning clear can never strand f1
+//   (the old "conditional balance" stranded a +1 on every short warning).
 static const uint8_t kIdleC[8] = {0x40, 0x21, 0x00, 0x30, 0x00, 0x00, 0xC0, 0xE0};
 static const uint8_t kIdleD[8] = {0x40, 0x21, 0x00, 0x30, 0x00, 0x00, 0xD0, 0x2D};
 static const uint8_t kIdleE[8] = {0x40, 0x21, 0x00, 0x30, 0x00, 0x00, 0xE0, 0x67};
@@ -31,7 +33,7 @@ static void makeIdleFrame(uint8_t out[8], uint8_t counter)
     out[7] = DashLegacyWheel045Dnd::crc8J1850(out, 7);
 }
 
-// Drives one full burst: f1 at t, f2 at t+4ms, native resume at t+15ms.
+// Drives one full burst: f1 at t, f2 at t+25ms, native resume at t+40ms.
 // Returns false if any step refuses to produce its frame.
 static bool runBurst(DashLegacyWheel045Dnd &dnd, uint8_t out[8], uint32_t t,
                      uint8_t &counter)
@@ -39,13 +41,13 @@ static bool runBurst(DashLegacyWheel045Dnd &dnd, uint8_t out[8], uint32_t t,
     if (!dnd.nextFrame(t, out))
         return false;
     dnd.recordTxResult(true, t);
-    if (!dnd.nextFrame(t + 4, out))
+    if (!dnd.nextFrame(t + 25, out))
         return false;
-    dnd.recordTxResult(true, t + 4);
+    dnd.recordTxResult(true, t + 25);
     counter = static_cast<uint8_t>((counter + 1) & 0x0F);
     uint8_t resume[8];
     makeIdleFrame(resume, counter);
-    dnd.onCan1Frame(resume, 8, t + 15);
+    dnd.onCan1Frame(resume, 8, t + 40);
     return true;
 }
 
@@ -108,21 +110,21 @@ void test_atomic_pair_burst_emits_consecutive_ticks()
     dnd.recordTxResult(true, 1000);
     TEST_ASSERT_EQUAL(DashLegacyWheel045State::BurstSecondDue, dnd.diag.state);
 
-    // The second tick is owed regardless of anything else; only the >=3ms
-    // intra-burst gap can hold it back.
-    TEST_ASSERT_FALSE(dnd.nextFrame(1002, out));
-    TEST_ASSERT_TRUE(dnd.nextFrame(1004, f2));
+    // The second tick is owed regardless of anything else; only the >=25ms
+    // intra-burst gap (real-wheel pulse floor) can hold it back.
+    TEST_ASSERT_FALSE(dnd.nextFrame(1024, out));
+    TEST_ASSERT_TRUE(dnd.nextFrame(1025, f2));
     TEST_ASSERT_EQUAL_HEX16(0x03C0, DashLegacyWheel045Dnd::switchWord(f2));
     TEST_ASSERT_EQUAL_HEX8(0xE0, f2[6]);
     TEST_ASSERT_TRUE(DashLegacyWheel045Dnd::validFrame(f2));
     TEST_ASSERT_EQUAL(DashLegacyWheel045State::NegativeTxPending, dnd.diag.state);
-    dnd.recordTxResult(true, 1004);
+    dnd.recordTxResult(true, 1025);
     TEST_ASSERT_EQUAL(DashLegacyWheel045State::WaitingIdleAfterNegative, dnd.diag.state);
 
     // Both echoes must be filtered by the two-slot fingerprint so f1's echo
     // is not mistaken for driver wheel input.
-    dnd.onCan1Frame(f1, 8, 1006);
-    dnd.onCan1Frame(f2, 8, 1008);
+    dnd.onCan1Frame(f1, 8, 1027);
+    dnd.onCan1Frame(f2, 8, 1029);
     TEST_ASSERT_EQUAL_UINT32(2, dnd.diag.ownEchoRx);
     TEST_ASSERT_EQUAL_UINT32(0, dnd.diag.physicalInputRx);
 
@@ -133,6 +135,15 @@ void test_atomic_pair_burst_emits_consecutive_ticks()
     TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.positiveTx);
     TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.negativeTx);
     TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.balancedPairs);
+}
+
+// 2026-10-27 field verdict: firmware pairing was perfect, but f1->f2 at
+// 4-10ms is physically impossible for the real wheel (native pulses floor
+// at 19-20ms), so the car merges the inverse tick away and volume drifts
+// down one step per pair. Pin the widened gap so it cannot silently regress.
+void test_burst_min_gap_matches_real_wheel_floor()
+{
+    TEST_ASSERT_EQUAL_UINT32(25, DashLegacyWheel045Dnd::kBurstMinGapMs);
 }
 
 void test_warning_clear_mid_burst_still_completes_inverse_tick()
@@ -229,9 +240,9 @@ void test_failed_first_tick_never_strands_and_next_episode_retries()
     TEST_ASSERT_TRUE(dnd.nextFrame(1200, out));
     TEST_ASSERT_EQUAL_HEX16(0x0040, DashLegacyWheel045Dnd::switchWord(out));
     dnd.recordTxResult(true, 1200);
-    TEST_ASSERT_TRUE(dnd.nextFrame(1204, out));
+    TEST_ASSERT_TRUE(dnd.nextFrame(1225, out));
     TEST_ASSERT_EQUAL_HEX16(0x03C0, DashLegacyWheel045Dnd::switchWord(out));
-    dnd.recordTxResult(true, 1204);
+    dnd.recordTxResult(true, 1225);
     uint8_t resume[8];
     makeIdleFrame(resume, 0x00);
     dnd.onCan1Frame(resume, 8, 1300);
@@ -248,14 +259,14 @@ void test_failed_second_tick_retries_inverse_without_disarm()
     seedAndWarn(dnd);
     TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
     dnd.recordTxResult(true, 1000);
-    TEST_ASSERT_TRUE(dnd.nextFrame(1004, out));
-    dnd.recordTxResult(false, 1004); // f2 failed: still owed, retry next tick
+    TEST_ASSERT_TRUE(dnd.nextFrame(1025, out));
+    dnd.recordTxResult(false, 1025); // f2 failed: still owed, retry after gap
     TEST_ASSERT_EQUAL(DashLegacyWheel045State::BurstSecondDue, dnd.diag.state);
     TEST_ASSERT_FALSE(dnd.diag.autoDisarmed);
 
-    TEST_ASSERT_TRUE(dnd.nextFrame(1010, out));
+    TEST_ASSERT_TRUE(dnd.nextFrame(1050, out));
     TEST_ASSERT_EQUAL_HEX16(0x03C0, DashLegacyWheel045Dnd::switchWord(out));
-    dnd.recordTxResult(true, 1010);
+    dnd.recordTxResult(true, 1050);
     uint8_t resume[8];
     makeIdleFrame(resume, 0x0F);
     dnd.onCan1Frame(resume, 8, 1100);
@@ -350,8 +361,8 @@ void test_counter_duplicate_and_conflict_are_diagnostic_only()
     seedAndWarn(dnd);
     TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
     dnd.recordTxResult(true, 1000);
-    TEST_ASSERT_TRUE(dnd.nextFrame(1004, out));
-    dnd.recordTxResult(true, 1004);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1025, out));
+    dnd.recordTxResult(true, 1025);
     TEST_ASSERT_EQUAL(DashLegacyWheel045State::WaitingIdleAfterNegative, dnd.diag.state);
 
     // Resume with the counter we already used: duplicate, still a resume.
@@ -370,8 +381,8 @@ void test_counter_duplicate_and_conflict_are_diagnostic_only()
     seedAndWarn(bad);
     TEST_ASSERT_TRUE(bad.nextFrame(1000, out));
     bad.recordTxResult(true, 1000);
-    TEST_ASSERT_TRUE(bad.nextFrame(1004, out));
-    bad.recordTxResult(true, 1004);
+    TEST_ASSERT_TRUE(bad.nextFrame(1025, out));
+    bad.recordTxResult(true, 1025);
     uint8_t wrong[8];
     makeIdleFrame(wrong, 0x02);
     bad.onCan1Frame(wrong, 8, 1100);
@@ -434,6 +445,7 @@ int main()
     RUN_TEST(test_positive_generation_preserves_unrelated_fields);
     RUN_TEST(test_counter_wrap_preserves_low_nibble);
     RUN_TEST(test_atomic_pair_burst_emits_consecutive_ticks);
+    RUN_TEST(test_burst_min_gap_matches_real_wheel_floor);
     RUN_TEST(test_warning_clear_mid_burst_still_completes_inverse_tick);
     RUN_TEST(test_episode_limit_holds_with_fresh_native_and_active_warning);
     RUN_TEST(test_burst_start_requires_carrier_lock_freshness);
