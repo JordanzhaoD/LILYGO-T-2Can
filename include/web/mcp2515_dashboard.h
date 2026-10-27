@@ -2486,7 +2486,7 @@ static void appendWheelDndDiagJson(String &j, unsigned long now)
     j += R"JSON(,"speed":)JSON";
     j += "false";
     j += R"JSON(,"protocol":"legacy_0x045_left_scroll")JSON";
-    j += R"JSON(,"dndActionType":"left_045_conditional_balance")JSON";
+    j += R"JSON(,"dndActionType":"left_045_atomic_pair")JSON";
     j += R"JSON(,"native045Seen":)JSON";
     j += d.nativeSeen ? "true" : "false";
     j += R"JSON(,"native045Fresh":)JSON";
@@ -2550,6 +2550,12 @@ static void appendWheelDndDiagJson(String &j, unsigned long now)
     j += d.expectedCounterDuplicates;
     j += R"JSON(,"counterConflicts":)JSON";
     j += d.counterConflicts;
+    j += R"JSON(,"midBurstWarningClears":)JSON";
+    j += d.midBurstWarningClears;
+    j += R"JSON(,"carrierLockBlocks":)JSON";
+    j += d.carrierLockBlocks;
+    j += R"JSON(,"burstSplitAborts":)JSON";
+    j += d.burstSplitAborts;
     j += R"JSON(,"ownEchoRx":)JSON";
     j += d.ownEchoRx;
     j += R"JSON(,"gatewayMirrorRx":)JSON";
