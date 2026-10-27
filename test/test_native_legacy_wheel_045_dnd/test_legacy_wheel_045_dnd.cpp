@@ -186,10 +186,10 @@ void test_episode_limit_holds_with_fresh_native_and_active_warning()
     uint8_t counter = 0x0C;
     for (int pair = 0; pair < 3; ++pair)
     {
-        now += 900;                       // pass RetryWait pacing
+        now += 900; // pass RetryWait pacing
         dnd.onDasStatus(6, 3, CAN_BUS_VEH, now);
         makeIdleFrame(out, static_cast<uint8_t>((counter + 1) & 0x0F));
-        dnd.onCan1Frame(out, 8, now);     // idle beat keeps native fresh
+        dnd.onCan1Frame(out, 8, now); // idle beat keeps native fresh
         TEST_ASSERT_TRUE(runBurst(dnd, out, now, counter));
     }
     TEST_ASSERT_EQUAL_UINT8(3, dnd.diag.pairsThisEpisode);

@@ -36,8 +36,8 @@ void test_crc8_is_deterministic_and_sensitive()
 void test_hibm_setget_preserves_turn()
 {
     uint8_t f[8] = {0};
-    legacy_stalk::setTurn(f, kLegacyTurnLeft);     // data[2] bit0-1
-    legacy_stalk::setHibm(f, kLegacyHibmFlash);    // data[2] bit2-3
+    legacy_stalk::setTurn(f, kLegacyTurnLeft);  // data[2] bit0-1
+    legacy_stalk::setHibm(f, kLegacyHibmFlash); // data[2] bit2-3
     TEST_ASSERT_EQUAL_UINT8(kLegacyHibmFlash, legacy_stalk::hibmStatus(f));
     TEST_ASSERT_EQUAL_UINT8(kLegacyTurnLeft, legacy_stalk::turnStatus(f)); // 未被破坏
 }
@@ -45,8 +45,8 @@ void test_hibm_setget_preserves_turn()
 void test_counter_setget_preserves_low_nibble()
 {
     uint8_t f[8] = {0};
-    f[6] = 0x05;                                    // low nibble 保留
-    legacy_stalk::setCounter(f, 0x0B);              // high nibble
+    f[6] = 0x05;                       // low nibble 保留
+    legacy_stalk::setCounter(f, 0x0B); // high nibble
     TEST_ASSERT_EQUAL_UINT8(0x0B, legacy_stalk::counter(f));
     TEST_ASSERT_EQUAL_UINT8(0x05, static_cast<uint8_t>(f[6] & 0x0F)); // low nibble 不变
 }

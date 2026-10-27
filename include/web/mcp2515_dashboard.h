@@ -208,8 +208,8 @@ static Dash3eeCadence dash3eeCadence;
 static bool dashJitterEnabled = false;
 static bool dashDefenseEnabled = false;
 static bool dashSpeedNoDisturb = false;
-static bool dashDndVolume = false;      // 音量消除DND（Phase 3实现执行逻辑）
-static bool dashDndSpeed = false;       // 速度滚轮DND（Phase 3实现执行逻辑）
+static bool dashDndVolume = false; // 音量消除DND（Phase 3实现执行逻辑）
+static bool dashDndSpeed = false;  // 速度滚轮DND（Phase 3实现执行逻辑）
 static bool dashApEapCompatible = true;
 // Experimental Legacy-only safety controls. Default off so existing
 // continuous activation behavior remains unchanged until explicitly armed.
@@ -7923,7 +7923,6 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     // Phase 3: Bionic PRNG uses default seed 0xDEADBEEF.
     // For better entropy, re-seed from millis() at boot via appActiveHandler.
     // NagHandler::bionic.init() is called on first handleMessage via needsNewPhase.
-
 
     ArduinoOTA.setHostname("ev-open-can-tools");
     ArduinoOTA.setPassword(DASH_OTA_PASS);
