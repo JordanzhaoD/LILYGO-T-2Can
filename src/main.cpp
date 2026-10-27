@@ -337,8 +337,10 @@ static volatile uint8_t g_stalkInjStatus = 0; // 0=off, 1=PULL, 2=PUSH
 static volatile uint32_t g_stalkInjUntil = 0; // millis() deadline
 
 // ── Flash Burst (real double-PULL trigger) ───────────────────────
-// RAM-only and OFF on boot. When enabled, two real 0x249 PULL edges within
-// 2 seconds arm a firmware-timed PULL burst that reuses t2canStalkInjectTick().
+// Persisted via dashboard NVS prefs ("bk".."bn"); toggle + params survive
+// reboot (dashLoadPrefs applies them on boot). When enabled, two real
+// 0x249 PULL edges within 2 seconds arm a firmware-timed PULL burst
+// that reuses t2canStalkInjectTick().
 static volatile bool g_burstEnabled = false;
 static volatile uint8_t g_burstCount = 3;
 static volatile uint16_t g_burstOnMs = 180;

@@ -1062,6 +1062,36 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.dash)
 
+    def test_flash_burst_config_is_persisted_to_nvs(self) -> None:
+        """Flash Burst toggle + params must survive reboot via NVS keys bk..bn.
+        2026-10-27 field complaint: toggle reset to OFF after car power cycle
+        because g_burstEnabled was RAM-only."""
+        for token in [
+            # staging statics mirror the FSD switch block (defaults = main.cpp init)
+            'static bool nvsBurstEnabled = false;',
+            'static uint8_t nvsBurstCount = 3;',
+            'static uint16_t nvsBurstOnMs = 180;',
+            'static uint16_t nvsBurstOffMs = 180;',
+            # toggle handler: apply live state, stage, save
+            'bool on = (v == "1" || v == "true" || v == "on");',
+            't2canSetBurstEnabled(on);',
+            'nvsBurstEnabled = on;',
+            # dashSavePrefs writes live getters under obfuscated keys
+            'prefs.putBool("bk", t2canGetBurstEnabled());',
+            'prefs.putUChar("bl", t2canGetBurstCount());',
+            'prefs.putUInt("bm", t2canGetBurstOnMs());',
+            'prefs.putUInt("bn", t2canGetBurstOffMs());',
+            # boot: load staged values, then apply to the live burst engine
+            'nvsBurstEnabled = prefs.getBool("bk", false);',
+            't2canSetBurstEnabled(nvsBurstEnabled);',
+            't2canSetBurstParams(nvsBurstCount, nvsBurstOnMs, nvsBurstOffMs);',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        # main.cpp must no longer document the toggle as RAM-only / OFF on boot
+        self.assertNotIn("RAM-only and OFF on boot", self.main)
+        self.assertIn("Persisted via dashboard NVS prefs", self.main)
+
     def test_gateway_profile_and_poll_interval_are_functional(self) -> None:
         self.assertIn("var DNS_PROFILES = {", self.ui)
         self.assertIn("function applyDnsProfile(profile)", self.ui)

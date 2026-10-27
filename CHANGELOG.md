@@ -1,5 +1,36 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Legacy wheel DND (0x045): volume still drifted down — the atomic pair
+  was perfect but too fast for the car to believe.** 2026-10-27 field
+  capture on 6.0.0-beta03: all 14 injected frames formed 7 strict
+  back-to-back pairs (counters consecutive, zero TX errors, both frames
+  gateway-mirrored onto bus 2 as 0x292) and the byte codes are genuine
+  native vectors — yet volume kept falling one step per pair. Root cause
+  is rhythm, not encoding: f1(+1) -> f2(-1) spacing was 4-10 ms, while
+  the real left-scroll wheel physically never emits same-direction
+  pulses closer than 19-20 ms (reverse turns are >=600 ms apart). The
+  vehicle merges away a second tick that arrives physically-impossible
+  fast. Fix: kBurstMinGapMs 3 -> 25 ms (measured floor + margin, still
+  far below the 300 ms release timeout). Native tests retimed to the
+  widened gap plus a new regression pin on the constant. Honest risk: if
+  the car's reverse-merge window is wider than 25 ms this needs another
+  field iteration (50/100 ms candidates).
+
+- **Flash burst toggle and parameters were RAM-only and reset on every
+  power cycle.** Car power cycling rebooted the device and the
+  double-pull burst toggle (plus count/on/off timing) reverted to OFF /
+  defaults — which also explains "runs for a while, then stops working".
+  Toggle and params now persist through the same NVS staging path as the
+  FSD runtime switches (obfuscated keys "bk".."bn"): saved on every
+  /burst toggle or param change, applied once at boot after
+  dashLoadPrefs(). The /burst GET already returned live state, so the UI
+  toggle now reflects the persisted state across reboots with zero UI
+  changes. First-boot defaults are unchanged (OFF, 3/180/180).
+
 ## [6.0.0-beta03] - 2026-10-27
 
 ### Fixed
