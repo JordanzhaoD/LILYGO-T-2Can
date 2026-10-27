@@ -5924,6 +5924,11 @@ static const char *dashResetReasonName(esp_reset_reason_t reason)
 
 static bool dashReadTemperature(float &celsius)
 {
+    // The tsens driver macros (TEMPERATURE_SENSOR_CONFIG_DEFAULT and its
+    // clk_src enum) only exist on targets that have the tsens peripheral.
+    // Stock ESP32 boards compile this file too, so stub them out there and
+    // let hasTemp report false.
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
     static temperature_sensor_handle_t tempHandle = nullptr;
     static bool tempReady = false;
     static bool tempTried = false;
@@ -5938,6 +5943,10 @@ static bool dashReadTemperature(float &celsius)
         }
     }
     return tempReady && temperature_sensor_get_celsius(tempHandle, &celsius) == ESP_OK;
+#else
+    (void)celsius;
+    return false;
+#endif
 }
 #endif
 
