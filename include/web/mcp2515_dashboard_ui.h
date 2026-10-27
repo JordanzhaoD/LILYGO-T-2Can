@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #ifndef DASH_UI_BUILD_ID
-#define DASH_UI_BUILD_ID "aa4c16d"
+#define DASH_UI_BUILD_ID "0c4c61b"
 #endif
 #ifndef DASH_UI_BUILD_UTC
 #define DASH_UI_BUILD_UTC "manual"
