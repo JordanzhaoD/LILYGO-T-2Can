@@ -1040,6 +1040,27 @@ class DashboardApiContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.ui)
                 self.assertIn(token if token != '双拨爆闪' else '/burst', self.ui_gen)
+        # 6.0.0: Legacy Model X port — burst splits to 0x292 STW_ACTN_RQ (BDY)
+        # with wake-injection; Fresh keeps 0x249 SCCM_leftStalk untouched.
+        for token in [
+            'sid == CAN_ID_STW_ACTN_RQ && f.dlc >= 8',
+            'g_legacyStalkTpl.capture(f.data, millis());',
+            'legacy_stalk::hibmStatus(f.data) == kLegacyHibmFlash',
+            'sid == 0x249 && f.dlc >= 2 && !dashLegacyHandlerActive()',
+            'static void t2canStalkInjectTickLegacy()',
+            '!g_legacyStalkTpl.inWake(now, 3, 20)',
+            'kLegacyStalkTemplateMaxAgeMs = 300',
+            'f.id = CAN_ID_STW_ACTN_RQ;',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.main)
+        for token in [
+            '\\"stalk_platform\\"',
+            'legacy0x292',
+            'fresh0x249',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
 
     def test_gateway_profile_and_poll_interval_are_functional(self) -> None:
         self.assertIn("var DNS_PROFILES = {", self.ui)

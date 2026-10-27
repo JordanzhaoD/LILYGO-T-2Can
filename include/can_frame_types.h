@@ -33,6 +33,9 @@ struct CanFrame
 // 方向盘滚轮按钮（CAN-B MCP2515）
 #define CAN_ID_STEERING_WHEEL 0x3C2 // data[2]音量, data[3]速度
 
+// Legacy Model X 拨杆帧（CAN-B MCP2515，BDY 总线）
+#define CAN_ID_STW_ACTN_RQ 0x292 // STW_ACTN_RQ：HiBm=data[2]bit2-3，见 dash_legacy_stalk_burst.h
+
 // 0x273 后雾灯基础帧数据
 #define FOG_BASE_0 0x81
 #define FOG_BASE_1 0xE1

@@ -79,6 +79,7 @@ public:
 
     bool send(const CanFrame &frame) override
     {
+        checkBusOff(); // TX path must also detect bus-off (not only read()), else injection silently dies
         can_frame raw;
         raw.can_id = frame.id;
         raw.can_dlc = frame.dlc;
@@ -114,7 +115,7 @@ public:
 
 private:
     static constexpr uint8_t kMaxConsecutiveTxFailures = 5;
-    static constexpr uint32_t kRecoveryCooldownMs = 3000;
+    static constexpr uint32_t kRecoveryCooldownMs = 1000; // was 3000: bus-off must self-heal fast or the feature reads as "dead"
 
     void checkBusOff()
     {
