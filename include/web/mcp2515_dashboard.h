@@ -248,9 +248,10 @@ static uint8_t dashLegacySmoothRateKphS = 5;
 static LegacySpeedBusMode dashLegacySpeedBusMode = LegacySpeedBusMode::Auto;
 
 // --- Flash Burst NVS staging (toggle + params, keys "bk".."bn") ---
-// main.cpp owns the live state (g_burstEnabled/g_burstCount...); we only
-// need the setters/getters here, declared early because dashSavePrefs and
-// dashLoadPrefs sit above the handler-declaration block.
+// Dual-CAN only: main.cpp owns the live state (g_burstEnabled/...) and
+// defines these under DRIVER_T2CAN_DUAL; declared early because
+// dashSavePrefs and dashLoadPrefs sit above the handler-declaration block.
+#ifdef DRIVER_T2CAN_DUAL
 static bool nvsBurstEnabled = false;
 static uint8_t nvsBurstCount = 3;
 static uint16_t nvsBurstOnMs = 180;
@@ -261,6 +262,7 @@ bool t2canGetBurstEnabled(void);
 uint8_t t2canGetBurstCount(void);
 uint16_t t2canGetBurstOnMs(void);
 uint16_t t2canGetBurstOffMs(void);
+#endif
 
 #ifdef RGB_BRIGHTNESS
 static constexpr uint8_t kDashLedBrightnessDefault = RGB_BRIGHTNESS;
@@ -1824,11 +1826,13 @@ static void dashSavePrefs()
         prefs.putBool("fh", (bool)dashHandler->removeVisionSpeedLimit);
         prefs.putBool("fi", (bool)dashHandler->overrideSpeedLimit);
     }
+#ifdef DRIVER_T2CAN_DUAL
     // --- Flash Burst toggle + params: persist live getters (clamped values) ---
     prefs.putBool("bk", t2canGetBurstEnabled());
     prefs.putUChar("bl", t2canGetBurstCount());
     prefs.putUInt("bm", t2canGetBurstOnMs());
     prefs.putUInt("bn", t2canGetBurstOffMs());
+#endif
     prefs.end();
 }
 
@@ -2104,16 +2108,20 @@ static void dashLoadPrefs()
     }
     nvsRemoveVisionSpeedLimit = prefs.getBool("fh", true);
     nvsOverrideSpeedLimit = prefs.getBool("fi", false);
+#ifdef DRIVER_T2CAN_DUAL
     nvsBurstEnabled = prefs.getBool("bk", false);
     nvsBurstCount = prefs.getUChar("bl", 3); // defaults mirror main.cpp init
     nvsBurstOnMs = (uint16_t)prefs.getUInt("bm", 180);
     nvsBurstOffMs = (uint16_t)prefs.getUInt("bn", 180);
+#endif
 
     dashApplyRuntimeState();
+#ifdef DRIVER_T2CAN_DUAL
     // Flash Burst engine state lives in main.cpp globals, applied once here
     // (boot only — dashApplyRuntimeState must not touch it mid-session).
     t2canSetBurstEnabled(nvsBurstEnabled);
     t2canSetBurstParams(nvsBurstCount, nvsBurstOnMs, nvsBurstOffMs);
+#endif
     if (dashHandler)
         dashHandler->enablePrint = ep;
     // Load WiFi AP overrides (hotspot name/password)
