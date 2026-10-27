@@ -155,6 +155,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
           build-essential git
       - run: pip install "platformio==${PLATFORMIO_VERSION}"
+      # minify_dashboard.py (UI blob extra_script) imports these at build time
+      - run: pip install csscompressor htmlmin rjsmin
       - if: matrix.extra_python_packages != ''
         run: pip install ${{ matrix.extra_python_packages }}
       - run: cp platformio_profile.example.h platformio_profile.h

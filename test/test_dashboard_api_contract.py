@@ -2162,6 +2162,12 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("lilygo_t2can_dual", self.release_workflow)
         self.assertIn("firmware-lilygo-t2can-dual", self.release_workflow)
         self.assertIn("release-assets/firmware-lilygo-t2can-dual.bin", self.release_workflow)
+        # minify_dashboard.py (UI blob extra_script) imports these; a runner
+        # without them dies at "pio run" with ModuleNotFoundError — every
+        # ESP32 platformio-build job must install them.
+        for wf in (self.tests_workflow, self.release_workflow):
+            with self.subTest(workflow=wf is self.tests_workflow and "tests" or "release"):
+                self.assertIn("pip install csscompressor htmlmin rjsmin", wf)
 
     def test_platformio_partition_tables_exist(self) -> None:
         """Every board_build.partitions CSV referenced by platformio.ini must
