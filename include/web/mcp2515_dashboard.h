@@ -247,6 +247,21 @@ static bool dashLegacySmoothDown = true;
 static uint8_t dashLegacySmoothRateKphS = 5;
 static LegacySpeedBusMode dashLegacySpeedBusMode = LegacySpeedBusMode::Auto;
 
+// --- Flash Burst NVS staging (toggle + params, keys "bk".."bn") ---
+// main.cpp owns the live state (g_burstEnabled/g_burstCount...); we only
+// need the setters/getters here, declared early because dashSavePrefs and
+// dashLoadPrefs sit above the handler-declaration block.
+static bool nvsBurstEnabled = false;
+static uint8_t nvsBurstCount = 3;
+static uint16_t nvsBurstOnMs = 180;
+static uint16_t nvsBurstOffMs = 180;
+void t2canSetBurstEnabled(bool on);
+void t2canSetBurstParams(uint8_t count, uint16_t onMs, uint16_t offMs);
+bool t2canGetBurstEnabled(void);
+uint8_t t2canGetBurstCount(void);
+uint16_t t2canGetBurstOnMs(void);
+uint16_t t2canGetBurstOffMs(void);
+
 #ifdef RGB_BRIGHTNESS
 static constexpr uint8_t kDashLedBrightnessDefault = RGB_BRIGHTNESS;
 #else
@@ -1809,6 +1824,11 @@ static void dashSavePrefs()
         prefs.putBool("fh", (bool)dashHandler->removeVisionSpeedLimit);
         prefs.putBool("fi", (bool)dashHandler->overrideSpeedLimit);
     }
+    // --- Flash Burst toggle + params: persist live getters (clamped values) ---
+    prefs.putBool("bk", t2canGetBurstEnabled());
+    prefs.putUChar("bl", t2canGetBurstCount());
+    prefs.putUInt("bm", t2canGetBurstOnMs());
+    prefs.putUInt("bn", t2canGetBurstOffMs());
     prefs.end();
 }
 
@@ -2084,8 +2104,16 @@ static void dashLoadPrefs()
     }
     nvsRemoveVisionSpeedLimit = prefs.getBool("fh", true);
     nvsOverrideSpeedLimit = prefs.getBool("fi", false);
+    nvsBurstEnabled = prefs.getBool("bk", false);
+    nvsBurstCount = prefs.getUChar("bl", 3); // defaults mirror main.cpp init
+    nvsBurstOnMs = (uint16_t)prefs.getUInt("bm", 180);
+    nvsBurstOffMs = (uint16_t)prefs.getUInt("bn", 180);
 
     dashApplyRuntimeState();
+    // Flash Burst engine state lives in main.cpp globals, applied once here
+    // (boot only — dashApplyRuntimeState must not touch it mid-session).
+    t2canSetBurstEnabled(nvsBurstEnabled);
+    t2canSetBurstParams(nvsBurstCount, nvsBurstOnMs, nvsBurstOffMs);
     if (dashHandler)
         dashHandler->enablePrint = ep;
     // Load WiFi AP overrides (hotspot name/password)
@@ -4679,7 +4707,10 @@ static void handleBurst()
     if (server.hasArg("enabled") || server.hasArg("on"))
     {
         String v = server.hasArg("enabled") ? server.arg("enabled") : server.arg("on");
-        t2canSetBurstEnabled(v == "1" || v == "true" || v == "on");
+        bool on = (v == "1" || v == "true" || v == "on");
+        t2canSetBurstEnabled(on);
+        nvsBurstEnabled = on;
+        dashSavePrefs();
     }
     if (server.hasArg("count") || server.hasArg("on_ms") || server.hasArg("off_ms"))
     {
@@ -4693,6 +4724,10 @@ static void handleBurst()
         if (server.hasArg("off_ms"))
             offMs = server.arg("off_ms").toInt();
         t2canSetBurstParams(static_cast<uint8_t>(count), static_cast<uint16_t>(onMs), static_cast<uint16_t>(offMs));
+        nvsBurstCount = static_cast<uint8_t>(count);
+        nvsBurstOnMs = static_cast<uint16_t>(onMs);
+        nvsBurstOffMs = static_cast<uint16_t>(offMs);
+        dashSavePrefs();
     }
     String j = "{\"ok\":true,\"enabled\":";
     j += t2canGetBurstEnabled() ? "true" : "false";
