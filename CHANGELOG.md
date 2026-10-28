@@ -1,5 +1,29 @@
 # Changelog
 
+## [6.0.0-beta05] - 2026-10-28
+
+### Fixed
+
+- **Legacy wheel DND (0x045): 25 ms was still inside the car's
+  reverse-merge window — volume kept falling one step per pair.** Field
+  verdict on 6.0.0-beta04: firmware pairing again perfect (P-gear control
+  confirmed injection only runs during warnings; volume dropped exactly
+  3 steps = the 3-pair episode cap, i.e. the car still executed only the
+  -1 of each pair). The reverse-merge window is wider than any
+  same-direction pulse floor, so matching the 19-20 ms pulse floor was
+  the wrong reference: the only reverse transition the car verifiably
+  accepts is a real wheel direction change — >=600 ms in the 2026-10-27
+  capture. Fix: kBurstMinGapMs 25 -> 600 ms, and kReleaseTimeoutMs
+  300 -> 1200 ms — the timeout must stay strictly above the gap or the
+  inverse tick is aborted mid-gap and the +1 strands on the bus (volume
+  would drift UP one step per pair instead). New native pins on both
+  constants plus a timeout-covers-gap invariant test; full suite retimed
+  to the 600 ms world. Expected side effect: a brief volume blip (+1 for
+  ~0.6 s then back) per pair while DND cancels a warning. Honest risk:
+  if the window exceeds 600 ms the fallback is a wheel-press frame
+  (zero volume side effect) pending a field check that presses count as
+  hands-on interaction.
+
 ## [6.0.0-beta04] - 2026-10-27
 
 ### Fixed
