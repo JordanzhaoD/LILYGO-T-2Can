@@ -168,17 +168,9 @@ struct DashLegacyWheel045Dnd
     static constexpr uint32_t kGatewayMirrorId = 0x292;
     static constexpr uint32_t kNativeMaxAgeMs = 150; // gateway-mirror window only
     static constexpr uint32_t kCarrierLockMs = 47;   // burst-start native freshness (jitter pump parity)
-    // f1 -> f2 spacing inside one burst. The car's reverse-merge window is
-    // wider than any same-direction pulse floor: beta03 (4-10ms) and beta04
-    // (25ms, the real-wheel pulse floor) both netted -1 volume per pair in
-    // the field. The only reverse transition the car verifiably accepts is
-    // a real wheel direction change — >=600ms in the 2026-10-27 capture —
-    // so the burst must span that floor to be read as two real ticks.
-    static constexpr uint32_t kBurstMinGapMs = 600;
+    static constexpr uint32_t kBurstMinGapMs = 3;    // f1 -> f2 spacing inside one burst
     static constexpr uint32_t kContextMaxAgeMs = 1000;
-    // Must stay strictly above kBurstMinGapMs or the inverse tick is
-    // aborted mid-gap and the +1 strands on the bus (volume drifts UP).
-    static constexpr uint32_t kReleaseTimeoutMs = 1200;
+    static constexpr uint32_t kReleaseTimeoutMs = 300;
     static constexpr uint32_t kRetryDelayMs = 800;
     static constexpr uint32_t kOwnEchoWindowMs = 30;
     static constexpr uint8_t kMaxPairsPerEpisode = 3;
