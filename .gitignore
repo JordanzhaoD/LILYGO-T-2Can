@@ -262,3 +262,6 @@ output/
 # LILYGO-T-2CAN_latest_* set is committed to avoid bloating git history).
 firmware-assets/v4.*/
 
+
+# Local toolchain override (file:// pins for offline 14.2.0 parity; never commit)
+platformio_local*.ini
