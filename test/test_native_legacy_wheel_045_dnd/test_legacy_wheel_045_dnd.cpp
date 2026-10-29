@@ -19,6 +19,16 @@ static void seedAndWarn(DashLegacyWheel045Dnd &dnd, uint32_t nowMs = 1000,
     dnd.onDasStatus(6, handsState, CAN_BUS_VEH, nowMs);
 }
 
+// Feeds a fresh idle native frame carrying the given counter value.
+static void feedNative(DashLegacyWheel045Dnd &dnd, uint8_t counterValue, uint32_t nowMs)
+{
+    uint8_t native[8];
+    memcpy(native, kIdleC, 8);
+    native[6] = static_cast<uint8_t>(counterValue << 4);
+    native[7] = DashLegacyWheel045Dnd::crc8J1850(native, 7);
+    dnd.onCan1Frame(native, 8, nowMs);
+}
+
 void test_crc_matches_vehicle_capture_vectors()
 {
     static const uint8_t positive[8] = {0x40, 0x21, 0x00, 0x30, 0x40, 0x00, 0xC0, 0x80};
@@ -44,7 +54,7 @@ void test_positive_generation_preserves_unrelated_fields()
     TEST_ASSERT_EQUAL_HEX8(0x00, out[5]);
     TEST_ASSERT_EQUAL_HEX8(0xD0, out[6]);
     TEST_ASSERT_TRUE(DashLegacyWheel045Dnd::validFrame(out));
-    TEST_ASSERT_EQUAL(DashLegacyWheel045State::PositiveTxPending, dnd.diag.state);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::TxPending, dnd.diag.state);
 }
 
 void test_counter_wrap_preserves_low_nibble()
@@ -61,29 +71,48 @@ void test_counter_wrap_preserves_low_nibble()
     TEST_ASSERT_TRUE(DashLegacyWheel045Dnd::validFrame(out));
 }
 
-void test_single_positive_clear_cancels_pending_inverse()
+void test_first_episode_sends_positive_second_alternates_negative()
 {
     DashLegacyWheel045Dnd dnd;
-    uint8_t positive[8] = {};
+    uint8_t out[8] = {};
     arm(dnd);
-    seedAndWarn(dnd);
-    TEST_ASSERT_TRUE(dnd.nextFrame(1000, positive));
+
+    // Episode 1: fresh direction cursor (+1) -> positive tick.
+    seedAndWarn(dnd, 1000, 3);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
+    TEST_ASSERT_EQUAL_HEX16(0x0040, DashLegacyWheel045Dnd::switchWord(out));
     dnd.recordTxResult(true, 1000);
-    TEST_ASSERT_EQUAL(DashLegacyWheel045State::WaitingIdleAfterPositive, dnd.diag.state);
-    TEST_ASSERT_FALSE(dnd.nextFrame(1050, positive));
-    dnd.onCan1Frame(kIdleD, 8, 1100);
-    TEST_ASSERT_EQUAL(DashLegacyWheel045State::NegativeTxReady, dnd.diag.state);
-    TEST_ASSERT_EQUAL_UINT8(1, dnd.diag.compensationPending);
     TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.positiveTx);
     TEST_ASSERT_EQUAL_UINT32(0, dnd.diag.negativeTx);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.directionFlips);
+    TEST_ASSERT_FALSE(dnd.diag.nextDirectionPositive);
+    feedNative(dnd, 0x0D, 1100);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::RetryWait, dnd.diag.state);
+
+    // Warning clears -> episode 1 done with a single frame.
     dnd.onDasStatus(6, 2, CAN_BUS_VEH, 1150);
     TEST_ASSERT_EQUAL(DashLegacyWheel045State::Idle, dnd.diag.state);
-    TEST_ASSERT_FALSE(dnd.nextFrame(1150, positive));
-    TEST_ASSERT_EQUAL_UINT8(0, dnd.diag.compensationPending);
     TEST_ASSERT_EQUAL_UINT32(150, dnd.diag.warningClearLatencyMs);
+
+    // Episode 2: cursor flipped -> negative tick.
+    seedAndWarn(dnd, 2000, 3);
+    TEST_ASSERT_TRUE(dnd.diag.directionPositive == false);
+    TEST_ASSERT_TRUE(dnd.nextFrame(2000, out));
+    TEST_ASSERT_EQUAL_HEX16(0x03C0, DashLegacyWheel045Dnd::switchWord(out));
+    dnd.recordTxResult(true, 2000);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.negativeTx);
+    TEST_ASSERT_EQUAL_UINT32(2, dnd.diag.directionFlips);
+    TEST_ASSERT_TRUE(dnd.diag.nextDirectionPositive);
+    feedNative(dnd, 0x0E, 2100);
+    dnd.onDasStatus(6, 2, CAN_BUS_VEH, 2150);
+
+    // Episode 3: back to positive — net drift across the three = +1.
+    seedAndWarn(dnd, 3000, 3);
+    TEST_ASSERT_TRUE(dnd.nextFrame(3000, out));
+    TEST_ASSERT_EQUAL_HEX16(0x0040, DashLegacyWheel045Dnd::switchWord(out));
 }
 
-void test_warning_clear_before_native_release_cancels_inverse_action()
+void test_warning_clear_before_confirm_sends_no_more_frames()
 {
     DashLegacyWheel045Dnd dnd;
     uint8_t out[8] = {};
@@ -93,57 +122,110 @@ void test_warning_clear_before_native_release_cancels_inverse_action()
     dnd.recordTxResult(true, 1000);
     dnd.onDasStatus(6, 2, CAN_BUS_VEH, 1025);
     TEST_ASSERT_EQUAL(DashLegacyWheel045State::Idle, dnd.diag.state);
-    dnd.onCan1Frame(kIdleD, 8, 1050);
+    feedNative(dnd, 0x0D, 1050);
     TEST_ASSERT_FALSE(dnd.nextFrame(1050, out));
     TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.positiveTx);
     TEST_ASSERT_EQUAL_UINT32(0, dnd.diag.negativeTx);
+    TEST_ASSERT_EQUAL_UINT32(0, dnd.diag.framesThisEpisode);
 }
 
-void test_failed_attempt_balances_before_retry_and_final_clear_stops()
+void test_persistent_warning_retries_same_direction_until_budget()
 {
     DashLegacyWheel045Dnd dnd;
     uint8_t out[8] = {};
-    uint8_t native[8];
     arm(dnd);
-    seedAndWarn(dnd);
+    seedAndWarn(dnd, 1000, 3);
+    uint32_t now = 1000;
+    uint8_t nativeCounter = 0x0C;
 
+    for (uint8_t frame = 0; frame < DashLegacyWheel045Dnd::kMaxFramesPerEpisode; ++frame)
+    {
+        TEST_ASSERT_TRUE(dnd.nextFrame(now, out));
+        // Every retry in one episode keeps the episode direction.
+        TEST_ASSERT_EQUAL_HEX16(0x0040, DashLegacyWheel045Dnd::switchWord(out));
+        dnd.recordTxResult(true, now);
+        nativeCounter = static_cast<uint8_t>((nativeCounter + 1) & 0x0F);
+        now += 100;
+        feedNative(dnd, nativeCounter, now);
+        if (frame < DashLegacyWheel045Dnd::kMaxFramesPerEpisode - 1)
+        {
+            TEST_ASSERT_EQUAL(DashLegacyWheel045State::RetryWait, dnd.diag.state);
+            now += DashLegacyWheel045Dnd::kRetryDelayMs;
+            nativeCounter = static_cast<uint8_t>((nativeCounter + 1) & 0x0F);
+            feedNative(dnd, nativeCounter, now);
+            dnd.onDasStatus(6, 3, CAN_BUS_VEH, now);
+        }
+    }
+    TEST_ASSERT_EQUAL_UINT32(3, dnd.diag.positiveTx);
+    TEST_ASSERT_EQUAL_UINT8(3, dnd.diag.framesThisEpisode);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::EpisodeLimit, dnd.diag.blocked);
+
+    // Airtight cap: even a fresh native while the warning persists must not
+    // produce a fourth frame from this episode.
+    now += 100;
+    nativeCounter = static_cast<uint8_t>((nativeCounter + 1) & 0x0F);
+    feedNative(dnd, nativeCounter, now);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, now);
+    TEST_ASSERT_FALSE(dnd.nextFrame(now, out));
+    TEST_ASSERT_EQUAL_UINT32(3, dnd.diag.positiveTx);
+}
+
+void test_tx_failure_keeps_direction_for_next_episode()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8] = {};
+    arm(dnd);
+
+    // Episode 1: +1 delivered, cursor flips to negative.
+    seedAndWarn(dnd, 1000, 3);
     TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
     dnd.recordTxResult(true, 1000);
-    dnd.onCan1Frame(kIdleD, 8, 1100);
-    TEST_ASSERT_EQUAL(DashLegacyWheel045State::NegativeTxReady, dnd.diag.state);
-    TEST_ASSERT_TRUE(dnd.nextFrame(1100, out));
-    TEST_ASSERT_EQUAL_HEX16(0x03C0, DashLegacyWheel045Dnd::switchWord(out));
-    TEST_ASSERT_EQUAL_HEX8(0xE0, out[6]);
-    dnd.recordTxResult(true, 1100);
+    feedNative(dnd, 0x0D, 1100);
+    dnd.onDasStatus(6, 2, CAN_BUS_VEH, 1150);
 
-    memcpy(native, kIdleE, 8);
-    dnd.onCan1Frame(native, 8, 1200);
-    TEST_ASSERT_EQUAL(DashLegacyWheel045State::RetryWait, dnd.diag.state);
-    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.balancedPairs);
-
-    native[6] = 0xF0;
-    native[7] = DashLegacyWheel045Dnd::crc8J1850(native, 7);
-    dnd.onCan1Frame(native, 8, 2000);
-    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 2000);
+    // Episode 2: negative direction, but the send fails -> no flip.
+    seedAndWarn(dnd, 2000, 3);
     TEST_ASSERT_TRUE(dnd.nextFrame(2000, out));
-    TEST_ASSERT_EQUAL_HEX16(0x0040, DashLegacyWheel045Dnd::switchWord(out));
-    dnd.recordTxResult(true, 2000);
-    TEST_ASSERT_EQUAL_UINT8(2, dnd.diag.positiveThisEpisode);
+    TEST_ASSERT_EQUAL_HEX16(0x03C0, DashLegacyWheel045Dnd::switchWord(out));
+    dnd.recordTxResult(false, 2000);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.directionFlips);
+    TEST_ASSERT_FALSE(dnd.diag.nextDirectionPositive);
+    feedNative(dnd, 0x0D, 2100);
+    dnd.onDasStatus(6, 2, CAN_BUS_VEH, 2150);
 
-    dnd.onDasStatus(6, 2, CAN_BUS_VEH, 2025);
-    TEST_ASSERT_EQUAL(DashLegacyWheel045State::Idle, dnd.diag.state);
-    native[6] = 0x00;
-    native[7] = DashLegacyWheel045Dnd::crc8J1850(native, 7);
-    dnd.onCan1Frame(native, 8, 2100);
-    TEST_ASSERT_FALSE(dnd.nextFrame(2100, out));
-    TEST_ASSERT_EQUAL_UINT32(2, dnd.diag.positiveTx);
-    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.negativeTx);
-    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.balancedPairs);
-    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.volumeNeutralEpisodes);
-    TEST_ASSERT_EQUAL_UINT8(0, dnd.diag.compensationPending);
+    // Episode 3: cursor untouched by the failure -> negative again.
+    seedAndWarn(dnd, 3000, 3);
+    TEST_ASSERT_TRUE(dnd.nextFrame(3000, out));
+    TEST_ASSERT_EQUAL_HEX16(0x03C0, DashLegacyWheel045Dnd::switchWord(out));
 }
 
-void test_physical_input_aborts_pending_volume_compensation()
+void test_undelivered_episode_keeps_direction_for_next_episode()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8] = {};
+    arm(dnd);
+
+    // Episode 1 delivers +1 (cursor flips to negative).
+    seedAndWarn(dnd, 1000, 3);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
+    dnd.recordTxResult(true, 1000);
+    feedNative(dnd, 0x0D, 1100);
+    dnd.onDasStatus(6, 2, CAN_BUS_VEH, 1150);
+
+    // Episode 2 rises and clears without a single frame going out
+    // (nothing polls nextFrame) -> cursor must not move.
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 2000);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.directionFlips);
+    dnd.onDasStatus(6, 2, CAN_BUS_VEH, 2100);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.directionFlips);
+
+    // Episode 3 still owes the negative tick.
+    seedAndWarn(dnd, 3000, 3);
+    TEST_ASSERT_TRUE(dnd.nextFrame(3000, out));
+    TEST_ASSERT_EQUAL_HEX16(0x03C0, DashLegacyWheel045Dnd::switchWord(out));
+}
+
+void test_physical_input_aborts_pending_frame()
 {
     DashLegacyWheel045Dnd dnd;
     uint8_t out[8] = {};
@@ -151,37 +233,38 @@ void test_physical_input_aborts_pending_volume_compensation()
     seedAndWarn(dnd);
     TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
     dnd.recordTxResult(true, 1000);
-    dnd.onCan1Frame(kIdleD, 8, 1100);
-    TEST_ASSERT_EQUAL(DashLegacyWheel045State::NegativeTxReady, dnd.diag.state);
 
     uint8_t physical[8];
     memcpy(physical, kIdleD, 8);
     DashLegacyWheel045Dnd::encodeTick(physical, 1);
     physical[7] = DashLegacyWheel045Dnd::crc8J1850(physical, 7);
-    dnd.onCan1Frame(physical, 8, 1150);
+    dnd.onCan1Frame(physical, 8, 1050);
     TEST_ASSERT_EQUAL(DashLegacyWheel045Block::PhysicalInput, dnd.diag.blocked);
-    TEST_ASSERT_EQUAL_UINT32(0, dnd.diag.negativeTx);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.physicalInputRx);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.positiveTx);
 }
 
-void test_stale_inverse_source_waits_without_sending_an_extra_positive()
+void test_confirmed_frame_cools_down_before_same_direction_retry()
 {
     DashLegacyWheel045Dnd dnd;
     uint8_t out[8] = {};
-    uint8_t native[8];
     arm(dnd);
     seedAndWarn(dnd);
     TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
     dnd.recordTxResult(true, 1000);
-    dnd.onCan1Frame(kIdleD, 8, 1100);
-    TEST_ASSERT_FALSE(dnd.nextFrame(1251, out));
-    TEST_ASSERT_EQUAL(DashLegacyWheel045State::NegativeTxReady, dnd.diag.state);
-    TEST_ASSERT_EQUAL_UINT8(1, dnd.diag.compensationPending);
+    // Waiting for the native confirm: no extra frames meanwhile.
+    TEST_ASSERT_FALSE(dnd.nextFrame(1151, out));
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::WaitingIdleConfirm, dnd.diag.state);
 
-    memcpy(native, kIdleE, 8);
-    native[7] = DashLegacyWheel045Dnd::crc8J1850(native, 7);
-    dnd.onCan1Frame(native, 8, 1300);
-    TEST_ASSERT_TRUE(dnd.nextFrame(1300, out));
-    TEST_ASSERT_EQUAL_HEX16(0x03C0, DashLegacyWheel045Dnd::switchWord(out));
+    // Confirm arrives -> retry cooldown (kRetryDelayMs) before the next
+    // same-direction frame.
+    feedNative(dnd, 0x0D, 1200);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::RetryWait, dnd.diag.state);
+    feedNative(dnd, 0x0E, 1900);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1900);
+    TEST_ASSERT_FALSE(dnd.nextFrame(1999, out));
+    TEST_ASSERT_TRUE(dnd.nextFrame(2000, out));
+    TEST_ASSERT_EQUAL_HEX16(0x0040, DashLegacyWheel045Dnd::switchWord(out));
 }
 
 void test_escalated_warning_is_actionable()
@@ -226,7 +309,7 @@ void test_own_echo_does_not_replace_native_source()
     dnd.recordTxResult(true, 1000);
     dnd.onCan1Frame(out, 8, 1005);
     TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.ownEchoRx);
-    TEST_ASSERT_EQUAL(DashLegacyWheel045State::WaitingIdleAfterPositive, dnd.diag.state);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::WaitingIdleConfirm, dnd.diag.state);
     TEST_ASSERT_EQUAL_UINT8(0x0C, dnd.diag.nativeCounter);
 }
 
@@ -238,7 +321,7 @@ void test_expected_duplicate_and_counter_conflict_are_distinct()
     seedAndWarn(ok);
     TEST_ASSERT_TRUE(ok.nextFrame(1000, out));
     ok.recordTxResult(true, 1000);
-    ok.onCan1Frame(kIdleD, 8, 1100);
+    feedNative(ok, 0x0D, 1100);
     TEST_ASSERT_EQUAL_UINT32(1, ok.diag.expectedCounterDuplicates);
     TEST_ASSERT_EQUAL_UINT32(0, ok.diag.counterConflicts);
 
@@ -256,23 +339,6 @@ void test_expected_duplicate_and_counter_conflict_are_distinct()
     TEST_ASSERT_EQUAL(DashLegacyWheel045Block::CounterConflict, bad.diag.blocked);
 }
 
-void test_physical_wheel_input_aborts_active_sequence()
-{
-    DashLegacyWheel045Dnd dnd;
-    uint8_t out[8] = {};
-    arm(dnd);
-    seedAndWarn(dnd);
-    TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
-    dnd.recordTxResult(true, 1000);
-    uint8_t physical[8];
-    memcpy(physical, kIdleD, 8);
-    DashLegacyWheel045Dnd::encodeTick(physical, 1);
-    physical[7] = DashLegacyWheel045Dnd::crc8J1850(physical, 7);
-    dnd.onCan1Frame(physical, 8, 1050);
-    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::PhysicalInput, dnd.diag.blocked);
-    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.physicalInputRx);
-}
-
 void test_two_tx_failures_auto_disarm()
 {
     DashLegacyWheel045Dnd dnd;
@@ -282,7 +348,7 @@ void test_two_tx_failures_auto_disarm()
     TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
     dnd.recordTxResult(false, 1000);
     TEST_ASSERT_FALSE(dnd.diag.autoDisarmed);
-    dnd.onCan1Frame(kIdleD, 8, 1100);
+    feedNative(dnd, 0x0D, 1100);
     dnd.onDasStatus(6, 2, CAN_BUS_VEH, 1150);
     dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1200);
     TEST_ASSERT_TRUE(dnd.nextFrame(1200, out));
@@ -302,7 +368,7 @@ void test_gateway_mirror_is_diagnostic_only()
     dnd.recordTxResult(true, 1000);
     dnd.observeGatewayMirror(out, 8, 1002);
     TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.gatewayMirrorRx);
-    TEST_ASSERT_EQUAL(DashLegacyWheel045State::WaitingIdleAfterPositive, dnd.diag.state);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::WaitingIdleConfirm, dnd.diag.state);
 }
 
 void test_release_timeout_aborts_without_free_running_send()
@@ -319,52 +385,29 @@ void test_release_timeout_aborts_without_free_running_send()
     TEST_ASSERT_EQUAL_UINT32(0, dnd.diag.negativeTx);
 }
 
-void test_warning_episode_is_limited_to_three_positive_attempts()
+void test_release_timeout_ceiling_protects_fsd_activation_window()
+{
+    // beta05 P0: raising the release timeout to 1200ms overlapped the FSD
+    // activation landing window and blocked activation with the AP gate on.
+    // 300ms is the hard ceiling carried over from beta02.
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(300, DashLegacyWheel045Dnd::kReleaseTimeoutMs);
+    // Drift bound: the per-episode frame budget stays at beta02's scale.
+    TEST_ASSERT_LESS_OR_EQUAL_UINT8(3, DashLegacyWheel045Dnd::kMaxFramesPerEpisode);
+}
+
+void test_reset_runtime_restarts_alternation_from_positive()
 {
     DashLegacyWheel045Dnd dnd;
     uint8_t out[8] = {};
     arm(dnd);
     seedAndWarn(dnd, 1000, 3);
-    uint32_t now = 1000;
-    uint8_t native[8];
-    memcpy(native, kIdleC, 8);
-    uint8_t nativeCounter = 0x0C;
-    for (uint8_t attempt = 0; attempt < 3; ++attempt)
-    {
-        TEST_ASSERT_TRUE(dnd.nextFrame(now, out));
-        TEST_ASSERT_EQUAL_HEX16(0x0040, DashLegacyWheel045Dnd::switchWord(out));
-        dnd.recordTxResult(true, now);
-        nativeCounter = static_cast<uint8_t>((nativeCounter + 1) & 0x0F);
-        native[6] = static_cast<uint8_t>(nativeCounter << 4);
-        native[7] = DashLegacyWheel045Dnd::crc8J1850(native, 7);
-        now += 100;
-        dnd.onCan1Frame(native, 8, now);
-        TEST_ASSERT_TRUE(dnd.nextFrame(now, out));
-        TEST_ASSERT_EQUAL_HEX16(0x03C0, DashLegacyWheel045Dnd::switchWord(out));
-        dnd.recordTxResult(true, now);
-        nativeCounter = static_cast<uint8_t>((nativeCounter + 1) & 0x0F);
-        native[6] = static_cast<uint8_t>(nativeCounter << 4);
-        native[7] = DashLegacyWheel045Dnd::crc8J1850(native, 7);
-        now += 100;
-        dnd.onCan1Frame(native, 8, now);
-        if (attempt < 2)
-        {
-            now += DashLegacyWheel045Dnd::kRetryDelayMs;
-            nativeCounter = static_cast<uint8_t>((nativeCounter + 1) & 0x0F);
-            native[6] = static_cast<uint8_t>(nativeCounter << 4);
-            native[7] = DashLegacyWheel045Dnd::crc8J1850(native, 7);
-            dnd.onCan1Frame(native, 8, now);
-            dnd.onDasStatus(6, 3, CAN_BUS_VEH, now);
-        }
-    }
-    TEST_ASSERT_EQUAL_UINT32(3, dnd.diag.positiveTx);
-    TEST_ASSERT_EQUAL_UINT32(3, dnd.diag.negativeTx);
-    TEST_ASSERT_EQUAL_UINT32(3, dnd.diag.balancedPairs);
-    TEST_ASSERT_EQUAL_UINT8(3, dnd.diag.pairsThisEpisode);
-    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::EpisodeLimit, dnd.diag.blocked);
-    now += DashLegacyWheel045Dnd::kRetryDelayMs;
-    dnd.onDasStatus(6, 3, CAN_BUS_VEH, now);
-    TEST_ASSERT_FALSE(dnd.nextFrame(now, out));
+    TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
+    dnd.recordTxResult(true, 1000);
+    TEST_ASSERT_FALSE(dnd.diag.nextDirectionPositive);
+    dnd.resetRuntime();
+    TEST_ASSERT_TRUE(dnd.diag.nextDirectionPositive);
+    TEST_ASSERT_EQUAL_UINT8(0, dnd.diag.framesThisEpisode);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::Idle, dnd.diag.state);
 }
 
 int main()
@@ -373,20 +416,22 @@ int main()
     RUN_TEST(test_crc_matches_vehicle_capture_vectors);
     RUN_TEST(test_positive_generation_preserves_unrelated_fields);
     RUN_TEST(test_counter_wrap_preserves_low_nibble);
-    RUN_TEST(test_single_positive_clear_cancels_pending_inverse);
-    RUN_TEST(test_warning_clear_before_native_release_cancels_inverse_action);
-    RUN_TEST(test_failed_attempt_balances_before_retry_and_final_clear_stops);
-    RUN_TEST(test_physical_input_aborts_pending_volume_compensation);
-    RUN_TEST(test_stale_inverse_source_waits_without_sending_an_extra_positive);
+    RUN_TEST(test_first_episode_sends_positive_second_alternates_negative);
+    RUN_TEST(test_warning_clear_before_confirm_sends_no_more_frames);
+    RUN_TEST(test_persistent_warning_retries_same_direction_until_budget);
+    RUN_TEST(test_tx_failure_keeps_direction_for_next_episode);
+    RUN_TEST(test_undelivered_episode_keeps_direction_for_next_episode);
+    RUN_TEST(test_physical_input_aborts_pending_frame);
+    RUN_TEST(test_confirmed_frame_cools_down_before_same_direction_retry);
     RUN_TEST(test_escalated_warning_is_actionable);
     RUN_TEST(test_warning_is_blocked_when_ap_inactive);
     RUN_TEST(test_stale_source_blocks_transmission);
     RUN_TEST(test_own_echo_does_not_replace_native_source);
     RUN_TEST(test_expected_duplicate_and_counter_conflict_are_distinct);
-    RUN_TEST(test_physical_wheel_input_aborts_active_sequence);
     RUN_TEST(test_two_tx_failures_auto_disarm);
     RUN_TEST(test_gateway_mirror_is_diagnostic_only);
     RUN_TEST(test_release_timeout_aborts_without_free_running_send);
-    RUN_TEST(test_warning_episode_is_limited_to_three_positive_attempts);
+    RUN_TEST(test_release_timeout_ceiling_protects_fsd_activation_window);
+    RUN_TEST(test_reset_runtime_restarts_alternation_from_positive);
     return UNITY_END();
 }

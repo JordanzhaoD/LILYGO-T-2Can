@@ -1,5 +1,22 @@
 # Changelog
 
+## [6.0.0-beta07] - 2026-10-30
+
+### Changed
+
+- **DND reworked to one frame per action with per-episode direction
+  alternation (Plan D).** Same-episode +1/-1 pairing is gone: every frame
+  in a warning episode pushes the same way, and the direction flips only
+  after an episode actually put a frame on the bus, so consecutive
+  delivered episodes cancel (+n then -n) and the drift is bounded by one
+  episode's frame budget instead of stranding half of a pair. All beta02
+  safety rails stay (echo window, counter-conflict abort, physical-input
+  abort, 300 ms release timeout, TX-failure auto-disarm); the 300 ms
+  ceiling and the 3-frame budget are pinned by native tests against a
+  repeat of the beta05 P0. WebUI diagnostics switch from pair bookkeeping
+  (pending compensation / balanced pairs) to direction bookkeeping
+  (episode direction, next direction, alternation count).
+
 ## [6.0.0-beta06] - 2026-10-29
 
 ### Changed

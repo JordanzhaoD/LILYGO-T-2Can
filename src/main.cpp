@@ -603,10 +603,11 @@ static void t2canStalkInjectTick()
 #endif
 }
 
-// Legacy Model X Scroll DND: 0x399 warning transition -> one CAN1 native 0x045
-// positive tick. An unsuccessful action is balanced while the warning remains;
-// warning clear cancels the inverse so the clearing action is consumed only by
-// the prompt.
+// Legacy Model X Scroll DND: 0x399 warning transition -> CAN1 native 0x045
+// scroll ticks, one frame per action. Every frame in a warning episode points
+// the same way and the direction alternates per delivered episode (Plan D,
+// beta07): the beta03..beta05 same-episode +1/-1 pairing always drifted
+// because the car merges same-direction pulses inside one window.
 // The CAN2 0x3C2 implementation remains compiled as a separate newer-vehicle
 // protocol, but it is never selected by this Legacy path.
 

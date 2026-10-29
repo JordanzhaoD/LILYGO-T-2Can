@@ -1342,8 +1342,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="diag-grid" style="margin:6px 0 4px">
     <div class="diag-item"><span class="lbl" data-i18n="告警状态">告警状态</span><span class="v-dim" id="wheel-hands-state">--</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="原生 0x045">原生 0x045</span><span class="v-dim" id="wheel-native-3c2" data-i18n="等待">等待</span></div>
-    <div class="diag-item"><span class="lbl" data-i18n="状态/正向/待补偿">状态/正向/待补偿</span><span class="v-dim" id="wheel-sequence-state">idle / 0 / 0</span></div>
-    <div class="diag-item"><span class="lbl" data-i18n="正向/补偿/中和完成">正向/补偿/中和完成</span><span class="v-dim" id="wheel-action-type">0 / 0 / 0</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="状态/本周期帧/下周期方向">状态/本周期帧/下周期方向</span><span class="v-dim" id="wheel-sequence-state">idle / 0 / +1</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="正向帧/反向帧/交替完成">正向帧/反向帧/交替完成</span><span class="v-dim" id="wheel-action-type">0 / 0 / 0</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="重复/冲突">重复/冲突</span><span class="v-dim" id="wheel-counter-state">0 / 0</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="回声/镜像">回声/镜像</span><span class="v-dim" id="wheel-echo-state">0 / 0</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="阻断原因">阻断原因</span><span class="v-dim" id="wheel-blocked-reason">disabled</span></div>
@@ -2075,13 +2075,13 @@ var I18N={
   '标准':'Standard','标准模式，均衡性能':'Standard mode, balanced','核心开关':'Core Switch',
   '检查中...':'Checking...','检查失败':'Check Failed','检查最新 prerelease，默认关闭':'Check latest prerelease, default off',
   '模块总开关':'Module Master','模块总开关关闭；启用前请确认车辆处于安全状态。':'Module master off; confirm the vehicle is safe before enabling.','模式':'Mode',
-  '次数':'Count','正向/补偿/中和完成':'Fwd/Comp/Neutral Done','正在注入':'Injecting',
+  '次数':'Count','正向帧/反向帧/交替完成':'Fwd/Rev/Alternations','正在注入':'Injecting',
   '正在连接 GitHub Release，请稍候。':'Contacting GitHub Release, please wait.','正常':'Normal','此页面为只读遥测展示，自动换挡功能将在后续版本中实装':'Read-only telemetry; auto shift ships in a later release',
   '武装':'Armed','武装期(5s)':'Arm Window (5s)','注入来源':'Injection Source',
   '注入门控（服务端强制）':'Injection Gate (server-enforced)','测试中...':'Testing...','测试未发送':'Test Not Sent',
   '测试连接':'Test Connection','添加插件':'Add Plugin','激活':'Active',
   '灯光爆闪':'Light Burst','爆闪 OFF':'Burst OFF','爆闪 ON':'Burst ON',
-  '爆闪开关':'Burst Switch','状态/正向/待补偿':'Status/Fwd/Pending','独立 ISA 提示音策略，不联动滚轮或摄像头配置':'Standalone ISA chime policy; wheel and camera configs unaffected',
+  '爆闪开关':'Burst Switch','状态/本周期帧/下周期方向':'Status/Frames/Next Dir','独立 ISA 提示音策略，不联动滚轮或摄像头配置':'Standalone ISA chime policy; wheel and camera configs unaffected',
   '独立切换 MAX/V14 实验 profile，不影响模块总开关。':'Standalone MAX/V14 experimental profile; does not touch the module master.','独立四档：关闭 / 手动 / 自动 / 自定义。0x2F8 只读限速，0x3EE mux0 输出。':'Four modes: Off / Manual / Auto / Custom. 0x2F8 read-only limit, 0x3EE mux0 output.','现场遥控':'Remote Control',
   '生效 / 等待许可':'Active / Awaiting Permit','生效 / 运行':'Active / Running','生效模式':'Active Mode',
   '生效状态':'Active Status','监控':'Monitor','监控 AP 状态':'Watch AP Status',
@@ -3892,8 +3892,8 @@ function renderLegacyTruth(d){
   set('wheel-hands-state',wd.dasStatusSeen?`AP${wd.apState??'--'} · ${T('手部')}${wd.handsState??'--'} · ${wd.warningActive?T('告警'):T('等待')} · ${wd.dasStatusDriver||'unknown'}`:T('等待 0x399'));
   set('wheel-native-3c2',wd.native045Seen?`${wd.native045AgeMs} ms · C${Number(wd.nativeCounter||0).toString(16).toUpperCase()}`:T('等待 CAN1 0x045'));
   set('wheel-base-frame',wd.baseFrameMode||T('等待中'));
-  set('wheel-sequence-state',`${wd.sequenceState||'idle'} / ${wd.positiveThisEpisode||0} / ${wd.compensationPending||0}`);
-  set('wheel-action-type',`${wd.positiveTx||0} / ${wd.negativeTx||0} / ${wd.volumeNeutralEpisodes||0}`);
+  set('wheel-sequence-state',`${wd.sequenceState||'idle'} / ${wd.actionsThisEpisode||0} / ${wd.nextDirectionPositive===false?'-1':'+1'}`);
+  set('wheel-action-type',`${wd.positiveTx||0} / ${wd.negativeTx||0} / ${wd.directionFlips||0}`);
   set('wheel-counter-state',`${wd.expectedCounterDuplicates||0} / ${wd.counterConflicts||0}`);
   set('wheel-echo-state',`${wd.ownEchoRx||0} / ${wd.gatewayMirrorRx||0}`);
   set('wheel-blocked-reason',wd.blockedReason||'--');
