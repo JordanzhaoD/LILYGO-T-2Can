@@ -1,5 +1,29 @@
 # Changelog
 
+## [6.0.0-beta06] - 2026-10-29
+
+### Changed
+
+- **DND (wheel 0x045 volume compensation) rolled back to the beta02
+  implementation.** Three field rounds (beta03 atomic pairing, beta04
+  20 ms gap, beta05 600 ms gap + 1200 ms release timeout) all failed to
+  stop the volume drift, and beta05 regressed P0: with the FSD gate
+  enabled, activation stopped landing. DND now behaves exactly as in
+  6.0.0-beta02 - the drift bug is known to be present and the rework
+  continues on this baseline.
+- **Flash burst retained.** The 0x292 STW_ACTN_RQ port, bus-off
+  hardening, and NVS persistence (keys bk..bn) shipped inside the same
+  beta03 chain but are re-ported unchanged: beta04 field evidence (FSD
+  activation healthy with the burst port present) clears them as the
+  P0 regression source.
+
+### Fixed
+
+- **P0 restored: FSD activation with the FSD gate enabled.** The beta05
+  DND session could hold the 0x045 channel for up to 1.2 s (release
+  timeout), overlapping the activation landing edge window; the rollback
+  removes that hold entirely.
+
 ## [6.0.0-beta02] - 2026-10-25
 
 ### Fixed
