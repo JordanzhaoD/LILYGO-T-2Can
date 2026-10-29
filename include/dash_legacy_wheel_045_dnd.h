@@ -11,8 +11,9 @@ enum class DashLegacyWheel045State : uint8_t
     Idle = 0,
     WaitingSource,
     PositiveTxPending,
-    BurstSecondDue, // f1 (+1) left the bus; its inverse tick is owed unconditionally
+    WaitingIdleAfterPositive,
     RetryWait,
+    NegativeTxReady,
     NegativeTxPending,
     WaitingIdleAfterNegative,
     Aborted,
@@ -52,12 +53,14 @@ static inline const char *dashLegacyWheel045StateName(DashLegacyWheel045State st
         return "waiting_source";
     case DashLegacyWheel045State::PositiveTxPending:
         return "positive_tx_pending";
-    case DashLegacyWheel045State::BurstSecondDue:
-        return "burst_second_due";
+    case DashLegacyWheel045State::WaitingIdleAfterPositive:
+        return "wait_native_idle";
     case DashLegacyWheel045State::RetryWait:
         return "retry_wait";
+    case DashLegacyWheel045State::NegativeTxReady:
+        return "compensation_ready";
     case DashLegacyWheel045State::NegativeTxPending:
-        return "inverse_tx_pending";
+        return "compensation_tx_pending";
     case DashLegacyWheel045State::WaitingIdleAfterNegative:
         return "wait_compensation_idle";
     case DashLegacyWheel045State::Aborted:
@@ -154,9 +157,6 @@ struct DashLegacyWheel045Diag
     uint32_t firstPositiveMs = 0;
     uint32_t warningClearLatencyMs = 0;
     uint32_t retryAtMs = 0;
-    uint32_t midBurstWarningClears = 0;
-    uint32_t carrierLockBlocks = 0;
-    uint32_t burstSplitAborts = 0;
     DashLegacyWheel045State state = DashLegacyWheel045State::Idle;
     DashLegacyWheel045Block blocked = DashLegacyWheel045Block::Disabled;
     DashTxEvidence tx{};
@@ -166,9 +166,7 @@ struct DashLegacyWheel045Dnd
 {
     static constexpr uint32_t kCanId = 0x045;
     static constexpr uint32_t kGatewayMirrorId = 0x292;
-    static constexpr uint32_t kNativeMaxAgeMs = 150; // gateway-mirror window only
-    static constexpr uint32_t kCarrierLockMs = 47;   // burst-start native freshness (jitter pump parity)
-    static constexpr uint32_t kBurstMinGapMs = 3;    // f1 -> f2 spacing inside one burst
+    static constexpr uint32_t kNativeMaxAgeMs = 150;
     static constexpr uint32_t kContextMaxAgeMs = 1000;
     static constexpr uint32_t kReleaseTimeoutMs = 300;
     static constexpr uint32_t kRetryDelayMs = 800;
@@ -273,26 +271,21 @@ struct DashLegacyWheel045Dnd
 
         if (!apActive_)
         {
-            if (diag.state == DashLegacyWheel045State::BurstSecondDue)
-                diag.burstSplitAborts++; // safety stop mid-burst: +1 possibly stranded
             abort(DashLegacyWheel045Block::ApInactive, isActionActive());
             episodeActive_ = false;
             pairsThisEpisode_ = 0;
             positiveThisEpisode_ = 0;
+            compensationRemaining_ = 0;
             syncEpisodeDiag();
             return;
         }
 
-        if (warningActive_ && !wasWarning && diag.state == DashLegacyWheel045State::BurstSecondDue)
-        {
-            // A re-onset while an inverse tick is owed keeps the burst; the
-            // bookkeeping below would cancel it and strand the +1.
-        }
-        else if (warningActive_ && !wasWarning)
+        if (warningActive_ && !wasWarning)
         {
             episodeActive_ = true;
             pairsThisEpisode_ = 0;
             positiveThisEpisode_ = 0;
+            compensationRemaining_ = 0;
             pendingTx_ = false;
             retryAtMs_ = nowMs;
             diag.warningEpisodes++;
@@ -305,21 +298,11 @@ struct DashLegacyWheel045Dnd
         {
             if (diag.firstPositiveMs != 0)
                 diag.warningClearLatencyMs = nowMs - diag.firstPositiveMs;
-            if (diag.state == DashLegacyWheel045State::BurstSecondDue)
-            {
-                // Atomic pair: the inverse tick is owed even though the
-                // warning cleared. Finish the burst, then stop.
-                diag.midBurstWarningClears++;
-                episodeActive_ = false;
-                syncEpisodeDiag();
-            }
-            else
-            {
-                episodeActive_ = false;
-                pendingTx_ = false;
-                syncEpisodeDiag();
-                setState(DashLegacyWheel045State::Idle, DashLegacyWheel045Block::WarningClear);
-            }
+            episodeActive_ = false;
+            pendingTx_ = false;
+            compensationRemaining_ = 0;
+            syncEpisodeDiag();
+            setState(DashLegacyWheel045State::Idle, DashLegacyWheel045Block::WarningClear);
         }
     }
 
@@ -329,30 +312,20 @@ struct DashLegacyWheel045Dnd
         if (dlc != 8 || !validFrame(data))
         {
             diag.nativeInvalid++;
-            if (isActionActive() && diag.state != DashLegacyWheel045State::BurstSecondDue)
+            if (isActionActive())
                 abort(DashLegacyWheel045Block::InvalidNative, true);
             return;
         }
-        for (uint8_t slot = 0; slot < txFingerprintCount_; ++slot)
+        if (hasTxFingerprint_ && nowMs - txFingerprintMs_ <= kOwnEchoWindowMs &&
+            memcmp(data, txFingerprint_, sizeof(txFingerprint_)) == 0)
         {
-            if (nowMs - txFingerprintMs_[slot] <= kOwnEchoWindowMs &&
-                memcmp(data, txFingerprint_[slot], sizeof(txFingerprint_[slot])) == 0)
-            {
-                diag.ownEchoRx++;
-                return;
-            }
+            diag.ownEchoRx++;
+            return;
         }
         if (!isIdleWheelFrame(data))
         {
             diag.physicalInputRx++;
-            if (diag.state == DashLegacyWheel045State::BurstSecondDue)
-            {
-                // The owed inverse tick still cancels OUR +1 whatever the
-                // driver is doing; finish the pair, then end the episode.
-                episodeActive_ = false;
-                syncEpisodeDiag();
-            }
-            else if (isActionActive())
+            if (isActionActive())
                 abort(DashLegacyWheel045Block::PhysicalInput, true);
             return;
         }
@@ -367,14 +340,35 @@ struct DashLegacyWheel045Dnd
         diag.nativeCounter = nativeCounter;
         diag.nativeIdleRx++;
 
-        if (diag.state == DashLegacyWheel045State::WaitingIdleAfterNegative)
+        if (diag.state == DashLegacyWheel045State::WaitingIdleAfterPositive)
         {
-            // The burst is volume-neutral by construction; counter anomalies
-            // are diagnostics, never an abort into a stranded state.
             if (!expectedCounter(nativeCounter))
+            {
                 diag.counterConflicts++;
-            else if (nativeCounter == lastTxCounter_)
+                abort(DashLegacyWheel045Block::CounterConflict, true);
+                return;
+            }
+            if (nativeCounter == lastTxCounter_)
                 diag.expectedCounterDuplicates++;
+            compensationRemaining_ = warningActive_ && episodeActive_ ? 1 : 0;
+            syncEpisodeDiag();
+            if (compensationRemaining_ > 0)
+                setState(DashLegacyWheel045State::NegativeTxReady, DashLegacyWheel045Block::None);
+            else
+                setState(DashLegacyWheel045State::Idle, DashLegacyWheel045Block::WarningClear);
+        }
+        else if (diag.state == DashLegacyWheel045State::WaitingIdleAfterNegative)
+        {
+            if (!expectedCounter(nativeCounter))
+            {
+                diag.counterConflicts++;
+                abort(DashLegacyWheel045Block::CounterConflict, true);
+                return;
+            }
+            if (nativeCounter == lastTxCounter_)
+                diag.expectedCounterDuplicates++;
+            if (compensationRemaining_ > 0)
+                compensationRemaining_--;
             pairsThisEpisode_++;
             diag.balancedPairs++;
             diag.volumeNeutralEpisodes++;
@@ -385,8 +379,6 @@ struct DashLegacyWheel045Dnd
                 diag.retryAtMs = retryAtMs_;
                 setState(DashLegacyWheel045State::RetryWait, DashLegacyWheel045Block::None);
             }
-            else if (warningActive_ && !episodeActive_)
-                setState(DashLegacyWheel045State::Idle, DashLegacyWheel045Block::PhysicalInput);
             else if (warningActive_ && pairsThisEpisode_ >= kMaxPairsPerEpisode)
                 setState(DashLegacyWheel045State::Idle, DashLegacyWheel045Block::EpisodeLimit);
             else
@@ -396,39 +388,9 @@ struct DashLegacyWheel045Dnd
 
     void observeGatewayMirror(const uint8_t data[8], uint8_t dlc, uint32_t nowMs)
     {
-        if (dlc != 8)
-            return;
-        for (uint8_t slot = 0; slot < txFingerprintCount_; ++slot)
-        {
-            if (nowMs - txFingerprintMs_[slot] <= kNativeMaxAgeMs &&
-                memcmp(data, txFingerprint_[slot], sizeof(txFingerprint_[slot])) == 0)
-            {
-                diag.gatewayMirrorRx++;
-                return;
-            }
-        }
-    }
-
-    // Encodes one tick frame from the freshest native template. f1 rides the
-    // carrier lock (native counter + 1); f2 stays consecutive with f1 even if
-    // the controller already beat us to the next slot (max of both + 1).
-    void emitTick(uint8_t outData[8], uint8_t signedNibble, bool lockToLastTx)
-    {
-        memcpy(outData, nativeData_, sizeof(nativeData_));
-        encodeTick(outData, signedNibble);
-        const uint8_t native = counter(nativeData_);
-        const uint8_t base = lockToLastTx && lastTxCounter_ > native ? lastTxCounter_ : native;
-        const uint8_t generatedCounter = static_cast<uint8_t>((base + 1) & 0x0F);
-        outData[6] = static_cast<uint8_t>((outData[6] & 0x0F) | (generatedCounter << 4));
-        outData[7] = crc8J1850(outData, 7);
-        memcpy(pendingData_, outData, sizeof(pendingData_));
-        pendingPositive_ = signedNibble == kPositiveNibble;
-        pendingTx_ = true;
-        diag.generatedCounter = generatedCounter;
-        diag.generatedCrc = outData[7];
-        setState(pendingPositive_ ? DashLegacyWheel045State::PositiveTxPending
-                                  : DashLegacyWheel045State::NegativeTxPending,
-                 DashLegacyWheel045Block::None);
+        if (dlc == 8 && hasTxFingerprint_ && nowMs - txFingerprintMs_ <= kNativeMaxAgeMs &&
+            memcmp(data, txFingerprint_, sizeof(txFingerprint_)) == 0)
+            diag.gatewayMirrorRx++;
     }
 
     bool nextFrame(uint32_t nowMs, uint8_t outData[8])
@@ -441,19 +403,6 @@ struct DashLegacyWheel045Dnd
             if (diag.configured && runtimeAllowed_ && !autoDisarmed_ && !contextFresh(nowMs))
                 setState(DashLegacyWheel045State::WaitingSource, DashLegacyWheel045Block::ContextStale);
             return false;
-        }
-        if (pendingTx_)
-            return false; // encoded frame still awaiting its bus result
-
-        // Burst continuation outranks every other consideration: a +1 that
-        // left the bus MUST be followed by its inverse tick, or volume
-        // drifts (the old "conditional balance" stranded one per episode).
-        if (diag.state == DashLegacyWheel045State::BurstSecondDue)
-        {
-            if (nowMs - lastTxMs_ < kBurstMinGapMs)
-                return false;
-            emitTick(outData, kNegativeNibble, true);
-            return true;
         }
 
         if (diag.state == DashLegacyWheel045State::RetryWait)
@@ -471,35 +420,41 @@ struct DashLegacyWheel045Dnd
             setState(DashLegacyWheel045State::WaitingSource, DashLegacyWheel045Block::NoNative);
         }
 
-        const bool capReached = pairsThisEpisode_ >= kMaxPairsPerEpisode;
-        const bool startBurst = warningActive_ && episodeActive_ && !capReached &&
-                                (diag.state == DashLegacyWheel045State::WaitingSource ||
-                                 diag.state == DashLegacyWheel045State::Idle);
-        if (!startBurst)
-        {
-            // Cap holds from Idle too — the old Idle refire was the
-            // unlimited-pair loop on persistent warnings.
-            if (warningActive_ && episodeActive_ && capReached &&
-                (diag.state == DashLegacyWheel045State::WaitingSource ||
-                 diag.state == DashLegacyWheel045State::Idle))
-                setState(DashLegacyWheel045State::Idle, DashLegacyWheel045Block::EpisodeLimit);
+        const bool startPositive = warningActive_ && episodeActive_ &&
+                                   (diag.state == DashLegacyWheel045State::WaitingSource ||
+                                    diag.state == DashLegacyWheel045State::Idle);
+        const bool startNegative = warningActive_ && episodeActive_ && compensationRemaining_ > 0 &&
+                                   diag.state == DashLegacyWheel045State::NegativeTxReady;
+        if (!startPositive && !startNegative)
             return false;
-        }
         if (!nativeSeen_)
         {
-            setState(DashLegacyWheel045State::WaitingSource, DashLegacyWheel045Block::NoNative);
+            setState(startNegative ? DashLegacyWheel045State::NegativeTxReady
+                                   : DashLegacyWheel045State::WaitingSource,
+                     DashLegacyWheel045Block::NoNative);
             return false;
         }
-        // Carrier lock (jitter-pump parity): only clone a template the
-        // controller just sent, so our counter slot is not already consumed.
-        if (nowMs - nativeMs_ > kCarrierLockMs)
+        if (!nativeFresh(nowMs))
         {
-            diag.carrierLockBlocks++;
-            setState(DashLegacyWheel045State::WaitingSource, DashLegacyWheel045Block::StaleNative);
+            setState(startNegative ? DashLegacyWheel045State::NegativeTxReady
+                                   : DashLegacyWheel045State::WaitingSource,
+                     DashLegacyWheel045Block::StaleNative);
             return false;
         }
 
-        emitTick(outData, kPositiveNibble, false);
+        memcpy(outData, nativeData_, sizeof(nativeData_));
+        encodeTick(outData, startNegative ? kNegativeNibble : kPositiveNibble);
+        const uint8_t generatedCounter = static_cast<uint8_t>((counter(nativeData_) + 1) & 0x0F);
+        outData[6] = static_cast<uint8_t>((outData[6] & 0x0F) | (generatedCounter << 4));
+        outData[7] = crc8J1850(outData, 7);
+        memcpy(pendingData_, outData, sizeof(pendingData_));
+        pendingPositive_ = startPositive;
+        pendingTx_ = true;
+        diag.generatedCounter = generatedCounter;
+        diag.generatedCrc = outData[7];
+        setState(startPositive ? DashLegacyWheel045State::PositiveTxPending
+                               : DashLegacyWheel045State::NegativeTxPending,
+                 DashLegacyWheel045Block::None);
         return true;
     }
 
@@ -514,26 +469,13 @@ struct DashLegacyWheel045Dnd
             if (consecutiveTxFailures_ < 0xFF)
                 consecutiveTxFailures_++;
             diag.consecutiveTxFailures = consecutiveTxFailures_;
+            abort(DashLegacyWheel045Block::TxFailed, true);
             if (consecutiveTxFailures_ >= kMaxConsecutiveTxFailures)
             {
-                if (diag.state == DashLegacyWheel045State::NegativeTxPending)
-                    diag.burstSplitAborts++; // +1 on the bus, inverse undeliverable
                 autoDisarmed_ = true;
                 diag.autoDisarmed = true;
-                abort(DashLegacyWheel045Block::AutoDisarmed, true);
                 setState(DashLegacyWheel045State::AutoDisarmed,
                          DashLegacyWheel045Block::AutoDisarmed);
-            }
-            else if (diag.state == DashLegacyWheel045State::NegativeTxPending)
-            {
-                // f2 never reached the bus: still owed, retry on a later tick.
-                setState(DashLegacyWheel045State::BurstSecondDue,
-                         DashLegacyWheel045Block::None);
-            }
-            else
-            {
-                // f1 failed: nothing reached the bus, nothing is owed.
-                abort(DashLegacyWheel045Block::TxFailed, true);
             }
             updateArmed();
             return;
@@ -541,12 +483,9 @@ struct DashLegacyWheel045Dnd
 
         consecutiveTxFailures_ = 0;
         diag.consecutiveTxFailures = 0;
-        const uint8_t slot = txFingerprintNext_ & 1;
-        memcpy(txFingerprint_[slot], pendingData_, sizeof(txFingerprint_[slot]));
-        txFingerprintMs_[slot] = nowMs;
-        if (txFingerprintCount_ < 2)
-            txFingerprintCount_++;
-        txFingerprintNext_++;
+        memcpy(txFingerprint_, pendingData_, sizeof(txFingerprint_));
+        txFingerprintMs_ = nowMs;
+        hasTxFingerprint_ = true;
         lastTxCounter_ = counter(pendingData_);
         lastTxMs_ = nowMs;
         if (pendingPositive_)
@@ -557,16 +496,14 @@ struct DashLegacyWheel045Dnd
             if (diag.firstPositiveMs == 0)
                 diag.firstPositiveMs = nowMs;
             syncEpisodeDiag();
-            setState(DashLegacyWheel045State::BurstSecondDue,
+            setState(DashLegacyWheel045State::WaitingIdleAfterPositive,
                      DashLegacyWheel045Block::None);
-            diag.compensationPending = 1; // inverse tick owed
         }
         else
         {
             diag.negativeTx++;
             setState(DashLegacyWheel045State::WaitingIdleAfterNegative,
                      DashLegacyWheel045Block::None);
-            diag.compensationPending = 0;
         }
     }
 
@@ -578,6 +515,7 @@ struct DashLegacyWheel045Dnd
         apActive_ = false;
         pairsThisEpisode_ = 0;
         positiveThisEpisode_ = 0;
+        compensationRemaining_ = 0;
         retryAtMs_ = 0;
         autoDisarmed_ = false;
         consecutiveTxFailures_ = 0;
@@ -595,18 +533,17 @@ struct DashLegacyWheel045Dnd
 private:
     uint8_t nativeData_[8] = {};
     uint8_t pendingData_[8] = {};
-    uint8_t txFingerprint_[2][8] = {};
+    uint8_t txFingerprint_[8] = {};
     uint32_t nativeMs_ = 0;
     uint32_t contextMs_ = 0;
     uint32_t lastTxMs_ = 0;
-    uint32_t txFingerprintMs_[2] = {0, 0};
+    uint32_t txFingerprintMs_ = 0;
     uint32_t retryAtMs_ = 0;
     uint8_t lastTxCounter_ = 0;
     uint8_t pairsThisEpisode_ = 0;
     uint8_t positiveThisEpisode_ = 0;
+    uint8_t compensationRemaining_ = 0;
     uint8_t consecutiveTxFailures_ = 0;
-    uint8_t txFingerprintCount_ = 0;
-    uint8_t txFingerprintNext_ = 0;
     bool nativeSeen_ = false;
     bool runtimeAllowed_ = false;
     bool apActive_ = false;
@@ -615,6 +552,7 @@ private:
     bool autoDisarmed_ = false;
     bool pendingTx_ = false;
     bool pendingPositive_ = true;
+    bool hasTxFingerprint_ = false;
     DashLegacyWheel045Block runtimeBlock_ = DashLegacyWheel045Block::Disabled;
 
     static bool isWarningState(uint8_t handsState)
@@ -625,9 +563,7 @@ private:
 
     bool nativeFresh(uint32_t nowMs) const
     {
-        // Carrier lock: only a just-sent native frame is safe to clone —
-        // its next counter slot is very likely still free (dedup race).
-        return nativeSeen_ && nowMs - nativeMs_ <= kCarrierLockMs;
+        return nativeSeen_ && nowMs - nativeMs_ <= kNativeMaxAgeMs;
     }
 
     bool contextFresh(uint32_t nowMs) const
@@ -644,22 +580,17 @@ private:
     bool isActionActive() const
     {
         return diag.state == DashLegacyWheel045State::PositiveTxPending ||
-               diag.state == DashLegacyWheel045State::BurstSecondDue ||
+               diag.state == DashLegacyWheel045State::WaitingIdleAfterPositive ||
+               diag.state == DashLegacyWheel045State::NegativeTxReady ||
                diag.state == DashLegacyWheel045State::NegativeTxPending ||
                diag.state == DashLegacyWheel045State::WaitingIdleAfterNegative;
     }
 
     void serviceTimeouts(uint32_t nowMs)
     {
-        if (diag.state == DashLegacyWheel045State::BurstSecondDue &&
+        if ((diag.state == DashLegacyWheel045State::WaitingIdleAfterPositive ||
+             diag.state == DashLegacyWheel045State::WaitingIdleAfterNegative) &&
             lastTxMs_ != 0 && nowMs - lastTxMs_ > kReleaseTimeoutMs)
-        {
-            // The inverse tick could not ship: the +1 may be stranded.
-            diag.burstSplitAborts++;
-            abort(DashLegacyWheel045Block::ReleaseTimeout, true);
-        }
-        else if (diag.state == DashLegacyWheel045State::WaitingIdleAfterNegative &&
-                 lastTxMs_ != 0 && nowMs - lastTxMs_ > kReleaseTimeoutMs)
             abort(DashLegacyWheel045Block::ReleaseTimeout, true);
     }
 
@@ -683,6 +614,7 @@ private:
     {
         diag.pairsThisEpisode = pairsThisEpisode_;
         diag.positiveThisEpisode = positiveThisEpisode_;
+        diag.compensationPending = compensationRemaining_;
         diag.retryAtMs = retryAtMs_;
     }
 
@@ -695,7 +627,7 @@ private:
     void abort(DashLegacyWheel045Block reason, bool countAbort)
     {
         pendingTx_ = false;
-        diag.compensationPending = 0;
+        compensationRemaining_ = 0;
         syncEpisodeDiag();
         if (countAbort)
             diag.abortCount++;
