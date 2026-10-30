@@ -22,6 +22,17 @@
 #endif
 #endif
 
+#ifdef DRIVER_P4_3CAN
+// Atlas-P4-3CAN port: same shape as the dual block above — DRIVER_TWAI stays
+// the primary path on CanA (X179 13/14); CanB (X179 9/10) becomes a second
+// native TWAI controller instead of the MCP2515. That secondary block lands
+// with the driver header; only the pre-app.h defines are needed here.
+#define DRIVER_TWAI
+#ifndef T2CAN_SECONDARY_BUS
+#define T2CAN_SECONDARY_BUS CAN_BUS_PARTY
+#endif
+#endif
+
 #include "app.h"
 #include "dash_tx_evidence.h"
 #include "dash_legacy_stalk_burst.h"
