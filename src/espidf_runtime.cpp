@@ -1,4 +1,9 @@
 #include "platform/espidf_runtime.h"
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+// P4-only WiFi companion bring-up (see WiFiClass::ensure)
+#include <esp_hosted.h>
+#include <esp_hosted_transport_config.h>
+#endif
 
 #ifdef ESP_PLATFORM
 
@@ -583,6 +588,37 @@ void WiFiClass::ensure()
     if (initialized_)
         return;
     configureWifiLogLevels();
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    // The P4 has no on-chip radio: esp_wifi_remote forwards every esp_wifi
+    // call to the C6 companion over esp_hosted, but only after the app has
+    // brought the transport up. This mirrors pioarduino's Arduino core
+    // (esp32-hal-hosted.c hostedInit): explicit SDIO pin config, then
+    // init, then connect_to_slave() — which hardware-resets the C6
+    // (GPIO54) and runs the handshake retry loop. init() alone leaves the
+    // C6 half-synced (bench 2026-10-31: AP flapped, DHCP replies never
+    // reached the air — large transfers are exactly what the handshake
+    // fixes). On failure: deinit and carry on with wifi off; the hosted
+    // internals use ESP_ERROR_CHECK in places, but our failure paths must
+    // not panic-reboot the dashboard.
+    struct esp_hosted_sdio_config hostedConf = INIT_DEFAULT_HOST_SDIO_CONFIG();
+    hostedConf.pin_clk.pin = 18;
+    hostedConf.pin_cmd.pin = 19;
+    hostedConf.pin_d0.pin = 14;
+    hostedConf.pin_d1.pin = 15;
+    hostedConf.pin_d2.pin = 16;
+    hostedConf.pin_d3.pin = 17;
+    hostedConf.pin_reset.pin = 54;
+    int hostedErr = esp_hosted_sdio_set_config(&hostedConf);
+    if (hostedErr == ESP_OK)
+        hostedErr = esp_hosted_init();
+    if (hostedErr == ESP_OK)
+    {
+        hostedErr = esp_hosted_connect_to_slave();
+        if (hostedErr != ESP_OK)
+            esp_hosted_deinit();
+    }
+    Serial.printf("[WIFI] esp_hosted bring-up err=%d\n", hostedErr);
+#endif
     esp_netif_init();
     esp_event_loop_create_default();
     apNetif_ = esp_netif_create_default_wifi_ap();
