@@ -1131,6 +1131,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **P4-3CAN board: ESP32-P4 with dual native TWAI.** The firmware now
+  builds for the Atlas-P4-3CAN board (Waveshare ESP32-P4 WiFi6 with the
+  3x SN65HVD230 CAN transceiver board): CanA (X197 13/14) on TWAI0 as
+  the primary vehicle bus, and CanB (X197 9/10) on a second native TWAI
+  controller where the T-2CAN board uses its MCP2515 over SPI. Feature
+  and UI parity with 6.0.0-beta07 - the board name is the only visible
+  difference. CanC (TWAI2) stays unused in this first cut.
+
 ## [4.3.0-beta.8] - 2026-07-25
 
 ### Fixed
