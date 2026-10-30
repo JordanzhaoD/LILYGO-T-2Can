@@ -162,7 +162,8 @@ static void t2canSetupSecondary()
     appDriverSecondary = std::make_unique<P4TwaiSecondaryDriver>();
     if (!appDriverSecondary->init())
     {
-        Serial.println("CAN B (TWAI1) init failed");
+        Serial.printf("CAN B (TWAI1) init failed (err=0x%x)\n",
+                      static_cast<int>(appDriverSecondary->lastError()));
         return;
     }
     appDriverSecondary->setReceiveAllMode();

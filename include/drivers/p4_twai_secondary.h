@@ -44,7 +44,13 @@ public:
             return false;
 
         // controller_id = 1: the primary driver owns controller 0. IDF 6
-        // dropped the TWAI_NUM_x enum — controller_id is a plain index.
+        // dropped the TWAI_NUM_x enum — controller_id is a plain index —
+        // BUT only the _v2 handle API honors it: legacy twai_driver_install()
+        // always installs controller 0 regardless (g_twai_objs[0]) and every
+        // legacy no-handle call operates on that same controller. Using them
+        // here returned ESP_ERR_INVALID_STATE (controller 0 already owned by
+        // the primary) — and had it succeeded, reads/writes would have hit
+        // the MAIN bus. Every call below is the _v2 handle form.
         g_config_ = TWAI_GENERAL_CONFIG_DEFAULT_V2(
             kSecondaryControllerId, txPin_, rxPin_, TWAI_MODE_NORMAL);
         g_config_.rx_queue_len = TWAI_RX_QUEUE_LEN;
@@ -83,7 +89,7 @@ public:
             }
 
             twai_message_t msg;
-            if (twai_receive(&msg, 0) != ESP_OK)
+            if (twai_receive_v2(handle_, &msg, 0) != ESP_OK)
             {
                 if (isBusOffLocked())
                     recoverWithCooldownLocked();
@@ -121,7 +127,7 @@ public:
         // Short timeout (2ms): modified frames should not be dropped, but
         // long blocks (10ms) risk overflowing the RX queue (same reasoning
         // as the primary driver).
-        bool ok = twai_transmit(&msg, pdMS_TO_TICKS(2)) == ESP_OK;
+        bool ok = twai_transmit_v2(handle_, &msg, pdMS_TO_TICKS(2)) == ESP_OK;
         if (ok)
             consecutiveTxFailures_ = 0;
         else
@@ -155,7 +161,7 @@ private:
         if (!driverInstalled_)
             return false;
         twai_status_info_t status;
-        if (twai_get_status_info(&status) != ESP_OK)
+        if (twai_get_status_info_v2(handle_, &status) != ESP_OK)
             return false;
         return status.state == TWAI_STATE_BUS_OFF;
     }
@@ -198,15 +204,21 @@ private:
 
     bool installAndStartLocked()
     {
-        if (twai_driver_install(&g_config_, &t_config_, &f_config_) != ESP_OK)
+        esp_err_t err = twai_driver_install_v2(&g_config_, &t_config_, &f_config_, &handle_);
+        lastErr_ = err;
+        if (err != ESP_OK)
         {
+            handle_ = nullptr;
             driverInstalled_ = false;
             return false;
         }
         driverInstalled_ = true;
-        if (twai_start() != ESP_OK)
+        err = twai_start_v2(handle_);
+        lastErr_ = err;
+        if (err != ESP_OK)
         {
-            twai_driver_uninstall();
+            twai_driver_uninstall_v2(handle_);
+            handle_ = nullptr;
             driverInstalled_ = false;
             return false;
         }
@@ -217,14 +229,24 @@ private:
     {
         if (!driverInstalled_)
             return;
-        twai_stop();
-        twai_driver_uninstall();
+        twai_stop_v2(handle_);
+        twai_driver_uninstall_v2(handle_);
+        handle_ = nullptr;
         driverInstalled_ = false;
         driverOK_ = false;
     }
 
     gpio_num_t txPin_;
     gpio_num_t rxPin_;
+
+public:
+    // Last esp_err from install/start — printed by the caller on init failure
+    // so field logs carry the reason, not a bare "init failed".
+    esp_err_t lastError() const { return lastErr_; }
+
+private:
+    esp_err_t lastErr_ = ESP_OK;
+    twai_handle_t handle_ = nullptr;
     twai_general_config_t g_config_;
     twai_timing_config_t t_config_;
     twai_filter_config_t f_config_;
