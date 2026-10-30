@@ -40,6 +40,9 @@
 #ifdef DRIVER_T2CAN_DUAL
 #include "drivers/esp32_mcp2515_driver.h"
 #endif
+#ifdef DRIVER_P4_3CAN
+#include "drivers/p4_twai_secondary.h"
+#endif
 
 #ifdef DRIVER_MCP2515
 #include <SPI.h>
@@ -104,8 +107,15 @@ static bool appTwaiGpioValid(gpio_num_t pin, bool tx)
 }
 #endif
 
-#ifdef DRIVER_T2CAN_DUAL
-static std::unique_ptr<ESP32_MCP2515Driver> appDriverSecondary;
+#if defined(DRIVER_T2CAN_DUAL) || defined(DRIVER_P4_3CAN)
+// Secondary bus (CanB, X197 9/10): MCP2515 over SPI on the T-2CAN board,
+// a second native TWAI controller (TWAI_NUM_1, GPIO 4/5) on the P4 board.
+#if defined(DRIVER_T2CAN_DUAL)
+using T2canSecondaryDriver = ESP32_MCP2515Driver;
+#else
+using T2canSecondaryDriver = P4TwaiSecondaryDriver;
+#endif
+static std::unique_ptr<T2canSecondaryDriver> appDriverSecondary;
 static volatile uint32_t t2canSecondaryRxCount = 0;
 static volatile uint32_t t2canSecondaryTxCount = 0;
 static volatile uint32_t t2canSecondaryTxErrCount = 0;
@@ -128,6 +138,7 @@ static bool t2canTxSecondaryCounted(const CanFrame &f)
 
 static void t2canSetupSecondary()
 {
+#if defined(DRIVER_T2CAN_DUAL)
 #ifdef MCP2515_RST_PIN
     gpio_set_direction((gpio_num_t)MCP2515_RST_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)MCP2515_RST_PIN, 1);
@@ -145,6 +156,18 @@ static void t2canSetupSecondary()
     }
     appDriverSecondary->setReceiveAllMode();
     Serial.println("CAN B (MCP2515) ready @ 500k");
+#else
+    // P4-3CAN: CanB is the second native TWAI controller. Accept-all is
+    // baked into its init, so the MCP mode-reapply call has no work here.
+    appDriverSecondary = std::make_unique<P4TwaiSecondaryDriver>();
+    if (!appDriverSecondary->init())
+    {
+        Serial.println("CAN B (TWAI1) init failed");
+        return;
+    }
+    appDriverSecondary->setReceiveAllMode();
+    Serial.println("CAN B (TWAI1) ready @ 500k");
+#endif
 }
 
 // Transmit direct secondary-bus commands. Handler-driven Legacy NAG and smart
@@ -526,7 +549,12 @@ static void t2canBus2HealthTick()
     if (now - last < 500)
         return;
     last = now;
+#ifdef DRIVER_T2CAN_DUAL
     t2canSecondaryEflg = appDriverSecondary->mcp().getErrorFlags();
+#else
+    // P4-3CAN: TWAI has no EFLG register to poll; 0 = no flags. Bus health
+    // still surfaces via the recovery / consecutive-TX-failure counters.
+#endif
 }
 
 static void t2canStalkInjectTickLegacy()
@@ -765,10 +793,10 @@ static void app_main_setup()
     mcpDashboardSetup(appHandler.get(), appDriver.get());
 #endif
 #endif
-#ifdef DRIVER_T2CAN_DUAL
+#if defined(DRIVER_T2CAN_DUAL) || defined(DRIVER_P4_3CAN)
     t2canSetupSecondary();
-    // Wire the MCP2515 TX callback so the dashboard counts injected frames
-    // sent on the secondary (Party CAN) bus.
+    // Wire the secondary-bus TX callback so the dashboard counts injected
+    // frames sent on the secondary (Party CAN) bus.
     if (appDriverSecondary && dashDriver)
         appDriverSecondary->onSendFrame = dashDriver->onSendFrame;
 #endif
@@ -824,7 +852,7 @@ static void app_can_task(void *)
         if (dashOtaGuardTick((uint32_t)millis()))
             dashLog(String("[OTA] guard stale-clear after stream stall (staleClears=") +
                     dashOtaGuardStaleClears() + ")");
-#ifdef DRIVER_T2CAN_DUAL
+#if defined(DRIVER_T2CAN_DUAL) || defined(DRIVER_P4_3CAN)
         t2canDrainSecondary();
         t2canServiceModeTick();
         t2canBus2HealthTick();
