@@ -10,9 +10,7 @@
   the primary vehicle bus, and CanB (X197 9/10) on a second native TWAI
   controller where the T-2CAN board uses its MCP2515 over SPI. Feature
   and UI parity with 6.0.0-beta07 - the board name is the only visible
-  difference. CanC (TWAI2) stays unused in this first cut. Console
-  output goes to the board's USB-Serial-JTAG port, matching how the
-  T-2CAN board is monitored over its USB-C cable.
+  difference. CanC (TWAI2) stays unused in this first cut.
 
 ## [6.0.0-beta07] - 2026-10-30
 
