@@ -1,2 +1,21 @@
+## espressif/led_strip powers the status-LED feature (include/app.h) on
+## every board. The two P4-only entries below are the Atlas-P4-3CAN
+## port: ESP32-P4 has no on-chip WiFi radio, and the Waveshare P4 WiFi6
+## board carries an ESP32-C6 companion chip on SDIO (CLK=18 CMD=19
+## D0..D3=14..17, RESET=54). Versions mirror the pioarduino 3.3.12
+## esp32p4 stack (esp_hosted 2.12.13 + esp_wifi_remote 1.6.4) — the
+## pairing verified against this board's C6 firmware by the
+## Atlas-3CAN-P4 builds (AP + STA both worked). esp_wifi_remote provides
+## the esp_wifi.h-compatible API the runtime shim already speaks. The
+## target rules keep every other (xtensa) env untouched: no fetch, no
+## build, golden parity intact.
 dependencies:
   espressif/led_strip: "^3.0.1"
+  espressif/esp_hosted:
+    version: "2.12.13"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_wifi_remote:
+    version: "1.6.4"
+    rules:
+      - if: "target == esp32p4"

@@ -242,6 +242,7 @@ pyrightconfig.json
 .tests
 .tmpcoverage_build/
 platformio_profile.h
+platformio_profile_p4.h
 sdkconfig.*
 !sdkconfig.defaults
 .pi-lens

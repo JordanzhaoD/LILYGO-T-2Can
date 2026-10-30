@@ -1,0 +1,24 @@
+{
+  "build": {
+    "mcu": "esp32p4",
+    "f_cpu": "400000000L",
+    "f_flash": "80000000L",
+    "flash_mode": "dio",
+    "bootloader_addr": "0x2000"
+  },
+  "name": "Atlas-P4-3CAN 32MB",
+  "frameworks": ["espidf"],
+  "upload": {
+    "flash_size": "32MB",
+    "offset_address": "0x20000",
+    "maximum_ram_size": 524288,
+    "maximum_size": 33554432,
+    "require_upload_port": true,
+    "speed": 1500000
+  },
+  "debug": {
+    "openocd_target": "esp32p4.cfg"
+  },
+  "url": "https://github.com/JordanzhaoD/my-vibe-project",
+  "vendor": "Atlas"
+}
