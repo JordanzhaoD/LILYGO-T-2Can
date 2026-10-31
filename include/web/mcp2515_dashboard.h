@@ -49,6 +49,9 @@
 #include "dash_legacy_wheel_045_dnd.h"
 #include "dash_jitter_procedure.h"
 #include "dash_tx_evidence.h"
+// Recorder v2 (P4-only blackbox ring): self-guarded header, compiles away
+// on every other board.
+#include "web/dash_recorder_v2.h"
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
 #if defined(DASH_PLUGIN_ENGINE)
@@ -1109,6 +1112,9 @@ static void mcpDashSniffCan3(const CanFrame &f)
     tagged.bus = CAN_BUS_PT;
     sniffPush(tagged);
     dashRecordCanFrame(tagged, 'R');
+#if defined(DASH_RECORDER_V2)
+    dashRecV2Submit(tagged, kRecV2BusC, 'R');
+#endif
 }
 
 #define LOG_CAP 80
@@ -1179,6 +1185,9 @@ static void mcpDashOnFrame(const CanFrame &f)
         followDist = (f.data[5] & 0xE0) >> 5;
     dashRecordApRestoreFrame(f, now);
     dashRecordCanFrame(f, 'R');
+#if defined(DASH_RECORDER_V2)
+    dashRecV2Submit(f, (f.bus & CAN_BUS_PARTY) ? kRecV2BusB : kRecV2BusA, 'R');
+#endif
     if (f.id == DashLegacyWheel045Dnd::kCanId && f.dlc >= 8 &&
         (f.bus == CAN_BUS_CH || f.bus == CAN_BUS_VEH))
         dashLegacyWheel045DndCtrl.onCan1Frame(f.data, f.dlc, static_cast<uint32_t>(now));
@@ -1260,6 +1269,13 @@ static void mcpDashOnTxFrame(const CanFrame &frame, bool ok)
     }
     if (ok)
         dashRecordCanFrame(frame, 'T');
+#if defined(DASH_RECORDER_V2)
+    // Single TX capture point: this callback fires once per transmitted
+    // frame (driver.send → onSendFrame). Hooking dashRecordCanFrame's other
+    // call sites would double-count TX (AP auto-restore also lands here).
+    dashRecV2Submit(frame, (frame.bus & CAN_BUS_PARTY) ? kRecV2BusB : kRecV2BusA,
+                    ok ? 'T' : 'E');
+#endif
 
     dashWriteProbe.active = true;
     dashWriteProbe.hasRx = false;
@@ -8110,6 +8126,9 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 
     if (!SPIFFS.begin(true))
         dashLog("[WARN] SPIFFS mount failed");
+#if defined(DASH_RECORDER_V2)
+    dashRecV2Init();
+#endif
 
     dashLoadPrefs();
     dashGatewayLoad();
