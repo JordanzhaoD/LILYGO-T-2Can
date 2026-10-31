@@ -372,5 +372,121 @@ class DashRecorderV2UiContractTests(unittest.TestCase):
             "the poll fetches /ring_status (arming countdown needs it)")
 
 
-if __name__ == "__main__":
-    unittest.main()
+class DashRecorderV2DiagContractTests(unittest.TestCase):
+    """Task 6: serial DIAG bench commands (board may be off-LAN)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dash = DASH.read_text(encoding="utf-8")
+
+    def test_rv2_status_command_registered(self) -> None:
+        # The bench drives the lock chain over serial when the board is
+        # unreachable on LAN: rv2_status prints the live status JSON.
+        self.assertIn('"rv2_status"', self.dash,
+                      "help lists rv2_status")
+        self.assertIn('strcmp(start, "rv2_status")', self.dash,
+                      "dispatcher routes rv2_status")
+        route = self.dash.index('strcmp(start, "rv2_status")')
+        self.assertIn(
+            "dashRecV2StatusJson", self.dash[route:route + 200],
+            "rv2_status prints the recorder v2 status JSON")
+
+    def test_rv2_lock_command_parses_three_args(self) -> None:
+        # rv2_lock <pre_s> <post_s> <bus_mask> arms the lock from serial.
+        self.assertIn('strncmp(start, "rv2_lock", 8)', self.dash,
+                      "dispatcher prefix-matches rv2_lock with args")
+        self.assertIn("%u %u %u", self.dash,
+                      "three unsigned args: pre_s post_s bus_mask")
+        lock_at = self.dash.index('strncmp(start, "rv2_lock", 8)')
+        self.assertIn(
+            "dashRecV2LockRequest",
+            self.dash[lock_at:lock_at + 700],
+            "serial lock routes into the same request path as HTTP")
+
+    def test_diag_rv2_commands_macro_gated(self) -> None:
+        # Help + dispatch branches sit inside the DASH_RECORDER_V2 guard.
+        gate = self.dash.count("#if defined(DASH_RECORDER_V2)")
+        self.assertGreaterEqual(
+            gate, 6,
+            "hooks + init + handlers + serial help + serial dispatch gated")
+
+
+class DashRecorderV2BenchBugTests(unittest.TestCase):
+    """Task 6 bench finding: /sessions listed [] with seq=1 on flash.
+
+    Root cause: the espidf File shim's openNextFile() fed full child paths
+    into name_, so name() returned "/sess_1.meta.json" — Arduino semantics
+    are basename. The scanner's strncmp(nm, "sess_", 5) missed the slash.
+    Fixed at both layers: shim stores basename; scanner tolerates slashes.
+    """
+
+    RUNTIME_CPP = ROOT / "src" / "espidf_runtime.cpp"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.cpp = cls.RUNTIME_CPP.read_text(encoding="utf-8")
+        cls.rec2 = REC2.read_text(encoding="utf-8")
+
+    def test_shim_file_name_is_basename(self) -> None:
+        ctor_at = self.cpp.index("File::File(const std::string &path")
+        body = self.cpp[ctor_at:ctor_at + 500]
+        self.assertIn(
+            "rfind('/')", body,
+            "File ctor stores the basename (Arduino name() semantics), "
+            "not the full path with leading slash")
+
+    def test_scanner_tolerates_leading_slash(self) -> None:
+        scan_at = self.rec2.index("recV2ScanSessions")
+        body = self.rec2[scan_at:scan_at + 900]
+        self.assertIn(
+            "while (*nm == '/')", body,
+            "scanner skips leading slashes before the sess_ prefix match")
+
+
+class DashRecorderV2UiBenchBugTests(unittest.TestCase):
+    """Task 6 bench finding: session rows vanished after render.
+
+    Root cause: the #rv2-sessions container carried data-i18n="暂无会话",
+    so every applyI18n() pass reset its textContent — wiping the freshly
+    rendered rows back to the empty-state label. Also: the list never
+    reloaded when a lock finished flushing (idle edge).
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.src = (ROOT / "include" / "web" /
+                   "mcp2515_dashboard_ui.src.h").read_text(encoding="utf-8")
+
+    def test_sessions_container_has_no_i18n_attribute(self) -> None:
+        # Dynamic labels (#rec-v2-lock countdown, #rv2-state machine text,
+        # #rv2-sessions rows) are written through T() at set time; a
+        # data-i18n attribute on them would let applyI18n() reset the
+        # node to its static default on every pass.
+        for el_id in ("rv2-sessions", "rec-v2-lock", "rv2-state"):
+            at = self.src.index(f'id="{el_id}"')
+            tag_start = self.src.rfind("<", 0, at)
+            tag = self.src[tag_start:self.src.index(">", at) + 1]
+            self.assertNotIn(
+                "data-i18n", tag,
+                f"#{el_id} is a dynamic label — applyI18n() would clobber it")
+
+    def test_flush_completion_edge_reloads_list(self) -> None:
+        poll_at = self.src.index("function rv2Poll")
+        body = self.src[poll_at:poll_at + 1200]
+        self.assertIn(
+            "lastState", body,
+            "rv2Poll tracks the previous lock state")
+        self.assertRegex(
+            body, r"lastState[^;]*!=='idle'",
+            "transition back to idle (flush just wrote a session) "
+            "reloads the session list once")
+
+    def test_language_toggle_repolls_dynamic_labels(self) -> None:
+        # Dynamic labels translate at set time (T() inside rv2Poll/paint),
+        # so a language switch must immediately re-run the recorder poll —
+        # otherwise the countdown/state stay in the old language for 2s.
+        toggle_at = self.src.index("function toggleLanguage")
+        body = self.src[toggle_at:toggle_at + 600]
+        self.assertIn(
+            "rv2Poll", body,
+            "toggleLanguage re-polls recorder v2 dynamic labels")

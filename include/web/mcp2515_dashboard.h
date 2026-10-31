@@ -6514,6 +6514,10 @@ static void dashSerialPrintHelp()
     Serial.println("  fwd_status     NAT forward-hook counters (2026-11-01 nat triage)");
     Serial.println("  tcp_test       board-originated outbound HTTP fetch (example.com)");
     Serial.println("  nat_probe      dump live lwip netif napt/up/ip/gw state");
+#if defined(DASH_RECORDER_V2)
+    Serial.println("  rv2_status     recorder v2 ring/lock status JSON (bench)");
+    Serial.println("  rv2_lock <pre_s> <post_s> <bus_mask>  arm blackbox lock (bench)");
+#endif
     Serial.println();
 }
 
@@ -6757,6 +6761,26 @@ static void dashSerialRunCommand(char *cmd)
         dashSerialRunTcpTest();
     else if (strcmp(start, "nat_probe") == 0 || strcmp(start, "natp") == 0)
         dashSerialPrintNatProbe();
+#if defined(DASH_RECORDER_V2)
+    else if (strcmp(start, "rv2_status") == 0 || strcmp(start, "rv2s") == 0)
+    {
+        Serial.println("[rv2_status]");
+        Serial.println(dashRecV2StatusJson());
+    }
+    else if (strncmp(start, "rv2_lock", 8) == 0)
+    {
+        unsigned preS = 10, postS = 30, mask = 7;
+        int parsed = sscanf(start + 8, " %u %u %u", &preS, &postS, &mask);
+        String err = "";
+        Serial.printf("[rv2_lock] pre=%us post=%us mask=%u (parsed %d/3)\n",
+                      preS, postS, mask, parsed);
+        if (dashRecV2LockRequest(preS * 1000UL, postS * 1000UL,
+                                 (uint8_t)mask, err))
+            Serial.println("[rv2_lock] armed");
+        else
+            Serial.println("[rv2_lock] refused: " + err);
+    }
+#endif
     else if (*start)
         Serial.println("Unknown command. Type help.");
 }

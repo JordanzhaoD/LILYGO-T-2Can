@@ -493,7 +493,10 @@ File::File(const std::string &path, const char *mode)
 {
     std::string full = path.rfind(kSpiffsBase, 0) == 0 ? path : std::string(kSpiffsBase) + path;
     fp_ = std::fopen(full.c_str(), mode);
-    name_ = path;
+    // Arduino File::name() semantics: basename, no leading slash (a full
+    // path here broke the recorder v2 session scanner, bench 2026-11-01).
+    size_t slash = path.rfind('/');
+    name_ = slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
 File::File(DIR *dir, std::string basePath) : dir_(dir), basePath_(std::move(basePath)) {}

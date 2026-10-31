@@ -247,6 +247,8 @@ static size_t recV2ScanSessions(uint32_t *seqs, size_t cap)
     for (File entry = root.openNextFile(); entry; entry = root.openNextFile())
     {
         const char *nm = entry.name(); // e.g. "sess_12.meta.json"
+        while (*nm == '/')             // tolerate path-shaped names
+            nm++;
         if (strncmp(nm, "sess_", 5) != 0)
             continue;
         const char *rest = nm + 5;

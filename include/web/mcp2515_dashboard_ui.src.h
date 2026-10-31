@@ -1722,7 +1722,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
         <div class="diag-item"><span class="lbl">CanC fps</span><span class="v-dim" id="rv2-fps-c">0</span></div>
         <div class="diag-item"><span class="lbl" data-i18n="剩余空间">剩余空间</span><span class="v-dim" id="rv2-free">--</span></div>
       </div>
-      <div class="setting-desc" id="rv2-state" data-i18n="空闲">空闲</div>
+      <div class="setting-desc" id="rv2-state">空闲</div>
     </div>
     <div class="card">
       <div class="card-title" data-i18n="一键锁定">一键锁定</div>
@@ -1739,7 +1739,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           <button class="btn btn-sm btn-outline" id="rv2-pre-300" onclick="rv2SetPre(300)" style="min-height:40px">5min</button>
         </div>
       </div>
-      <button class="btn" id="rec-v2-lock" onclick="rv2Lock()" style="min-height:64px;width:100%;font-size:18px;font-weight:800;border-radius:14px" data-i18n="一键锁定">一键锁定</button>
+      <button class="btn" id="rec-v2-lock" onclick="rv2Lock()" style="min-height:64px;width:100%;font-size:18px;font-weight:800;border-radius:14px">一键锁定</button>
       <div class="setting-desc" style="margin-top:8px" id="rv2-lock-note" data-i18n="锁定后回溯段立即封存，续录 30 秒后自动生成会话文件">锁定后回溯段立即封存，续录 30 秒后自动生成会话文件</div>
     </div>
     <div class="card">
@@ -1747,7 +1747,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
         <span style="font-weight:800" data-i18n="录制会话">录制会话</span>
         <button class="btn btn-sm btn-outline" onclick="rv2LoadSessions()" data-i18n="刷新">刷新</button>
       </div>
-      <div id="rv2-sessions" style="color:var(--tx3);font-size:12px" data-i18n="暂无会话">暂无会话</div>
+      <div id="rv2-sessions" style="color:var(--tx3);font-size:12px">暂无会话</div>
     </div>
   </div>
   <details id="rec-advanced" class="card" style="padding:12px 16px">
@@ -2255,7 +2255,7 @@ function toggleLanguage(){
   // 5.0.0-beta04: re-render from the cached /status payload plus light re-polls,
   // so a language switch no longer leaves stale Chinese until the next poll
   if(S.lastStatus)renderStatus(S.lastStatus);
-  pollCAN2();loadSpeedStrategy();pollWifiStatus();loadPlugins();
+  pollCAN2();loadSpeedStrategy();pollWifiStatus();loadPlugins();rv2Poll();rv2LoadSessions();
 }
 
 // ── Navigation ─────────────────────────────────────────────
@@ -3824,7 +3824,7 @@ function downloadRec(){window.location.href='/rec_download'}
 function downloadRecMeta(){window.location.href='/rec_meta'}
 
 // Recorder v2 (P4 blackbox): three-zone capture UI.
-var RV2={pre:60,bus:{a:true,b:true,c:true},timer:null};
+var RV2={pre:60,bus:{a:true,b:true,c:true},timer:null,lastState:'idle'};
 function rv2BusMask(){var m=0;if(RV2.bus.a)m|=1;if(RV2.bus.b)m|=2;if(RV2.bus.c)m|=4;return m}
 function rv2ToggleBus(k){RV2.bus[k]=!RV2.bus[k];rv2PaintBus()}
 function rv2PaintBus(){
@@ -3860,7 +3860,10 @@ async function rv2Poll(){
     setText('rv2-free',(free>=1048576)?(free/1048576).toFixed(1)+' MB':Math.floor(free/1024)+' KB');
     var st=s.lock?s.lock.state:'idle';
     setText('rv2-state',st==='arming'?T('锁定中')+' '+Math.ceil((s.lock.remain_ms||0)/1000)+'s':(st==='flushing'?T('写入中...'):T('空闲')));
-    if(st!=='idle')rv2LoadSessions();
+    // Reload the list while busy and once more on the edge back to idle —
+    // that edge is the moment a flush lands a new session file.
+    if(st!=='idle'||RV2.lastState!=='idle')rv2LoadSessions();
+    RV2.lastState=st;
     rv2PaintLock(s);
   }catch(e){}
 }
