@@ -2963,6 +2963,7 @@ static void handleStatus()
     j += hwName;
     j += "\"";
     j += ",\"buildEnv\":\"" DASH_BUILD_ENV "\"";
+    j += ",\"product\":\"" DASH_PRODUCT_NAME "\"";
     j += ",\"uiBuildId\":\"" DASH_UI_BUILD_ID "\"";
     j += ",\"uiBuildUtc\":\"" DASH_UI_BUILD_UTC "\"";
     j += ",\"";

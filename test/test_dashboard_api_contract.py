@@ -2799,6 +2799,10 @@ class DashboardApiContractTests(unittest.TestCase):
         )
         product_emission = ',\\"product\\":\\"' + '" DASH_PRODUCT_NAME "\\"'
         self.assertIn(product_emission, self.dash)
+        # The UI applies the name in renderStatus (the /status poll path), so
+        # /status must carry it too — /system_status alone never reaches the
+        # brand on first paint.
+        self.assertEqual(self.dash.count(product_emission), 2)
         # UI applies the server name after the first /status poll
         self.assertIn("PRODUCT_DUAL_CAN_NAME=d.product", self.ui)
         # P4 envs override the brand
