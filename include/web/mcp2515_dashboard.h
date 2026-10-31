@@ -5621,6 +5621,9 @@ static void dashCheckWifi()
             dashLog("[WIFI] Connected to " + String(staSSID) + " IP: " + WiFi.localIP().toString());
             dashSyncApChannelToSta();
             dashGatewayOnStaConnected(WiFi.staNetif(), WiFi.apNetif());
+#if defined(DASH_RECORDER_V2)
+            dashRecV2TrySyncTime(); // kick SNTP off on the connect edge
+#endif
             // Remember which slot just succeeded so the next reboot tries it
             // first. Avoids rotating through stale/dead networks on every boot.
             if (wifiActiveSlot >= 0 && wifiActiveSlot < (int8_t)wifiNetworkCount)

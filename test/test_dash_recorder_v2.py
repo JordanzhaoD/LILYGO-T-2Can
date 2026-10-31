@@ -246,5 +246,76 @@ class DashRecorderV2SessionsContractTests(unittest.TestCase):
             self.dash)
 
 
+class DashRecorderV2WallContractTests(unittest.TestCase):
+    """Task 4: SNTP wall clock with boot-relative fallback.
+
+    Plan named Arduino's configTime()/getLocalTime(), which do not exist in
+    this espidf (non-Arduino) framework — ruled to lwIP sntp_* + libc time()
+    (ledger, task 4). Tests pin the real API surface.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dash = DASH.read_text(encoding="utf-8")
+        cls.rec2 = (
+            REC2.read_text(encoding="utf-8") if REC2.exists() else ""
+        )
+
+    def test_sntp_dual_servers_polled_once(self) -> None:
+        for token in ('sntp_setservername(0, "pool.ntp.org")',
+                      'sntp_setservername(1, "ntp.aliyun.com")',
+                      "sntp_init()", "SNTP_OPMODE_POLL"):
+            self.assertIn(token, self.rec2, f"wall sync uses {token}")
+
+    def test_sync_once_gated_by_wall_synced(self) -> None:
+        # 幂等：成功过就跳过 — guard must live at the top of the attempt.
+        self.assertIn("wallSynced", self.rec2)
+        attempt = self.rec2.index("dashRecV2TrySyncTime")
+        self.assertIn(
+            "wallSynced", self.rec2[attempt:attempt + 400],
+            "sync attempt returns early once the wall clock is set")
+
+    def test_hook_on_sta_connected_edge(self) -> None:
+        self.assertIn("dashRecV2TrySyncTime()", self.dash)
+        hook = self.dash.index("dashRecV2TrySyncTime()")
+        edge = self.dash.index("dashGatewayOnStaConnected(WiFi.staNetif()")
+        self.assertGreater(hook, edge,
+                           "hook fires after the STA connected callback")
+        self.assertLess(
+            hook - edge, 500,
+            "hook sits in the connected branch, not pages away")
+
+    def test_loop_reprobes_until_synced(self) -> None:
+        # The connect edge fires once; SNTP lands seconds later, so the
+        # 1s tick must keep probing until the wall clock is real.
+        loop_at = self.rec2.index("static void dashRecV2Loop()")
+        loop_body = self.rec2[loop_at:loop_at + 900]
+        self.assertIn(
+            "dashRecV2TrySyncTime", loop_body,
+            "dashRecV2Loop re-probes wall sync each 1s tick")
+
+    def test_wall_never_written_unconditional(self) -> None:
+        # No fake wall times: every JSON emission of the wall key sits
+        # behind a has-wall guard (flush gate or meta read). Emissions
+        # are the `,"wall":` raw-string chunks; bare `doc["wall"]`
+        # reads are guarded on their own line and are not writes.
+        code_only = "\n".join(
+            ln.split("//", 1)[0] for ln in self.rec2.splitlines())
+        hits = [i for i in range(len(code_only))
+                if code_only.startswith(',"wall":', i)]
+        self.assertGreaterEqual(
+            len(hits), 2, "wall key must be emitted by flush and list")
+        for at in hits:
+            window = code_only[max(0, at - 250):at]
+            self.assertTrue(
+                "HasWall" in window or "isNull" in window,
+                f'wall emission at {at} must be conditional')
+
+    def test_wall_probe_uses_plausibility_floor(self) -> None:
+        # time() before sync returns 1970-ish garbage; the probe must
+        # demand a post-2020 epoch before trusting it.
+        self.assertIn("1600000000", self.rec2)
+
+
 if __name__ == "__main__":
     unittest.main()

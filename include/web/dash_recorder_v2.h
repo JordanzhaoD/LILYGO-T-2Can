@@ -20,10 +20,12 @@
 #include <freertos/FreeRTOS.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include <ArduinoJson.h>
 
 #include "can_frame_types.h"
+#include "lwip/apps/sntp.h"
 
 // 18-byte packed ring record (spec D6 field list; the "16B" label in the
 // spec prose was an arithmetic slip — 4+4+1+1+8 = 18). flags: bit0-1 bus
@@ -73,6 +75,41 @@ static uint32_t recV2OverflowAtLock = 0;
 static uint32_t recV2TwaiMissedSnapshot[3] = {0, 0, 0};
 static String recV2LastError = "";
 static uint32_t recV2Seq = 0; // seq of the most recent session (0 = none)
+
+// --- Wall clock (task 4) -----------------------------------------------------
+// Sessions prefer a wall timestamp; until SNTP lands, meta omits "wall"
+// rather than writing a fake 1970 date. The STA-connected edge kicks the
+// sync off (dashboard hook) and the 1s loop tick keeps probing until time()
+// is plausible — the edge fires once, but SNTP lands seconds later.
+static volatile bool wallSynced = false;
+static bool sntpStarted = false;
+
+static void dashRecV2TrySyncTime()
+{
+    if (wallSynced)
+        return;
+    if (!sntpStarted)
+    {
+        // espidf framework: lwIP SNTP, not Arduino configTime (ledger, task 4).
+        sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        sntp_setservername(0, "pool.ntp.org");
+        sntp_setservername(1, "ntp.aliyun.com");
+        sntp_init();
+        sntpStarted = true;
+        Serial.println("[REC2] SNTP sync started");
+    }
+    // Pre-sync time() returns 1970-era garbage; only trust a post-2020 epoch.
+    if (time(nullptr) > (time_t)1600000000)
+    {
+        wallSynced = true;
+        Serial.println("[REC2] wall clock synced");
+    }
+}
+
+static bool dashRecV2HasWall()
+{
+    return wallSynced;
+}
 
 // Per-bus fps (1s rolling window, sampled in dashRecV2Loop).
 static volatile uint32_t recV2FpsAccum[3] = {0, 0, 0};
@@ -277,9 +314,8 @@ static String dashRecV2SessionsJson()
         }
         if (!doc["wall"].isNull())
         {
-            j += R"JSON(,"wall":")JSON";
-            j += String((const char *)doc["wall"]);
-            j += "\"";
+            j += R"JSON(,"wall":)JSON";
+            j += String(doc["wall"].as<unsigned long>());
         }
         j += R"JSON(,"boot_ms":)JSON";
         j += String(doc["boot_ms"] | 0UL);
@@ -478,7 +514,13 @@ static void recV2FlushTask(void *)
         meta += R"JSON(,"boot_ms":)JSON";
         meta += String(millis());
         meta += R"JSON(,"trigger":"manual")JSON";
-        // wall clock (SNTP) lands in task 4; until then meta never lies.
+        // Wall timestamp only when SNTP has landed — meta never carries a
+        // fake 1970 date (task 4).
+        if (dashRecV2HasWall())
+        {
+            meta += R"JSON(,"wall":)JSON";
+            meta += String((uint32_t)time(nullptr));
+        }
         meta += R"JSON(,"pre_ms_req":)JSON";
         meta += String(recV2PreMsReq);
         meta += R"JSON(,"pre_ms_act":)JSON";
@@ -635,6 +677,7 @@ static void dashRecV2Loop()
     if ((uint32_t)(now - recV2FpsWindowMs) >= 1000)
     {
         recV2FpsWindowMs = now;
+        dashRecV2TrySyncTime(); // re-probe until SNTP lands (edge fires once)
         for (int i = 0; i < 3; i++)
         {
             recV2Fps[i] = recV2FpsAccum[i];
