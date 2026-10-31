@@ -368,6 +368,14 @@ static String dashCapabilitiesJson()
 #else
     j += "false";
 #endif
+    j += ",\"";
+    j += "recorderV2Available";
+    j += "\":";
+#if defined(DASH_RECORDER_V2)
+    j += "true";
+#else
+    j += "false";
+#endif
     j += "}"; // close capabilities object
     return j;
 }

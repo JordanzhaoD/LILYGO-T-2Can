@@ -1710,7 +1710,49 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 
 <!-- Recorder -->
 <div id="can-recorder" style="display:none">
-  <div class="card">
+  <!-- Recorder v2 (P4 blackbox): zone 1 status ring / zone 2 one-tap lock /
+       zone 3 sessions. Mobile-first: big touch targets, no hex input. -->
+  <div data-cap="recorderV2">
+    <div class="card">
+      <div class="card-title" data-i18n="历史环形缓冲">历史环形缓冲</div>
+      <div class="diag-grid">
+        <div class="diag-item"><span class="lbl" data-i18n="已覆盖">已覆盖</span><span class="v-dim" id="rv2-span">-- s</span></div>
+        <div class="diag-item"><span class="lbl">CanA fps</span><span class="v-dim" id="rv2-fps-a">0</span></div>
+        <div class="diag-item"><span class="lbl">CanB fps</span><span class="v-dim" id="rv2-fps-b">0</span></div>
+        <div class="diag-item"><span class="lbl">CanC fps</span><span class="v-dim" id="rv2-fps-c">0</span></div>
+        <div class="diag-item"><span class="lbl" data-i18n="剩余空间">剩余空间</span><span class="v-dim" id="rv2-free">--</span></div>
+      </div>
+      <div class="setting-desc" id="rv2-state" data-i18n="空闲">空闲</div>
+    </div>
+    <div class="card">
+      <div class="card-title" data-i18n="一键锁定">一键锁定</div>
+      <div id="rec-v2-bus" style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn btn-sm" id="rv2-bus-a" onclick="rv2ToggleBus('a')" style="flex:1;min-height:44px;font-weight:700">CanA</button>
+        <button class="btn btn-sm" id="rv2-bus-b" onclick="rv2ToggleBus('b')" style="flex:1;min-height:44px;font-weight:700">CanB</button>
+        <button class="btn btn-sm" id="rv2-bus-c" onclick="rv2ToggleBus('c')" style="flex:1;min-height:44px;font-weight:700">CanC</button>
+      </div>
+      <div class="setting-row" style="margin-bottom:10px">
+        <div><div class="setting-name" data-i18n="回溯窗口">回溯窗口</div><div class="setting-desc" id="rv2-pre-desc">60 s</div></div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm" id="rv2-pre-60" onclick="rv2SetPre(60)" style="min-height:40px">60s</button>
+          <button class="btn btn-sm btn-outline" id="rv2-pre-180" onclick="rv2SetPre(180)" style="min-height:40px">3min</button>
+          <button class="btn btn-sm btn-outline" id="rv2-pre-300" onclick="rv2SetPre(300)" style="min-height:40px">5min</button>
+        </div>
+      </div>
+      <button class="btn" id="rec-v2-lock" onclick="rv2Lock()" style="min-height:64px;width:100%;font-size:18px;font-weight:800;border-radius:14px" data-i18n="一键锁定">一键锁定</button>
+      <div class="setting-desc" style="margin-top:8px" id="rv2-lock-note" data-i18n="锁定后回溯段立即封存，续录 30 秒后自动生成会话文件">锁定后回溯段立即封存，续录 30 秒后自动生成会话文件</div>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-weight:800" data-i18n="录制会话">录制会话</span>
+        <button class="btn btn-sm btn-outline" onclick="rv2LoadSessions()" data-i18n="刷新">刷新</button>
+      </div>
+      <div id="rv2-sessions" style="color:var(--tx3);font-size:12px" data-i18n="暂无会话">暂无会话</div>
+    </div>
+  </div>
+  <details id="rec-advanced" class="card" style="padding:12px 16px">
+    <summary style="cursor:pointer;font-weight:800" data-i18n="高级设置">高级设置</summary>
+    <div class="card" style="margin-top:12px;margin-bottom:0">
     <div class="card-title" data-i18n="CAN 记录器">CAN 记录器</div>
     <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <button class="btn btn-sm" id="rec-start" onclick="startRec()" data-i18n="开始记录">开始记录</button>
@@ -1748,7 +1790,8 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="diag-item"><span class="lbl" data-i18n="最后 Bus / Counter / CRC">最后 Bus / Counter / CRC</span><span class="v-dim" id="rec-045-last">-- / -- / --</span></div>
     </div>
     <div class="setting-desc" style="margin-top:10px" data-i18n="120 秒可靠录制需保留过滤。全量双 CAN 流量可能在时限前占满设备存储，状态会明确标记。">120 秒可靠录制需保留过滤。全量双 CAN 流量可能在时限前占满设备存储，状态会明确标记。</div>
-  </div>
+    </div>
+  </details>
 </div>
 
 <!-- Controller -->
@@ -1985,6 +2028,11 @@ var I18N={
   '刷新':'Refresh','输入域名测试...':'Enter domain to test...','测试':'Test',
   '已拦截':'Blocked','条':'items','清空':'Clear',
   'CAN 引脚配置':'CAN Pin Config','实时帧':'Live Frames','记录器':'Recorder',
+  '一键锁定':'Lock Now','回溯窗口':'Lookback','录制会话':'Sessions',
+  '下载CSV':'CSV','下载BIN':'BIN','删除会话':'Delete','高级设置':'Advanced',
+  '历史环形缓冲':'Ring History','已覆盖':'Coverage','剩余空间':'Free Space',
+  '暂无会话':'No sessions yet','锁定后回溯段立即封存，续录 30 秒后自动生成会话文件':'Seals the lookback span at once, records 30 s more, then writes the session file',
+  '锁定中':'Locking','写入中...':'Writing...','至少选择一条总线':'Select at least one bus','锁定失败':'Lock failed',
   '开始录制':'Start','停止':'Stop','下载 CSV':'Download CSV',
   '录制帧数限制':'Frame Limit','控制器状态':'Controller Status','调试':'Debug',
   '调试日志':'Debug Log','最近写入':'Last Write Check',' · 丢帧 ':' · drop ',
@@ -2146,7 +2194,7 @@ var I18N={
   '未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。':'Unknown / invalid / SNA gears block injection by default; AP disconnect resets gate timing instantly. Enforced server-side in C++ (handlers.h) — the web UI cannot bypass it.',
 };
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
-var CAP={singleCan:false,can2Available:true,can3Available:false,lightingBusSupported:true,serviceModeSupported:true,stalkTestSupported:true,bus2SnifferSupported:true,fsdActivation:true,speedStrategy:true,driveProfile:true,networkSettings:true,otaUpdate:true,canDiagnostics:true};
+var CAP={singleCan:false,can2Available:true,can3Available:false,lightingBusSupported:true,serviceModeSupported:true,stalkTestSupported:true,bus2SnifferSupported:true,fsdActivation:true,speedStrategy:true,driveProfile:true,networkSettings:true,otaUpdate:true,canDiagnostics:true,recorderV2Available:false};
 var PRODUCT_SINGLE_CAN_NAME='Atlas Single CAN';
 var PRODUCT_DUAL_CAN_NAME='Atlas T-2CAN';
 function isSingleCan(){return !!CAP.singleCan}
@@ -2161,6 +2209,7 @@ function capEnabled(name){
   if(name==='can2')return !!CAP.can2Available;
   if(name==='can3')return !!CAP.can3Available;
   if(name==='lighting')return !!CAP.lightingBusSupported;
+  if(name==='recorderV2')return !!CAP.recorderV2Available;
   return true;
 }
 function applyCapabilities(c){
@@ -3708,7 +3757,7 @@ function switchCanTab(tab){
     if(el)el.style.display=tabNames[i]===tab?'block':'none';
   }
   if(tab==='sniffer')pollSniffer();
-  if(tab==='recorder')pollRecStatus();
+  if(tab==='recorder'){pollRecStatus();rv2StartPoll();}
   if(tab==='controller')pollCanController();
   if(tab==='debug')pollLastWrite();
 }
@@ -3773,6 +3822,89 @@ async function stopRec(){
 }
 function downloadRec(){window.location.href='/rec_download'}
 function downloadRecMeta(){window.location.href='/rec_meta'}
+
+// Recorder v2 (P4 blackbox): three-zone capture UI.
+var RV2={pre:60,bus:{a:true,b:true,c:true},timer:null};
+function rv2BusMask(){var m=0;if(RV2.bus.a)m|=1;if(RV2.bus.b)m|=2;if(RV2.bus.c)m|=4;return m}
+function rv2ToggleBus(k){RV2.bus[k]=!RV2.bus[k];rv2PaintBus()}
+function rv2PaintBus(){
+  ['a','b','c'].forEach(function(k){var b=$('rv2-bus-'+k);if(b)b.className='btn btn-sm'+(RV2.bus[k]?'':' btn-outline')});
+  var d=$('rv2-lock-note');if(d&&rv2BusMask()===0)d.textContent=T('至少选择一条总线');else if(d)d.textContent=T('锁定后回溯段立即封存，续录 30 秒后自动生成会话文件');
+}
+function rv2SetPre(v){
+  RV2.pre=v;
+  ['60','180','300'].forEach(function(x){var b=$('rv2-pre-'+x);if(b)b.className='btn btn-sm'+(String(v)===x?'':' btn-outline')});
+  var d=$('rv2-pre-desc');if(d)d.textContent=(v>=60&&v%60===0)?(v/60)+' min':v+' s';
+}
+function rv2PaintLock(s){
+  var b=$('rec-v2-lock');if(!b)return;
+  if(s&&s.lock&&s.lock.state==='arming'){
+    b.disabled=true;
+    b.textContent=T('锁定中')+' '+Math.ceil((s.lock.remain_ms||0)/1000)+'s';
+  }else if(s&&s.lock&&s.lock.state==='flushing'){
+    b.disabled=true;b.textContent=T('写入中...');
+  }else{
+    b.disabled=false;b.textContent=T('一键锁定');
+  }
+}
+async function rv2Poll(){
+  if(!CAP.recorderV2Available)return;
+  try{
+    var s=await fetchJson('/ring_status');
+    if(!s||!s.enabled)return;
+    setText('rv2-span',Math.floor(s.span_s||0)+' s');
+    setText('rv2-fps-a',String(s.fps?s.fps.a:0));
+    setText('rv2-fps-b',String(s.fps?s.fps.b:0));
+    setText('rv2-fps-c',String(s.fps?s.fps.c:0));
+    var free=s.sessions_space_free||0;
+    setText('rv2-free',(free>=1048576)?(free/1048576).toFixed(1)+' MB':Math.floor(free/1024)+' KB');
+    var st=s.lock?s.lock.state:'idle';
+    setText('rv2-state',st==='arming'?T('锁定中')+' '+Math.ceil((s.lock.remain_ms||0)/1000)+'s':(st==='flushing'?T('写入中...'):T('空闲')));
+    if(st!=='idle')rv2LoadSessions();
+    rv2PaintLock(s);
+  }catch(e){}
+}
+function rv2StartPoll(){if(!CAP.recorderV2Available)return;rv2Poll();rv2LoadSessions();if(!RV2.timer)RV2.timer=setInterval(rv2Poll,2000)}
+async function rv2Lock(){
+  var m=rv2BusMask();
+  if(!m){var n=$('rv2-lock-note');if(n)n.textContent=T('至少选择一条总线');return}
+  try{
+    await postForm('/ring_lock',{pre_s:RV2.pre,post_s:30,bus_mask:m});
+    rv2Poll();
+  }catch(e){var b=$('rec-v2-lock');if(b)b.textContent=T('锁定失败')}
+}
+function rv2Dl(seq,fmt){window.location.href='/session_download?seq='+seq+'&fmt='+fmt}
+async function rv2Del(seq){
+  try{await postForm('/session_delete',{seq:seq})}catch(e){}
+  rv2LoadSessions();
+}
+function rv2Dur(s){
+  var sec=Math.round(((s.pre_ms_act||0)+(s.post_ms||0))/1000);
+  return Math.floor(sec/60)+':'+('0'+(sec%60)).slice(-2);
+}
+async function rv2LoadSessions(){
+  if(!CAP.recorderV2Available)return;
+  try{
+    var a=await fetchJson('/sessions');
+    var box=$('rv2-sessions');if(!box)return;
+    if(!a||!a.length){box.textContent=T('暂无会话');return}
+    var html='';
+    for(var i=0;i<a.length;i++){
+      var s=a[i];
+      html+='<div class="diag-item" style="display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:10px;padding:8px;margin-bottom:8px">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+        +'<span style="font-weight:700">#'+s.seq+' · '+rv2Dur(s)+' · '+((s.frames&&s.frames.a)||0)+'/'+((s.frames&&s.frames.b)||0)+'/'+((s.frames&&s.frames.c)||0)+'</span>'
+        +'<span style="font-size:11px;color:var(--tx3)">'+(s.loss_badge?String(s.loss_badge).replace(/</g,'&lt;'):'')+'</span></div>'
+        +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+        +'<button class="btn btn-sm btn-outline" onclick="rv2Dl('+s.seq+',\'csv\')" data-i18n="下载CSV">下载CSV</button>'
+        +'<button class="btn btn-sm btn-outline" onclick="rv2Dl('+s.seq+',\'bin\')" data-i18n="下载BIN">下载BIN</button>'
+        +'<button class="btn btn-sm btn-outline" onclick="rv2Del('+s.seq+')" data-i18n="删除会话">删除会话</button>'
+        +'</div></div>';
+    }
+    box.innerHTML=html;
+    applyI18n();
+  }catch(e){}
+}
 function recFmtBytes(n){return n>=1048576?(n/1048576).toFixed(2)+' MB':(n/1024).toFixed(1)+' KB'}
 async function pollRecStatus(){
   var d=await fetchJson('/rec_status');if(!d)return;

@@ -317,5 +317,60 @@ class DashRecorderV2WallContractTests(unittest.TestCase):
         self.assertIn("1600000000", self.rec2)
 
 
+class DashRecorderV2UiContractTests(unittest.TestCase):
+    """Task 5: mobile-first capture UI (three zones) + capabilities."""
+
+    UI_SRC = ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dash = DASH.read_text(encoding="utf-8")
+        cls.src = cls.UI_SRC.read_text(encoding="utf-8")
+
+    def test_capabilities_expose_recorder_v2(self) -> None:
+        self.assertIn("recorderV2Available", self.dash,
+                      "dashCapabilitiesJson carries the recorder v2 flag")
+        self.assertIn("recorderV2Available", self.src,
+                      "UI CAP defaults include recorderV2Available")
+        # The hasCap branch: repo's capEnabled() must gate the new zone.
+        cap_at = self.src.index("function capEnabled")
+        self.assertIn(
+            "recorderV2Available", self.src[cap_at:cap_at + 500],
+            "capEnabled learns the recorderV2 capability")
+
+    def test_ui_has_three_zones(self) -> None:
+        for token in ("ring_status", "ring_lock", "/sessions",
+                      "session_download", "session_delete"):
+            self.assertIn(token, self.src, f"UI fetches {token}")
+        self.assertIn('id="rec-v2-lock"', self.src, "big lock button id")
+        self.assertIn('id="rec-v2-bus"', self.src, "bus toggle container id")
+        # Touch target: the lock button must be a ≥64px tap target.
+        lock_at = self.src.index('id="rec-v2-lock"')
+        self.assertIn(
+            "64px", self.src[lock_at:lock_at + 400],
+            "lock button styles a 64px+ touch target")
+
+    def test_ui_keeps_legacy_panel_folded(self) -> None:
+        # The legacy recorder form survives untouched, folded away.
+        self.assertIn('id="rec-start"', self.src, "legacy panel intact")
+        self.assertIn('id="rec-advanced"', self.src, "fold container id")
+
+    def test_i18n_new_labels_registered(self) -> None:
+        keys = ("一键锁定", "回溯窗口", "录制会话", "下载CSV",
+                "下载BIN", "删除会话", "高级设置")
+        for k in keys:
+            self.assertIn(f"'{k}':", self.src, f"{k} registered in I18N dict")
+            self.assertIn(f'data-i18n="{k}"', self.src,
+                          f"{k} used as a data-i18n label")
+
+    def test_lock_button_polls_status(self) -> None:
+        self.assertIn("setInterval(rv2Poll", self.src,
+                      "recorder tab arms a 2s status poll")
+        poll_at = self.src.index("function rv2Poll")
+        self.assertIn(
+            "ring_status", self.src[poll_at:poll_at + 600],
+            "the poll fetches /ring_status (arming countdown needs it)")
+
+
 if __name__ == "__main__":
     unittest.main()
