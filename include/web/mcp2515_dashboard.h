@@ -5334,6 +5334,31 @@ static bool dashStartAccessPoint(bool withSta)
     return ok;
 }
 
+// 2026-11-01: under esp_wifi_remote the soft AP restarts whenever the STA
+// channel realigns (dashSyncApChannelToSta), and the lwip netif that comes
+// back carries napt=0 while the software flag still says enabled — probed
+// live: nat=on with netif napt=0 after every STA bring-up. This WiFi library
+// (esp_hosted variant) exposes no AP-start events, so a periodic guard reads
+// the actual netif bit and re-applies it when a bounce silently dropped it.
+static unsigned long dashNaptHealNextAt = 0;
+static void dashGatewayNaptSelfHeal()
+{
+#if IP_NAPT && LWIP_IPV4
+    unsigned long now = millis();
+    if (now < dashNaptHealNextAt)
+        return;
+    dashNaptHealNextAt = now + 2000;
+    void *lwipAp = WiFi.apNetif() ? esp_netif_get_netif_impl(WiFi.apNetif()) : nullptr;
+    if (!lwipAp)
+        return;
+    struct netif *n = static_cast<struct netif *>(lwipAp);
+    if (n->napt)
+        return; // bit intact
+    ESP_LOGW("wifiap", "napt bit lost (AP bounce?), re-applying");
+    dashGatewayOnApStarted(WiFi.apNetif());
+#endif
+}
+
 static void dashBeginSTA()
 {
     if (strlen(staSSID) == 0)
@@ -5542,6 +5567,11 @@ static void dashCheckWifi()
     if (now - lastCheck < checkInterval)
         return;
     lastCheck = now;
+
+    // 2026-11-01: catch any soft-AP bounce (e.g. channel realign after STA
+    // connect) that silently drops the lwip napt bit; the guard re-applies
+    // the gateway config within one poll interval after the AP returns.
+    dashGatewayNaptSelfHeal();
 
     int wifiStatus = WiFi.status();
     bool connected = wifiStatus == WL_CONNECTED;
@@ -6454,6 +6484,9 @@ static void dashSerialPrintHelp()
     Serial.println("  system_status  print CPU/heap/WiFi summary");
     Serial.println("  can_status     print CAN/injection summary");
     Serial.println("  task_stats     sample FreeRTOS tasks for 1s asynchronously");
+    Serial.println("  fwd_status     NAT forward-hook counters (2026-11-01 nat triage)");
+    Serial.println("  tcp_test       board-originated outbound HTTP fetch (example.com)");
+    Serial.println("  nat_probe      dump live lwip netif napt/up/ip/gw state");
     Serial.println();
 }
 
@@ -6509,6 +6542,100 @@ static void dashSerialPrintSystemStatus()
     Serial.println();
     if (hasTemp)
         Serial.printf("temp=%.1fC\n", tempC);
+    Serial.println();
+}
+
+// NAT forward-path bisection (2026-11-01 nat triage): mirror the
+// /gateway_status fwd_hook_* fields on the serial console so the board can
+// be interrogated while it sits on an unreachable upstream subnet (e.g. the
+// car router), plus a board-originated outbound fetch to prove the egress
+// leg independent of NAT translation.
+static void dashSerialPrintFwdStatus()
+{
+    Serial.println();
+    Serial.println("[fwd_status]");
+#ifdef DASH_STA_AP_GATEWAY
+    Serial.printf("nat=%s napt_compiled=%s\n",
+                  gatewayNaptEnabled ? "on" : "off",
+#if IP_NAPT
+                  "yes"
+#else
+                  "no"
+#endif
+    );
+    Serial.printf("fwd_hook_calls=%u fwd_hook_last_dest=%u.%u.%u.%u fwd_hook_last_ms_ago=%lu\n",
+                  (unsigned)gatewayFwdHookCalls,
+                  (unsigned)((gatewayFwdHookLastDest >> 24) & 0xFF),
+                  (unsigned)((gatewayFwdHookLastDest >> 16) & 0xFF),
+                  (unsigned)((gatewayFwdHookLastDest >> 8) & 0xFF),
+                  (unsigned)((gatewayFwdHookLastDest) & 0xFF),
+                  (unsigned long)(millis() - gatewayFwdHookLastMs));
+#else
+    Serial.println("gateway not compiled (DASH_STA_AP_GATEWAY off)");
+#endif
+    Serial.println();
+}
+
+static void dashSerialRunTcpTest()
+{
+    Serial.println();
+    Serial.println("[tcp_test] fetching http://example.com/ ...");
+    unsigned long startedAt = millis();
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    http.setTimeout(8000);
+    if (!http.begin(client, "http://example.com/"))
+    {
+        Serial.println("begin failed");
+        return;
+    }
+    int code = http.GET();
+    unsigned long elapsed = millis() - startedAt;
+    if (code > 0)
+        Serial.printf("HTTP %d in %lu ms, %u bytes\n", code, elapsed, (unsigned)http.getSize());
+    else
+        Serial.printf("GET failed code=%d after %lu ms\n", code, elapsed);
+    http.end();
+    Serial.println();
+}
+
+// 2026-11-01 switch triage: a live upstream switch kills client NAT while the
+// board's own TCP keeps working and ip4_forward() IS entered (fwd_hook_calls
+// climbing). ip_napt_enable_netif() silently returns 0 when the netif is down,
+// so the software "nat=on" flag can disagree with the actual netif bit. Walk
+// the live lwip netif list and print every interface's real napt/up/ip/gw
+// state — this separates "napt bit lost" from "route/netif corruption".
+static void dashSerialPrintNatProbe()
+{
+    Serial.println();
+    Serial.println("[nat_probe] lwip netif list");
+#if LWIP_IPV4 && IP_NAPT
+    int idx = 0;
+    for (struct netif *n = netif_list; n != nullptr; n = n->next, idx++)
+    {
+        const ip4_addr_t *ip = netif_ip4_addr(n);
+        const ip4_addr_t *gw = netif_ip4_gw(n);
+        // ip4addr_ntoa() shares one static buffer: format each address into
+        // its own storage or the two printf arguments clobber each other.
+        char ipStr[16] = "0.0.0.0", gwStr[16] = "0.0.0.0";
+        if (ip)
+            snprintf(ipStr, sizeof(ipStr), "%s", ip4addr_ntoa(ip));
+        if (gw)
+            snprintf(gwStr, sizeof(gwStr), "%s", ip4addr_ntoa(gw));
+        Serial.printf("netif[%d] name=%c%c num=%u up=%u link=%u napt=%u ip=%s gw=%s\n",
+                      idx, n->name[0], n->name[1], (unsigned)n->num,
+                      netif_is_up(n) ? 1u : 0u,
+                      netif_is_link_up(n) ? 1u : 0u,
+                      (unsigned)n->napt,
+                      ipStr,
+                      gwStr);
+    }
+    if (idx == 0)
+        Serial.println("no netifs");
+#else
+    Serial.println("lwip napt not compiled");
+#endif
     Serial.println();
 }
 
@@ -6597,6 +6724,12 @@ static void dashSerialRunCommand(char *cmd)
         dashSerialPrintCanStatus();
     else if (strcmp(start, "task_stats") == 0 || strcmp(start, "tasks") == 0)
         dashSerialStartTaskStats();
+    else if (strcmp(start, "fwd_status") == 0 || strcmp(start, "fwd") == 0)
+        dashSerialPrintFwdStatus();
+    else if (strcmp(start, "tcp_test") == 0 || strcmp(start, "tcp") == 0)
+        dashSerialRunTcpTest();
+    else if (strcmp(start, "nat_probe") == 0 || strcmp(start, "natp") == 0)
+        dashSerialPrintNatProbe();
     else if (*start)
         Serial.println("Unknown command. Type help.");
 }

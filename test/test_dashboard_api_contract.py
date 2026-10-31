@@ -922,6 +922,82 @@ class DashboardApiContractTests(unittest.TestCase):
         with self.subTest(token="home channel fallback read"):
             self.assertIn("esp_wifi_get_channel", self.runtime)
 
+    def test_gateway_forward_path_bisection_for_nat_triage(self) -> None:
+        """2026-11-01 bench: client TCP through the P4 NAT never worked.
+
+        DNS via the on-board proxy and TCP to the board itself both pass,
+        so the break is inside the AP->STA forward path. Bisect it live:
+        the LWIP_HOOK_IP4_CANFORWARD call counter tells us whether
+        ip4_forward() is even entered for client flows (0 = routing/netif
+        issue, >0 = NAPT/egress issue), and a serial tcp_test proves the
+        board's own outbound TCP egress independent of NAT.
+        """
+        for token in [
+            '\\"fwd_hook_calls\\"',
+            '\\"fwd_hook_last_dest\\"',
+            '\\"fwd_hook_last_ms_ago\\"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.gateway)
+        with self.subTest(token="hook counts forwarding attempts"):
+            self.assertIn("gatewayFwdHookCalls = gatewayFwdHookCalls + 1", self.gateway)
+        for probe in [
+            "dashSerialRunTcpTest",
+            "dashSerialPrintFwdStatus",
+        ]:
+            with self.subTest(probe=probe):
+                self.assertIn(probe, self.dash)
+
+    def test_nat_probe_walks_lwip_netif_list_for_switch_triage(self) -> None:
+        """2026-11-01 bench: a live upstream switch kills client NAT while the
+        board's own TCP still works (tcp_test HTTP 200 in the broken state) and
+        ip4_forward IS entered (fwd_hook_calls climbing). Next bisection layer:
+        dump every live lwip netif's real napt/up/ip/gw state so a stale or
+        silently-dropped napt bit (ip_napt_enable_netif returns 0 without
+        logging when the netif is down) is visible in one serial command.
+        """
+        for token in [
+            "dashSerialPrintNatProbe",
+            "netif_list",
+            "netif_is_up",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.dash)
+        with self.subTest(token="probe prints the napt bit"):
+            self.assertIn("napt=%u", self.dash)
+        with self.subTest(token="probe prints default gateway per netif"):
+            self.assertIn("netif_ip4_gw", self.dash)
+        with self.subTest(token="fwd_status prints destination octets in order"):
+            self.assertIn("(gatewayFwdHookLastDest >> 24) & 0xFF", self.dash)
+        with self.subTest(token="most-significant octet printed first"):
+            self.assertLess(
+                self.dash.index("(gatewayFwdHookLastDest >> 24) & 0xFF"),
+                self.dash.index("(gatewayFwdHookLastDest) & 0xFF"),
+            )
+
+    def test_ap_restart_reapplies_napt_after_channel_sync_bounce(self) -> None:
+        """2026-11-01 root cause: every STA bring-up realigns the AP channel,
+        which restarts the soft AP under esp_wifi_remote. The lwip netif that
+        comes back has napt=0 (probed live: nat=on flag vs napt=0 bit), so
+        client packets leave the STA with their 100.100.1.x source untouched
+        and replies never return. The AP-start path must therefore re-apply
+        the NAPT bit on every soft AP (re)start, not only on STA connect.
+        """
+        with self.subTest(token="AP started handler enables napt"):
+            self.assertIn("ip_napt_enable_netif", self.gateway)
+        # the enable must sit inside dashGatewayOnApStarted (the per-restart
+        # handler), not only in dashGatewayOnStaConnected
+        started = self.gateway.index("dashGatewayOnApStarted")
+        connected = self.gateway.index("dashGatewayOnStaConnected")
+        ap_enable = self.gateway.index("ip_napt_enable_netif", started)
+        self.assertLess(started, ap_enable)
+        with self.subTest(token="self-healing napt guard exists"):
+            self.assertIn("dashGatewayEnsureNapt", self.gateway)
+        with self.subTest(token="poll loop re-checks the live netif bit"):
+            self.assertIn("dashGatewayNaptSelfHeal", self.dash)
+        with self.subTest(token="heal reads the actual netif bit, not the software flag"):
+            self.assertIn("->napt", self.gateway)
+
     def test_high_beam_shared_bus_limit_is_documented(self) -> None:
         """README should record that shared-bus injection cannot force high-beam during FSD."""
         for token in [

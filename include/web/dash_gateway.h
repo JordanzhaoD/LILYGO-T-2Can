@@ -886,9 +886,21 @@ static size_t dashGatewayMakeDnsFakeReply(const uint8_t *query, size_t qlen, uin
     return qlen + 16;
 }
 
+// Forward-path bisection (2026-11-01 nat triage): the hook below is called
+// from ip4_forward() for every client packet lwIP tries to NAT across the
+// AP->STA bridge. If client flows hang while these counters stay at zero,
+// forwarded packets never reach ip4_forward() (routing/netif issue); if the
+// counters climb while pages still hang, the break is past the hook
+// (NAPT translation or the egress leg).
+static volatile unsigned gatewayFwdHookCalls = 0;
+static volatile unsigned gatewayFwdHookLastDest = 0; // network byte order
+static volatile unsigned long gatewayFwdHookLastMs = 0;
+
 extern "C" int dashGatewayHookIp4CanForward(unsigned int destAddrNbo)
 {
-    (void)destAddrNbo;
+    gatewayFwdHookCalls = gatewayFwdHookCalls + 1;
+    gatewayFwdHookLastDest = destAddrNbo;
+    gatewayFwdHookLastMs = millis();
     // DNS filtering is intentionally domain-only: blacklist root domains are
     // blocked in the DNS proxy, whitelist subdomains override those roots, and
     // NAT forwarding stays on the fastest path with no per-packet IP filtering.
@@ -1333,16 +1345,40 @@ static void dashGatewayConfigureApDns(esp_netif_t *apNetif)
     ESP_LOGI(kDashGatewayTag, "AP DNS configured -> " IPSTR, IP2STR(&apIp.ip));
 }
 
+// 2026-11-01 root cause: every STA bring-up realigns the AP channel, which
+// restarts the soft AP under esp_wifi_remote, and the lwip netif that comes
+// back carries napt=0 while the software flag still says enabled (probed
+// live: nat=on with netif napt=0). Central re-apply so the AP-start path,
+// the STA-connect path, and the poll-loop self-heal all share one idempotent
+// enable.
+static void dashGatewayEnsureNapt(esp_netif_t *apNetif)
+{
+#if IP_NAPT
+    void *lwipAp = apNetif ? esp_netif_get_netif_impl(apNetif) : nullptr;
+    if (!lwipAp)
+        return;
+    struct netif *n = static_cast<struct netif *>(lwipAp);
+    if (n->napt)
+        return; // bit intact on the live netif
+    if (ip_napt_enable_netif(n, 1))
+        gatewayNaptEnabled = true;
+    else
+        ESP_LOGW(kDashGatewayTag, "ip_napt_enable_netif failed");
+#endif
+}
+
 static void dashGatewayOnApStarted(esp_netif_t *apNetif)
 {
     if (!gatewayEnabled)
         return;
     dashGatewayConfigureApDns(apNetif);
     dashGatewayStartDns();
-    ESP_LOGI(kDashGatewayTag, "AP ready ip=%s clients=%u dns=%s",
+    dashGatewayEnsureNapt(apNetif);
+    ESP_LOGI(kDashGatewayTag, "AP ready ip=%s clients=%u dns=%s nat=%s",
              WiFi.softAPIP().toString().c_str(),
              static_cast<unsigned>(WiFi.softAPgetStationNum()),
-             gatewayApDnsConfigured ? "configured" : "pending");
+             gatewayApDnsConfigured ? "configured" : "pending",
+             gatewayNaptEnabled ? "on" : "waiting");
 }
 
 static void dashGatewayOnStaConnected(esp_netif_t *staNetif, esp_netif_t *apNetif)
@@ -1362,14 +1398,7 @@ static void dashGatewayOnStaConnected(esp_netif_t *staNetif, esp_netif_t *apNeti
     gatewayUpstreamDns = dashGatewaySelectedUpstreamDns();
 
 #if IP_NAPT
-    void *lwipAp = apNetif ? esp_netif_get_netif_impl(apNetif) : nullptr;
-    if (lwipAp)
-    {
-        if (ip_napt_enable_netif(static_cast<netif *>(lwipAp), 1))
-            gatewayNaptEnabled = true;
-        else
-            ESP_LOGW(kDashGatewayTag, "ip_napt_enable_netif failed");
-    }
+    dashGatewayEnsureNapt(apNetif);
 #else
     ESP_LOGW(kDashGatewayTag, "CONFIG_LWIP_IPV4_NAPT is disabled");
 #endif
@@ -1463,6 +1492,23 @@ static String dashGatewayStatusJson()
     j += ",\"wifi_ps\":\"";
     j += WiFi.psReadbackName();
     j += "\"";
+    // Forward-path bisection (2026-11-01 nat triage): see the hook above.
+    {
+        unsigned lastDest = gatewayFwdHookLastDest; // copy volatile before reinterpret
+        const auto *dest = reinterpret_cast<const uint8_t *>(&lastDest);
+        j += ",\"fwd_hook_calls\":";
+        j += String(gatewayFwdHookCalls);
+        j += ",\"fwd_hook_last_dest\":\"";
+        j += String(dest[0]);
+        j += ".";
+        j += String(dest[1]);
+        j += ".";
+        j += String(dest[2]);
+        j += ".";
+        j += String(dest[3]);
+        j += "\",\"fwd_hook_last_ms_ago\":";
+        j += String(millis() - gatewayFwdHookLastMs);
+    }
     j += ",\"blocked\":";
     j += String(gatewayBlockedDomainCount);
     j += ",\"dns_cache_psram\":";
