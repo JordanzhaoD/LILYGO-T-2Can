@@ -52,8 +52,12 @@ P4 分区表独立（32MB 布局），与三板共享的 partitions.bin 不同�
 ## 构建环境
 
 - 三板：与 20261030 资产完全相同的 bytes（见上），未重建。
-- P4：本仓库 2026-10-31 树（commit 链 `05d2ac9`→`d414331`，板型+第二 TWAI
-  驱动+复审修正），pio 6.2.0 + espressif32@7.0.0 + IDF 6.0.1 + riscv 15.2.0
+- P4：本仓库 2026-10-31 树（commit 链 `05d2ac9`→`d414331` 板型+第二 TWAI
+  驱动+复审，`564523b` hosted 复位策略回摆 arduino 出厂，`697a034` 双总线
+  dashboard 世界观点亮——即台架验证板上实跑的这一版，uiBuildId
+  `…-697a03433f2d-2026-10-31T03:54:57Z`；证据见
+  `docs/verification/p4-3can-bench-2026-11-01.md`），
+  pio 6.2.0 + espressif32@7.0.0 + IDF 6.0.1 + riscv 15.2.0
   钉包，`platformio_p4_build_quirks.py` 处理 ESP_IDF_VERSION 宏与 rev3
   bootloader 链接脚本两个 P4 专属构建怪癖；sdkconfig 声明真实 32MB flash。
   门禁：native 23 env 全绿、黄金 lilygo_t2can_dual 全绿、零 diff 审计
