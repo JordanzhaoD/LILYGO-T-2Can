@@ -9,6 +9,10 @@ enum CanBusMask : uint8_t
     CAN_BUS_CH = 1 << 0,
     CAN_BUS_VEH = 1 << 1,
     CAN_BUS_PARTY = 1 << 2,
+    // beta08 P4: CAN C (TWAI2, X179 18/19 PT powertrain bus) — observation
+    // lane only; frames carry this tag from the tertiary drain into the
+    // sniffer ring, never into the vehicle handler.
+    CAN_BUS_PT = 1 << 3,
 };
 
 #ifndef CAN_BUS_DEFAULT

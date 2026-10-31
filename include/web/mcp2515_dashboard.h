@@ -283,6 +283,15 @@ static constexpr bool kDashCan2Available = true;
 static constexpr bool kDashCan2Available = false;
 #endif
 
+// beta08 P4: CAN C (TWAI2) observation lane exists only on the P4-3CAN
+// board. Emitted unconditionally (false elsewhere) so older UIs and every
+// non-P4 build keep a byte-identical surface.
+#if defined(DRIVER_P4_3CAN)
+static constexpr bool kDashCan3Available = true;
+#else
+static constexpr bool kDashCan3Available = false;
+#endif
+
 static constexpr bool kDashLightingBusSupported = kDashCan2Available;
 static constexpr bool kDashServiceModeSupported = kDashCan2Available;
 static constexpr bool kDashStalkTestSupported = kDashCan2Available;
@@ -299,6 +308,10 @@ static String dashCapabilitiesJson()
     j += "can2Available";
     j += "\":"; // "can2Available":
     j += kDashCan2Available ? "true" : "false";
+    j += ",\"";
+    j += "can3Available";
+    j += "\":"; // "can3Available":
+    j += kDashCan3Available ? "true" : "false";
     j += ",\"";
     j += "lightingBusSupported";
     j += "\":"; // "lightingBusSupported":
@@ -568,6 +581,12 @@ static void dashResetRecWheelEvidence()
 
 static void dashCountRecordedFrame(const RecFrame &record)
 {
+    // beta08: CAN C (PT) records are captured for download but contribute
+    // to no vehicle evidence — 0x399/0x045/0x3C2 semantics are bus-specific
+    // and a gateway mirror of those IDs on the powertrain bus must not
+    // inflate the can1/can2 evidence counters.
+    if (record.bus == CAN_BUS_PT)
+        return;
     const uint32_t sid = record.id & 0x1FFFFFFFUL;
     const bool can2 = record.bus == CAN_BUS_PARTY;
     if (sid == 0x399 && record.dir == 'R' && !can2)
@@ -662,6 +681,7 @@ struct SniffFrame
     uint32_t id;
     uint8_t dlc;
     uint8_t data[8];
+    uint8_t bus; // 1=CAN A, 2=CAN B, 3=CAN C (beta08: /frames tags every frame)
 };
 static SniffFrame sniffBuf[SNIFFER_CAP];
 static int sniffHead = 0;
@@ -1047,14 +1067,37 @@ static const char *decodeCanId(uint32_t id)
     }
 }
 
+static uint8_t dashBusNumberOf(uint8_t busMask)
+{
+    if (busMask & CAN_BUS_PT)
+        return 3;
+    if (busMask & CAN_BUS_PARTY)
+        return 2;
+    return 1;
+}
+
 static void sniffPush(const CanFrame &f)
 {
     uint8_t dlc = (f.dlc <= 8) ? f.dlc : 8;
-    sniffBuf[sniffHead] = {millis(), f.id, dlc, {}};
+    sniffBuf[sniffHead] = {millis(), f.id, dlc, {}, dashBusNumberOf(f.bus)};
     memcpy(sniffBuf[sniffHead].data, f.data, dlc);
     sniffHead = (sniffHead + 1) % SNIFFER_CAP;
     if (sniffCount < SNIFFER_CAP)
         sniffCount++;
+}
+
+// beta08 P4: CAN C (TWAI2, PT bus) observation hook. Feeds the sniffer
+// ring (live frames) and the recorder (Jordan: 记录器实现三路录制) with
+// bus tag PT. Deliberately NOT routed through mcpDashOnFrame: that path
+// feeds the vehicle stats (rxCount / canOnline / fps), none of which may
+// ever see powertrain frames; dashCountRecordedFrame likewise skips PT
+// records so evidence counters stay vehicle-bus-only.
+static void mcpDashSniffCan3(const CanFrame &f)
+{
+    CanFrame tagged = f;
+    tagged.bus = CAN_BUS_PT;
+    sniffPush(tagged);
+    dashRecordCanFrame(tagged, 'R');
 }
 
 #define LOG_CAP 80
@@ -2361,6 +2404,15 @@ uint8_t t2canServiceBurstRemaining(void);
 bool t2canGetServiceMode(void);
 #endif
 
+#ifdef DRIVER_P4_3CAN
+// beta08: CAN C (TWAI2, PT bus) observation-lane counters — defined in
+// main.cpp. Listen-only driver: rx counts frames, txerr/eflg surface the
+// receiver's health for the diagnostics page.
+uint32_t t2canCan3RxCount(void);
+uint8_t t2canCan3TxErrCount(void);
+uint8_t t2canCan3Eflg(void);
+#endif
+
 static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxValue, uint8_t &out)
 {
     if (!server.hasArg(name))
@@ -3166,6 +3218,17 @@ static void handleStatus()
     j += t2canBus2TxErrCount();
     j += ",\"eflg\":";
     j += t2canBus2Eflg();
+    j += "}";
+#endif
+#ifdef DRIVER_P4_3CAN
+    // beta08: CAN C observation-lane counters (listen-only, so tx stays 0).
+    j += ",\"can3\":{\"rx\":";
+    j += t2canCan3RxCount();
+    j += ",\"tx\":0";
+    j += ",\"txerr\":";
+    j += t2canCan3TxErrCount();
+    j += ",\"eflg\":";
+    j += t2canCan3Eflg();
     j += "}";
 #endif
     appendServiceDiagJson(j, now);
@@ -4377,6 +4440,7 @@ static void handleFrames()
         j += "{\"ts\":" + String(f.ts) +
              ",\"id\":" + String(f.id) +
              ",\"dlc\":" + String(f.dlc) +
+             ",\"bus\":" + String(f.bus) +
              ",\"data\":[";
         for (int b = 0; b < f.dlc; b++)
         {
@@ -4855,7 +4919,7 @@ static void handleRecDownload()
                            "%lu,%c,%u,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
                            static_cast<unsigned long>(record.ts),
                            record.dir ? record.dir : 'R',
-                           static_cast<unsigned>(record.bus == CAN_BUS_PARTY ? 2 : 1),
+                           static_cast<unsigned>(record.bus == CAN_BUS_PT ? 3 : (record.bus == CAN_BUS_PARTY ? 2 : 1)),
                            static_cast<unsigned long>(record.id),
                            static_cast<unsigned>(record.dlc),
                            static_cast<unsigned>(record.data[0]),
@@ -6024,6 +6088,16 @@ static void dashReadCpuLoad(uint8_t &core0Load, uint8_t &core1Load, bool &valid)
 #define DASH_BOARD_NAME "ESP32-S3R8"
 #endif
 
+// beta08: UI display name. The dashboard HTML historically hardcodes
+// "Atlas T-2CAN" as the product brand while module/board carry build
+// identifiers (the golden board's module is "LILYGO-T-2CAN" — a different
+// string on purpose), so the brand cannot be derived from module at
+// runtime without renaming every existing board's UI. Default here is the
+// exact legacy brand; board envs override (P4: Atlas-P4-3CAN).
+#ifndef DASH_PRODUCT_NAME
+#define DASH_PRODUCT_NAME "Atlas T-2CAN"
+#endif
+
 static void handleSystemStatus()
 {
 #ifdef ESP_PLATFORM
@@ -6103,6 +6177,7 @@ static void handleSystemStatus()
     String j = "{\"chip\":\"ESP32-S3\"";
     j += ",\"module\":\"" DASH_BOARD_NAME "\"";
     j += ",\"board\":\"" DASH_BOARD_NAME "\"";
+    j += ",\"product\":\"" DASH_PRODUCT_NAME "\"";
     j += ",\"target\":\"" CONFIG_IDF_TARGET "\"";
     j += ",\"cores\":" + String(chip.cores);
     j += ",\"revision\":" + String(chip.revision);

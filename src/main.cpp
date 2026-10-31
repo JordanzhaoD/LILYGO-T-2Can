@@ -177,6 +177,57 @@ static void t2canSetupSecondary()
 #endif
 }
 
+#ifdef DRIVER_P4_3CAN
+// beta08: CAN C (X179 18/19 PT powertrain bus) observation lane — third
+// native TWAI controller in LISTEN-ONLY mode. Never transmits, never ACKs,
+// and its frames never reach the vehicle handler: PT-bus traffic must not
+// touch the Legacy/HW3/HW4 engines or the recorder. This lane exists so
+// Ban Shield / autoshift development can capture PT frames from the UI.
+static std::unique_ptr<P4TwaiSecondaryDriver> appDriverTertiary;
+static volatile uint32_t t2canCan3Rx = 0;
+static uint8_t t2canCan3TxErr = 0;
+static uint8_t t2canCan3EflgV = 0;
+
+static void t2canSetupCan3()
+{
+    appDriverTertiary = std::make_unique<P4TwaiSecondaryDriver>(
+        GPIO_NUM_26, GPIO_NUM_27, 2, TWAI_MODE_LISTEN_ONLY);
+    if (!appDriverTertiary->init())
+    {
+        Serial.printf("CAN C (TWAI2) init failed (err=0x%x)\n",
+                      static_cast<int>(appDriverTertiary->lastError()));
+        return;
+    }
+    Serial.println("CAN C (TWAI2) ready @ 500k (listen-only)");
+}
+
+static void t2canDrainCan3()
+{
+    if (!appDriverTertiary)
+        return;
+    CanFrame f;
+    for (uint8_t budget = 16; budget; budget--)
+    {
+        if (!appDriverTertiary->read(f))
+            break;
+        t2canCan3Rx = t2canCan3Rx + 1;
+#ifdef ESP32_DASHBOARD
+        mcpDashSniffCan3(f);
+#endif
+    }
+    twai_status_info_t st;
+    if (appDriverTertiary->statusInfo(st))
+    {
+        t2canCan3TxErr = (uint8_t)st.tx_error_counter;
+        t2canCan3EflgV = (uint8_t)st.rx_error_counter;
+    }
+}
+
+uint32_t t2canCan3RxCount(void) { return t2canCan3Rx; }
+uint8_t t2canCan3TxErrCount(void) { return t2canCan3TxErr; }
+uint8_t t2canCan3Eflg(void) { return t2canCan3EflgV; }
+#endif
+
 // Transmit direct secondary-bus commands. Handler-driven Legacy NAG and smart
 // speed replies use the CanDriver instance that supplied their native frame.
 bool t2canSendSecondary(const CanFrame &frame)
@@ -807,6 +858,9 @@ static void app_main_setup()
     if (appDriverSecondary && dashDriver)
         appDriverSecondary->onSendFrame = dashDriver->onSendFrame;
 #endif
+#ifdef DRIVER_P4_3CAN
+    t2canSetupCan3();
+#endif
 }
 
 static bool app_main_loop()
@@ -861,6 +915,9 @@ static void app_can_task(void *)
                     dashOtaGuardStaleClears() + ")");
 #if defined(DRIVER_T2CAN_DUAL) || defined(DRIVER_P4_3CAN)
         t2canDrainSecondary();
+#ifdef DRIVER_P4_3CAN
+        t2canDrainCan3();
+#endif
         t2canServiceModeTick();
         t2canBus2HealthTick();
         t2canBurstTick();

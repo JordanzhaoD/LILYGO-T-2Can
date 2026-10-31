@@ -10,6 +10,9 @@
 // accept-all from construction — the recorder-bus default the MCP path
 // establishes via setReceiveAllMode() after init; the method stays as a
 // no-op so the shared call sites compile unchanged.
+// beta08: the ctor also takes (controllerId, mode) so CAN C (CanC, X179
+// 18/19 PT powertrain bus) reuses this class as a LISTEN-ONLY third
+// instance on controller 2 / GPIO 26-27 — observation only, never TX.
 
 #include "../can_frame_types.h"
 #include "can_driver.h"
@@ -33,8 +36,10 @@ public:
     static constexpr bool kSupportsISR = false;
 
     P4TwaiSecondaryDriver(gpio_num_t txPin = T2CAN_SECONDARY_TX_PIN,
-                          gpio_num_t rxPin = T2CAN_SECONDARY_RX_PIN)
-        : txPin_(txPin), rxPin_(rxPin) {}
+                          gpio_num_t rxPin = T2CAN_SECONDARY_RX_PIN,
+                          int controllerId = kSecondaryControllerId,
+                          twai_mode_t mode = TWAI_MODE_NORMAL)
+        : txPin_(txPin), rxPin_(rxPin), controllerId_(controllerId), mode_(mode) {}
 
     bool init() override
     {
@@ -52,7 +57,7 @@ public:
         // the primary) — and had it succeeded, reads/writes would have hit
         // the MAIN bus. Every call below is the _v2 handle form.
         g_config_ = TWAI_GENERAL_CONFIG_DEFAULT_V2(
-            kSecondaryControllerId, txPin_, rxPin_, TWAI_MODE_NORMAL);
+            controllerId_, txPin_, rxPin_, mode_);
         g_config_.rx_queue_len = TWAI_RX_QUEUE_LEN;
         g_config_.tx_queue_len = TWAI_TX_QUEUE_LEN;
 
@@ -238,11 +243,26 @@ private:
 
     gpio_num_t txPin_;
     gpio_num_t rxPin_;
+    // beta08: CAN C reuses this class as a listen-only third instance
+    // (controller 2, GPIO 26/27) — same mutex/_v2-handle shape, no TX path.
+    int controllerId_;
+    twai_mode_t mode_;
 
 public:
     // Last esp_err from install/start — printed by the caller on init failure
     // so field logs carry the reason, not a bare "init failed".
     esp_err_t lastError() const { return lastErr_; }
+
+    // beta08 listen-only third instance: receiver health for /status can3.
+    // Called from the same task as read(), so no lock is taken here.
+    // EFLG is an MCP2515 concept; TWAI's closest equivalents are the error
+    // counters (tx stays 0 in listen-only, rx counts receive-side errors).
+    bool statusInfo(twai_status_info_t &out)
+    {
+        if (!driverOK_)
+            return false;
+        return twai_get_status_info_v2(handle_, &out) == ESP_OK;
+    }
 
 private:
     esp_err_t lastErr_ = ESP_OK;

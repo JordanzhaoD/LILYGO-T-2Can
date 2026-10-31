@@ -816,6 +816,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
           <div class="stats">
             <div class="stat"><div class="stat-lbl">FSD-V14</div><div class="stat-val v-dim" id="ov-v14" data-i18n="待机">待机</div></div>
             <div class="stat"><div class="stat-lbl">CAN1 RX/TX</div><div class="stat-val v-info" id="s-rx">0/0</div></div>
+            <div class="stat" data-cap="can3"><div class="stat-lbl">CAN3 RX</div><div class="stat-val v-dim" id="s-can3-rx">--</div></div>
             <div class="stat"><div class="stat-lbl">TX Errors</div><div class="stat-val v-dim" id="s-txerr">0</div></div>
             <div class="stat"><div class="stat-lbl" data-i18n="跟随距离">跟随距离</div><div class="stat-val v-dim" id="s-fd">--</div></div>
             <div class="stat"><div class="stat-lbl" data-i18n="车辆 OTA">车辆 OTA</div><div class="stat-val v-acc" id="s-vota" data-i18n="正常">正常</div></div>
@@ -878,6 +879,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
         <div class="mobile-remote-grid">
           <div class="mobile-remote-card"><div class="lbl">CAN1</div><div class="val" id="m-can">--</div></div>
           <div class="mobile-remote-card" data-single-hide="1" data-cap="can2"><div class="lbl">CAN2</div><div class="val" id="m-can2">--</div></div>
+          <div class="mobile-remote-card" data-cap="can3"><div class="lbl">CAN3</div><div class="val" id="m-can3">--</div></div>
           <div class="mobile-remote-card"><div class="lbl" data-i18n="硬件模式">硬件模式</div><div class="val" id="m-hw">Auto</div></div>
           <div class="mobile-remote-card"><div class="lbl" data-i18n="帧率">帧率</div><div class="val" id="m-fps">0.0 Hz</div></div>
         </div>
@@ -2138,7 +2140,7 @@ var I18N={
   '未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。':'Unknown / invalid / SNA gears block injection by default; AP disconnect resets gate timing instantly. Enforced server-side in C++ (handlers.h) — the web UI cannot bypass it.',
 };
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
-var CAP={singleCan:false,can2Available:true,lightingBusSupported:true,serviceModeSupported:true,stalkTestSupported:true,bus2SnifferSupported:true,fsdActivation:true,speedStrategy:true,driveProfile:true,networkSettings:true,otaUpdate:true,canDiagnostics:true};
+var CAP={singleCan:false,can2Available:true,can3Available:false,lightingBusSupported:true,serviceModeSupported:true,stalkTestSupported:true,bus2SnifferSupported:true,fsdActivation:true,speedStrategy:true,driveProfile:true,networkSettings:true,otaUpdate:true,canDiagnostics:true};
 var PRODUCT_SINGLE_CAN_NAME='Atlas Single CAN';
 var PRODUCT_DUAL_CAN_NAME='Atlas T-2CAN';
 function isSingleCan(){return !!CAP.singleCan}
@@ -2151,6 +2153,7 @@ function applyProductMode(){
 }
 function capEnabled(name){
   if(name==='can2')return !!CAP.can2Available;
+  if(name==='can3')return !!CAP.can3Available;
   if(name==='lighting')return !!CAP.lightingBusSupported;
   return true;
 }
@@ -2295,7 +2298,17 @@ async function poll(){
 function renderStatus(d){
   var uptime=(d.uptime!==undefined)?d.uptime:(d.up||0);
   S.hw=d.hw;S.ci=d.ci;S.sp=d.sp;S.spa=d.spAuto;S.can=d.can;S.ia=d.ia;S.driveProfile=d.driveProfile!==undefined?d.driveProfile:S.driveProfile;
+  // beta08: board-supplied product name (P4 shows Atlas-P4-3CAN; every other
+  // board ships the legacy string and renders exactly as before). Set before
+  // applyCapabilities — it ends in applyProductMode.
+  if(d.product&&!isSingleCan())PRODUCT_DUAL_CAN_NAME=d.product;
   applyCapabilities(d.capabilities||{});
+  // beta08 P4: CAN C observation lane counters ride /status alongside can2.
+  var c3=d.can3;
+  setText('s-can3-rx',c3?String(c3.rx):'--');
+  setCls('s-can3-rx','stat-val '+(c3&&c3.rx>0?'v-info':'v-dim'));
+  setCls('m-can3','stat-val '+(c3&&c3.rx>0?'v-ok':'v-dim'));
+  setText('m-can3',c3&&c3.rx>0?'Online':'Idle');
   S.hw3OffsetSlew=d.hw3OffsetSlew;S.hw3SlewRate=d.hw3SlewRate;
   S.hw3CustomSpeed=d.hw3CustomSpeed;
   S.hw3CustomTarget=d.hw3CustomTarget||[45,60,75,90,105];
@@ -3709,14 +3722,18 @@ function renderSniffer(){
     var fr=sniffFrames[i];
     var idStr=toHex(fr.id);
     var name=fr.name||'';
-    if(f&&idStr.toLowerCase().indexOf(f)<0&&name.toLowerCase().indexOf(f)<0)continue;
+    // beta08 P4: every frame carries its bus of origin; show the tag (and
+    // let the filter match it) only when the third bus exists, so dual-CAN
+    // boards render byte-identically to beta07.
+    var busTag=CAP.can3Available?('CAN'+(fr.bus||1)):'RX';
+    if(f&&idStr.toLowerCase().indexOf(f)<0&&name.toLowerCase().indexOf(f)<0&&busTag.toLowerCase().indexOf(f)<0)continue;
     count++;
     var dataStr='';
     if(fr.data){for(var j=0;j<fr.data.length;j++){if(j)dataStr+=' ';dataStr+=('0'+fr.data[j].toString(16).toUpperCase()).slice(-2)}}
     var rowCls=(name.toLowerCase().indexOf('err')>=0||idStr.toLowerCase().indexOf('txerr')>=0)?'warn':'';
     var dlc=(fr.dlc!==undefined)?fr.dlc:(fr.data?fr.data.length:'--');
     html+='<div class="diag-priority-row '+rowCls+'"><span class="hex">'+idStr+(name?' <span style="color:var(--tx3);font-size:10px">'+escHtml(name)+'</span>':'')
-      +'</span><span>RX</span><span>'+dlc+'</span><span class="hex">'+dataStr+'</span><span>--</span></div>';
+      +'</span><span>'+busTag+'</span><span>'+dlc+'</span><span class="hex">'+dataStr+'</span><span>--</span></div>';
   }
   rows.innerHTML=html;
   setText('sniff-count',count+T(' 实时帧'));

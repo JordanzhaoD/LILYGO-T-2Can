@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.0.0-beta08] - 2026-11-01
+
 ### Added
 
 - **P4-3CAN board: ESP32-P4 with dual native TWAI.** The firmware now
@@ -9,8 +11,26 @@
   3x SN65HVD230 CAN transceiver board): CanA (X197 13/14) on TWAI0 as
   the primary vehicle bus, and CanB (X197 9/10) on a second native TWAI
   controller where the T-2CAN board uses its MCP2515 over SPI. Feature
-  and UI parity with 6.0.0-beta07 - the board name is the only visible
-  difference. CanC (TWAI2) stays unused in this first cut.
+  and UI parity with the T-2CAN dual build; the board name is the only
+  visible difference.
+- **P4-3CAN: CAN C observation lane - the third bus is live.** CanC
+  (X179 18/19, PT powertrain bus) now runs on TWAI2 in listen-only mode:
+  it never transmits and never ACKs, its frames never reach the vehicle
+  handlers or evidence counters, and it exists so upcoming features
+  (Ban Shield, autoshift) can observe the powertrain bus. On the P4
+  board the overview gains a CAN3 status card, and the diagnostics
+  live-frame view tags every frame with its bus (CAN1/CAN2/CAN3, also
+  matched by the filter box). All other boards report
+  `can3Available:false` and render exactly as before.
+- **Recorder captures all three buses.** CAN C frames enter the
+  recorder alongside CAN A/B with bus tag 3 in the CSV export; PT-bus
+  records are excluded from the 0x399/0x045/0x3C2 evidence counters so a
+  gateway mirror on the powertrain bus cannot inflate vehicle evidence.
+- **Board-supplied product name.** `/system_status` now carries
+  `product`; the UI brand follows it when present. The firmware default
+  is the exact legacy "Atlas T-2CAN" string, so every existing board's
+  UI is unchanged - the P4-3CAN board introduces itself as
+  "Atlas-P4-3CAN" (was: hardcoded T-2CAN brand on every board).
 
 ## [6.0.0-beta07] - 2026-10-30
 

@@ -2155,7 +2155,7 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
-        self.assertEqual("6.0.0-beta07", self.version.strip())
+        self.assertEqual("6.0.0-beta08", self.version.strip())
         self.assertIn('file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" PROJECT_VER LIMIT_COUNT 1)', self.cmake)
         self.assertIn("## [4.0.2] - 2026-05-31", self.changelog)
         self.assertIn("lilygo_t2can_dual", self.tests_workflow)
@@ -2586,7 +2586,12 @@ class DashboardApiContractTests(unittest.TestCase):
             self.assertIn(token, self.main)
         can_task = self.main.split("static void app_can_task(void *)", 1)[1][:2500]
         tick_idx = can_task.find("if (dashOtaGuardTick((uint32_t)millis()))")
-        dual_idx = can_task.find("#ifdef DRIVER_T2CAN_DUAL")
+        # b337c41 (P4 port) widened the dual-bus drain guard to
+        # "#if defined(DRIVER_T2CAN_DUAL) || defined(DRIVER_P4_3CAN)"; the
+        # marker tracks the combined form. Intent unchanged: the guard tick
+        # sits before the dual-bus drain block so BOTH builds degrade the
+        # wedge.
+        dual_idx = can_task.find("#if defined(DRIVER_T2CAN_DUAL)")
         self.assertGreater(tick_idx, -1)
         self.assertGreater(dual_idx, -1)
         self.assertLess(
@@ -2711,6 +2716,114 @@ class DashboardApiContractTests(unittest.TestCase):
         for env in ("native_ota_guard", "native_3ee_cadence"):
             self.assertIn(f"[env:{env}]", pio_src)
             self.assertIn(f"test_filter = test_{env}", pio_src)
+
+    # ── 6.0.0-beta08: P4-3CAN third-bus observation lane ──────────────────
+
+    def test_can3_capability_gate_is_p4_only(self) -> None:
+        """beta08 (P4): CAN C exists on the surface only when the firmware
+        says so — kDashCan3Available is compiled true solely for the P4 env,
+        rides the capabilities JSON, and the UI default is false so every
+        other board's UI renders byte-identically to beta07."""
+        self.assertIn(
+            "#if defined(DRIVER_P4_3CAN)\n"
+            "static constexpr bool kDashCan3Available = true;\n"
+            "#else\n"
+            "static constexpr bool kDashCan3Available = false;\n"
+            "#endif",
+            self.dash,
+        )
+        self.assertIn('"can3Available"', self.dash)
+        # capabilities emission is unconditional so old UIs just see false
+        self.assertIn('j += kDashCan3Available ? "true" : "false";', self.dash)
+        # UI defaults off, gate wired through capEnabled
+        self.assertIn("can3Available:false", self.ui)
+        self.assertIn("if(name==='can3')return !!CAP.can3Available;", self.ui)
+
+    def test_can3_status_object_and_counters(self) -> None:
+        """beta08 (P4): /status carries a can3 object (rx/txerr/eflg) under
+        the P4 guard, fed by main.cpp accessors — same shape contract as the
+        can2 object beside it."""
+        self.assertIn('j += ",\\"can3\\":{\\"rx\\":";', self.dash)
+        self.assertIn('t2canCan3RxCount()', self.dash)
+        self.assertIn("uint32_t t2canCan3RxCount(void);", self.dash)
+        self.assertIn("uint8_t t2canCan3Eflg(void);", self.dash)
+        self.assertIn("uint8_t t2canCan3TxErrCount(void);", self.dash)
+        # main.cpp defines the counters and never routes CanC into the
+        # vehicle handler
+        self.assertIn("t2canCan3RxCount", self.main)
+        self.assertIn("mcpDashSniffCan3", self.main)
+        self.assertIn("mcpDashSniffCan3", self.dash)
+
+    def test_can3_driver_is_listen_only_third_controller(self) -> None:
+        """beta08 (P4): CAN C = TWAI controller 2 on GPIO 26/27 in
+        TWAI_MODE_LISTEN_ONLY — observation lane, no ACK, no TX path; the
+        tertiary drain must not feed appActiveHandler (PT-bus frames would
+        poison the Legacy vehicle logic)."""
+        self.assertIn("TWAI_MODE_LISTEN_ONLY", self.main)
+        self.assertIn("GPIO_NUM_26", self.main)
+        self.assertIn("GPIO_NUM_27", self.main)
+        drain = self.main.split("t2canDrainCan3", 1)
+        self.assertGreater(
+            len(drain), 1, "t2canDrainCan3 not found in main.cpp"
+        )
+        drain_body = self.main[self.main.find("static void t2canDrainCan3") : self.main.find("static void t2canDrainCan3") + 700]
+        self.assertIn("mcpDashSniffCan3", drain_body)
+        self.assertNotIn("appActiveHandler", drain_body)
+        # driver class must expose a controller/mode parameterization
+        self.assertIn(
+            "P4TwaiSecondaryDriver(gpio_num_t txPin = T2CAN_SECONDARY_TX_PIN,",
+            (ROOT / "include" / "drivers" / "p4_twai_secondary.h").read_text(encoding="utf-8"),
+        )
+
+    def test_frames_json_carries_bus_tag(self) -> None:
+        """beta08 (P4): every sniffer frame is tagged with its bus of origin
+        (1=CAN A, 2=CAN B, 3=CAN C) so the diagnostics live view can show and
+        filter all three buses."""
+        self.assertIn("uint8_t bus;", self.dash)  # SniffFrame member
+        self.assertIn('\\"bus\\":', self.dash)
+        # the bus number mapping lives in sniffPush (PT->3, PARTY->2, else 1)
+        self.assertIn("CAN_BUS_PT", self.dash)
+        self.assertIn("CAN_BUS_PT = 1 << 3", (ROOT / "include" / "can_frame_types.h").read_text(encoding="utf-8"))
+        # UI renders the tag only when the third bus exists
+        self.assertIn("busTag", self.ui)
+
+    def test_product_name_flows_from_firmware(self) -> None:
+        """beta08: the UI brand was hardcoded 'Atlas T-2CAN'; boards now ship
+        their display name via /system_status product. The firmware default
+        is the exact legacy string so every non-P4 board's UI is unchanged;
+        the P4 envs override to Atlas-P4-3CAN (Jordan's UI feedback:
+        板名还是 Atlas T-2CAN)."""
+        self.assertIn(
+            '#ifndef DASH_PRODUCT_NAME\n#define DASH_PRODUCT_NAME "Atlas T-2CAN"\n#endif',
+            self.dash,
+        )
+        product_emission = ',\\"product\\":\\"' + '" DASH_PRODUCT_NAME "\\"'
+        self.assertIn(product_emission, self.dash)
+        # UI applies the server name after the first /status poll
+        self.assertIn("PRODUCT_DUAL_CAN_NAME=d.product", self.ui)
+        # P4 envs override the brand
+        pio = (ROOT / "platformio.ini").read_text(encoding="utf-8")
+        self.assertEqual(pio.count('-DDASH_PRODUCT_NAME=\\"Atlas-P4-3CAN\\"'), 2)
+
+    def test_can3_frames_reach_recorder_with_bus3(self) -> None:
+        """beta08 (P4, Jordan directive 2026-11-01: 记录器实现三路CAN数据帧
+        的录制): the diagnostics RECORDER captures all three buses — CanC
+        frames enter the recorder queue as RX records, the CSV export maps
+        CAN_BUS_PT to bus 3, and PT frames never feed the vehicle evidence
+        counters (a gateway mirror of 0x399/0x045 on the powertrain bus
+        must not inflate can1/can2 evidence)."""
+        self.assertIn("dashRecordCanFrame(tagged, 'R')", self.dash)
+        self.assertIn("record.bus == CAN_BUS_PT ? 3", self.dash)
+        self.assertIn("if (record.bus == CAN_BUS_PT)", self.dash)
+
+    def test_can3_status_cards_in_ui(self) -> None:
+        """beta08 (P4): CAN3 status surfaces where CAN2 does — an overview
+        stat, a mobile remote card — both behind data-cap='can3' so they
+        stay hidden on dual/single-CAN boards."""
+        self.assertIn('data-cap="can3"', self.ui)
+        self.assertIn('id="m-can3"', self.ui)
+        self.assertIn('id="s-can3-rx"', self.ui)
+        self.assertIn("d.can3", self.ui)
 
     def test_status_json_reconstruction_guard(self) -> None:
         """Full-endpoint mechanical reconstruction guard.
