@@ -1750,7 +1750,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div id="rv2-sessions" style="color:var(--tx3);font-size:12px">暂无会话</div>
     </div>
   </div>
-  <details id="rec-advanced" class="card" style="padding:12px 16px">
+  <details id="rec-advanced" class="card" style="padding:12px 16px" open>
     <summary style="cursor:pointer;font-weight:800" data-i18n="高级设置">高级设置</summary>
     <div class="card" style="margin-top:12px;margin-bottom:0">
     <div class="card-title" data-i18n="CAN 记录器">CAN 记录器</div>
@@ -2229,6 +2229,11 @@ function applyCapabilities(c){
   var canRow=$('ov-can-row');
   if(canRow)canRow.classList.toggle('m5',capEnabled('can2'));
   if(canRow)canRow.classList.toggle('m6',capEnabled('can3'));
+  // recorder v2: the legacy fold ships OPEN so boards without it keep the
+  // flat layout; only P4 closes it, once — re-closing on every 2s poll
+  // would fight a user who just opened the details by hand.
+  var recAdv=document.getElementById('rec-advanced');
+  if(recAdv&&!recAdv.dataset.gated){recAdv.open=!capEnabled('recorderV2');recAdv.dataset.gated='1'}
   applyProductMode();
 }
 function applyI18n(){

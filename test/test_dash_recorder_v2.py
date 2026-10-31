@@ -490,3 +490,71 @@ class DashRecorderV2UiBenchBugTests(unittest.TestCase):
         self.assertIn(
             "rv2Poll", body,
             "toggleLanguage re-polls recorder v2 dynamic labels")
+
+
+class DashRecorderV2FinalReviewTests(unittest.TestCase):
+    """Final whole-branch review fixes (fable reviewer, 2026-11-01).
+
+    Finding 1 (Important): loss_badge was `(overflowDelta > 0) ||
+    (windowUs > liveSpanUs())` evaluated AFTER the bin write — once the ring
+    reached steady-state full every submit evicts, so every session lit the
+    badge (D7 says evictions past the window are harmless), and the live span
+    read post-write shrank further during multi-second SPIFFS writes. Boot
+    truncation (window > young ring, zero evictions) also lit it.
+
+    Fix: badge = evictions-since-lock AND window beyond the retention the
+    SCAN snapshot saw. Loss ⇒ both; boot truncation ⇒ delta 0 ⇒ quiet.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.rec2 = REC2.read_text(encoding="utf-8")
+        cls.src = (ROOT / "include" / "web" /
+                   "mcp2515_dashboard_ui.src.h").read_text(encoding="utf-8")
+
+    def test_loss_badge_is_and_of_eviction_delta_and_span(self) -> None:
+        self.assertIn(
+            "(overflowAtScan > recV2OverflowAtLock) &&", self.rec2,
+            "badge needs BOTH an actual eviction since lock AND a window "
+            "reaching past the retention the scan saw — OR makes it "
+            "always-true once the ring is full")
+        self.assertIn("(windowUs > spanUs)", self.rec2)
+        self.assertNotIn(
+            "(overflowNow > recV2OverflowAtLock) ||", self.rec2,
+            "the pre-fix OR form must be gone")
+
+    def test_flush_reads_badge_inputs_from_scan_snapshot(self) -> None:
+        # The scan snapshot (head/count critical section) is the moment the
+        # retained set is decided; a live dashRecV2SpanUs() at meta-write
+        # time reads a ring that kept advancing during multi-second writes.
+        flush_at = self.rec2.index("static void recV2FlushTask")
+        flush_end = self.rec2.index("static void dashRecV2SetTwaiMissed")
+        body = self.rec2[flush_at:flush_end]
+        self.assertIn("overflowAtScan = ringOverflow", body,
+                      "overflow delta read next to the scan snapshot")
+        self.assertIn("uint32_t spanUs = count ? (uint32_t)(newestTs - oldestTs) : 0",
+                      body,
+                      "span derived from the snapshot's oldest/newest, "
+                      "0 when the ring is empty")
+        self.assertNotIn(
+            "dashRecV2SpanUs()", body,
+            "flush must not read the live span — the writer keeps "
+            "advancing the ring during SPIFFS writes")
+
+    def test_legacy_fold_defaults_open_and_gates_once(self) -> None:
+        # Finding 2 (Important): the <details> fold changed the legacy
+        # recorder layout on T2CAN too, against the spec's zero-behavior-
+        # change anti-goal. Default `open` restores the flat layout on
+        # every board; only P4 (recorderV2 capability) closes it, once —
+        # a forced re-close every 2s poll would fight the user's click.
+        self.assertRegex(
+            self.src, r'id="rec-advanced"[^>]*\bopen\b',
+            "the legacy fold ships open so non-P4 boards keep the flat "
+            "layout")
+        self.assertIn(
+            "recAdv.open=!capEnabled('recorderV2')", self.src,
+            "P4 closes the fold via the capability, not the static HTML")
+        self.assertIn(
+            "recAdv.dataset.gated='1'", self.src,
+            "the fold is gated once — later polls must not re-close a "
+            "details the user just opened")

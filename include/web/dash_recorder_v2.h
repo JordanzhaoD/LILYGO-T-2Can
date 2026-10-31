@@ -441,7 +441,18 @@ static void recV2FlushTask(void *)
 
     portENTER_CRITICAL(&recV2Mux);
     uint32_t head = ringHead, count = ringCount;
+    // Badge inputs come from this same scan snapshot: by meta-write time the
+    // ring has kept advancing (SPIFFS writes take seconds) and a live span
+    // read there would false-positive the loss badge.
+    uint32_t oldestTs = count ? ring[head].tsUs : 0;
+    uint32_t lastIdx = count ? (head + count - 1) : 0;
+    if (count && lastIdx >= ringCapacity)
+        lastIdx -= ringCapacity;
+    uint32_t newestTs = count ? ring[lastIdx].tsUs : 0;
+    uint32_t overflowAtScan = ringOverflow;
     portEXIT_CRITICAL(&recV2Mux);
+    // Retention the scan actually saw (0 µs when the ring is empty).
+    uint32_t spanUs = count ? (uint32_t)(newestTs - oldestTs) : 0;
 
     File recFile = SPIFFS.open(binPath, "w");
     if (!recFile)
@@ -497,8 +508,15 @@ static void recV2FlushTask(void *)
     }
 
     uint32_t overflowNow = ringOverflow;
-    bool overflowInWindow = (overflowNow > recV2OverflowAtLock) ||
-                            (windowUs > dashRecV2SpanUs());
+    // D7: evictions that only removed frames older than this window are
+    // harmless — they were rolling out regardless. The badge lights only
+    // when the ring actually evicted since lock (frames were LOST, not
+    // merely never recorded after boot) AND the window reaches past the
+    // retention the scan saw. Both from the scan snapshot: once the ring
+    // reaches steady-state full every submit evicts, so an OR here (the
+    // pre-review form) made the badge always-true (final review, 2026-11-01).
+    bool overflowInWindow = (overflowAtScan > recV2OverflowAtLock) &&
+                            (windowUs > spanUs);
 
     if (writeFailed)
     {
