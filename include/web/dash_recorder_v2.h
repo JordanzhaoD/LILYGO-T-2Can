@@ -19,6 +19,9 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <string.h>
+#include <sys/stat.h>
+
+#include <ArduinoJson.h>
 
 #include "can_frame_types.h"
 
@@ -230,6 +233,78 @@ static bool recV2RemoveSession(uint32_t seq)
 {
     SPIFFS.remove(recV2MetaPath(seq));
     return SPIFFS.remove(recV2BinPath(seq));
+}
+
+// Bin size via stat() — the espidf File shim has no size().
+static size_t recV2FileSize(const String &path)
+{
+    struct stat st;
+    return (stat(path.c_str(), &st) == 0) ? (size_t)st.st_size : 0;
+}
+
+// Sessions list, newest first: one JSON object per on-flash meta.
+static String dashRecV2SessionsJson()
+{
+    uint32_t seqs[32];
+    size_t n = recV2ScanSessions(seqs, 32);
+    // ascending insertion sort, then walk backwards → newest first
+    for (size_t i = 1; i < n; i++)
+    {
+        uint32_t key = seqs[i];
+        int k = (int)i - 1;
+        while (k >= 0 && seqs[k] > key)
+        {
+            seqs[k + 1] = seqs[k];
+            k--;
+        }
+        seqs[k + 1] = key;
+    }
+    String j = "[";
+    for (int i = (int)n - 1; i >= 0; i--)
+    {
+        uint32_t seq = seqs[i];
+        if (i < (int)n - 1)
+            j += ",";
+        j += R"JSON({"seq":)JSON";
+        j += String(seq);
+        JsonDocument doc;
+        File mf = SPIFFS.open(recV2MetaPath(seq), "r");
+        if (mf)
+        {
+            String body = mf.readString();
+            mf.close();
+            deserializeJson(doc, body);
+        }
+        if (!doc["wall"].isNull())
+        {
+            j += R"JSON(,"wall":")JSON";
+            j += String((const char *)doc["wall"]);
+            j += "\"";
+        }
+        j += R"JSON(,"boot_ms":)JSON";
+        j += String(doc["boot_ms"] | 0UL);
+        j += R"JSON(,"pre_ms_act":)JSON";
+        j += String(doc["pre_ms_act"] | 0UL);
+        j += R"JSON(,"post_ms":)JSON";
+        j += String(doc["post_ms"] | 0UL);
+        j += R"JSON(,"bus_mask":)JSON";
+        j += String(doc["bus_mask"] | 0U);
+        j += R"JSON(,"frames":{"a":)JSON";
+        j += String(doc["frames"]["a"] | 0UL);
+        j += R"JSON(,"b":)JSON";
+        j += String(doc["frames"]["b"] | 0UL);
+        j += R"JSON(,"c":)JSON";
+        j += String(doc["frames"]["c"] | 0UL);
+        j += R"JSON(,"tx":)JSON";
+        j += String(doc["frames"]["tx"] | 0UL);
+        j += R"JSON(},"size":)JSON";
+        j += String((uint32_t)recV2FileSize(recV2BinPath(seq)));
+        j += R"JSON(,"loss_badge":)JSON";
+        j += String(doc["ring_overflow_in_window"] | false ? "true" : "false");
+        j += "}";
+    }
+    j += "]";
+    return j;
 }
 
 // Rolling-delete space reclaim: drop oldest sessions (keeping >= 1) until

@@ -190,5 +190,61 @@ class DashRecorderV2LockContractTests(unittest.TestCase):
                           f"session meta records {token}")
 
 
+class DashRecorderV2SessionsContractTests(unittest.TestCase):
+    """Task 3: session list / download (csv|bin) / delete API."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dash = DASH.read_text(encoding="utf-8")
+        cls.rec2 = (
+            REC2.read_text(encoding="utf-8") if REC2.exists() else ""
+        )
+
+    def test_download_validates_frame_alignment(self) -> None:
+        self.assertIn(
+            "size % sizeof(RecRingFrame)", self.dash,
+            "download refuses files whose size is not a whole record count")
+        self.assertIn(
+            "corrupt", self.dash,
+            "the alignment failure names the problem")
+
+    def test_csv_header_exact(self) -> None:
+        self.assertIn(
+            "ts_us,bus,dir,id,dlc,b0,b1,b2,b3,b4,b5,b6,b7", self.dash,
+            "CSV header is frozen (tools parse it positionally)")
+
+    def test_delete_removes_bin_and_meta(self) -> None:
+        self.assertIn(
+            "recV2RemoveSession", self.dash,
+            "delete handler routes through the both-files remover")
+        helper_at = self.rec2.index("recV2RemoveSession")
+        helper = self.rec2[helper_at:helper_at + 220]
+        self.assertGreaterEqual(
+            helper.count("SPIFFS.remove"), 2,
+            "the remover drops meta AND bin")
+
+    def test_sessions_json_newest_first(self) -> None:
+        self.assertIn("dashRecV2SessionsJson", self.rec2)
+        self.assertRegex(
+            self.rec2, r">= 0; i--",
+            "list is emitted newest-first (descending seq)")
+
+    def test_sessions_json_fields(self) -> None:
+        for token in ('"seq"', '"boot_ms"', '"pre_ms_act"', '"post_ms"',
+                      '"bus_mask"', '"frames"', '"size"', '"loss_badge"'):
+            self.assertIn(token, self.rec2,
+                          f"sessions list exposes {token}")
+
+    def test_routes_registered(self) -> None:
+        self.assertIn(
+            'server.on("/sessions", HTTP_GET, handleSessions)', self.dash)
+        self.assertIn(
+            'server.on("/session_download", HTTP_GET, handleSessionDownload)',
+            self.dash)
+        self.assertIn(
+            'server.on("/session_delete", HTTP_POST, handleSessionDelete)',
+            self.dash)
+
+
 if __name__ == "__main__":
     unittest.main()

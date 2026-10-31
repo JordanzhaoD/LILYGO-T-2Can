@@ -8096,6 +8096,150 @@ static void handleRingStatus()
 {
     server.send(200, "application/json", dashRecV2StatusJson());
 }
+
+// GET /sessions — session list, newest first.
+static void handleSessions()
+{
+    server.send(200, "application/json", dashRecV2SessionsJson());
+}
+
+// GET /session_download?seq=&fmt=csv|bin — chunked stream (handleRecDownload
+// precedent). A bin whose size is not a whole record count is refused, never
+// streamed: truncated tails must not masquerade as valid frames.
+static void handleSessionDownload()
+{
+    if (!server.hasArg("seq"))
+    {
+        server.send(400, "text/plain", "missing seq");
+        return;
+    }
+    uint32_t seq = (uint32_t)server.arg("seq").toInt();
+    String fmt = server.arg("fmt");
+    fmt.toLowerCase();
+    String binPath = recV2BinPath(seq);
+    if (!SPIFFS.exists(binPath))
+    {
+        server.send(404, "text/plain", "session not found");
+        return;
+    }
+    size_t size = recV2FileSize(binPath);
+    if (size % sizeof(RecRingFrame) != 0)
+    {
+        server.send(500, "text/plain",
+                    "corrupt session file (size is not a whole record count)");
+        return;
+    }
+    File f = SPIFFS.open(binPath, "r");
+    if (!f)
+    {
+        server.send(500, "text/plain", "session file open failed");
+        return;
+    }
+    if (fmt == "bin")
+    {
+        String name = "attachment; filename=\"sess_" + String(seq) + ".bin\"";
+        server.sendHeader("Content-Disposition", name.c_str());
+        if (!server.beginChunkedResponse(200, "application/octet-stream"))
+        {
+            f.close();
+            return;
+        }
+        uint8_t buf[64 * sizeof(RecRingFrame)];
+        size_t got;
+        while ((got = f.read(buf, sizeof(buf))) > 0)
+        {
+            if (!server.sendChunk((const char *)buf, got))
+                break;
+        }
+        f.close();
+        server.endChunkedResponse();
+        return;
+    }
+    // csv (default)
+    String name = "attachment; filename=\"sess_" + String(seq) + ".csv\"";
+    server.sendHeader("Content-Disposition", name.c_str());
+    if (!server.beginChunkedResponse(200, "text/csv"))
+    {
+        f.close();
+        return;
+    }
+    static const char kHeader[] =
+        "ts_us,bus,dir,id,dlc,b0,b1,b2,b3,b4,b5,b6,b7\n";
+    if (!server.sendChunk(kHeader, sizeof(kHeader) - 1))
+    {
+        f.close();
+        return;
+    }
+    RecRingFrame record;
+    char line[128];
+    uint32_t rows = 0;
+    while (f.read(reinterpret_cast<uint8_t *>(&record), sizeof(record)) ==
+           sizeof(record))
+    {
+        uint8_t bus = record.flags & 0x03;
+        uint8_t dirBits = (record.flags >> 2) & 0x03;
+        char dir = dirBits == 1 ? 'T' : (dirBits == 2 ? 'E' : 'R');
+        int len = snprintf(line, sizeof(line),
+                           "%lu,%u,%c,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+                           static_cast<unsigned long>(record.tsUs),
+                           static_cast<unsigned>(bus),
+                           dir,
+                           static_cast<unsigned long>(record.id),
+                           static_cast<unsigned>(record.dlc),
+                           static_cast<unsigned>(record.data[0]),
+                           static_cast<unsigned>(record.data[1]),
+                           static_cast<unsigned>(record.data[2]),
+                           static_cast<unsigned>(record.data[3]),
+                           static_cast<unsigned>(record.data[4]),
+                           static_cast<unsigned>(record.data[5]),
+                           static_cast<unsigned>(record.data[6]),
+                           static_cast<unsigned>(record.data[7]));
+        if (len <= 0 || !server.sendChunk(line, static_cast<size_t>(len)))
+            break;
+        if ((++rows & 0xFFU) == 0)
+            vTaskDelay(1);
+    }
+    f.close();
+    server.endChunkedResponse();
+}
+
+// POST /session_delete {seq} — removes meta + bin for one session.
+static void handleSessionDelete()
+{
+    uint32_t seq = 0;
+    bool have = false;
+    if (server.hasArg("plain"))
+    {
+        JsonDocument doc;
+        String body = server.arg("plain");
+        if (deserializeJson(doc, body) == DeserializationError::Ok &&
+            doc["seq"].is<unsigned>())
+        {
+            seq = doc["seq"].as<unsigned>();
+            have = true;
+        }
+    }
+    if (!have && server.hasArg("seq"))
+    {
+        seq = (uint32_t)server.arg("seq").toInt();
+        have = true;
+    }
+    if (!have)
+    {
+        server.send(400, "text/plain", "missing seq");
+        return;
+    }
+    if (!SPIFFS.exists(recV2BinPath(seq)))
+    {
+        server.send(404, "text/plain", "session not found");
+        return;
+    }
+    if (recV2RemoveSession(seq))
+        server.send(200, "application/json",
+                    "{\"ok\":true,\"seq\":" + String(seq) + "}");
+    else
+        server.send(500, "text/plain", "session delete failed");
+}
 #endif // DASH_RECORDER_V2
 
 static void dashInitHandlers()
@@ -8282,6 +8426,9 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 #if defined(DASH_RECORDER_V2)
     server.on("/ring_lock", HTTP_POST, handleRingLock);
     server.on("/ring_status", HTTP_GET, handleRingStatus);
+    server.on("/sessions", HTTP_GET, handleSessions);
+    server.on("/session_download", HTTP_GET, handleSessionDownload);
+    server.on("/session_delete", HTTP_POST, handleSessionDelete);
 #endif
     server.on("/disable", HTTP_POST, handleDisable);
     server.on("/reboot", HTTP_GET, handleReboot);
