@@ -1446,6 +1446,23 @@ static String dashGatewayStatusJson()
     j += hasStaInfo ? String(staInfo.primary) : String("0");
     j += ",\"same_channel\":";
     j += (hasStaInfo && apChannel > 0 && staInfo.primary == apChannel) ? "true" : "false";
+    // AP-side link diagnostics (2026-11-01 field triage): client join/leave
+    // counts, last leave reason, operating home channel and PS readback.
+    j += ",\"home_channel\":";
+    j += String(WiFi.homeChannel());
+    j += ",\"ap_sta_connects\":";
+    j += String(WiFi.apStaConnectEvents());
+    j += ",\"ap_sta_disconnects\":";
+    j += String(WiFi.apStaDisconnectEvents());
+    j += ",\"ap_last_disc_reason\":";
+    j += String(WiFi.apLastDisconnectReason());
+    j += ",\"ap_last_disc_reason_name\":\"";
+    j += WiFi.apLastDisconnectReasonName();
+    j += "\",\"ap_last_event_ms_ago\":";
+    j += String(millis() - WiFi.apLastEventMs());
+    j += ",\"wifi_ps\":\"";
+    j += WiFi.psReadbackName();
+    j += "\"";
     j += ",\"blocked\":";
     j += String(gatewayBlockedDomainCount);
     j += ",\"dns_cache_psram\":";

@@ -444,6 +444,15 @@ public:
     const char *lastDisconnectReasonName() const;
     void disconnect(bool wifioff = false, bool eraseap = false);
     void config(IPAddress local, IPAddress gateway, IPAddress subnet, IPAddress dns);
+    // AP-side link diagnostics (2026-11-01 field triage): see espidf_runtime.cpp
+    // event handler and the /gateway_status JSON in dash_gateway.h.
+    unsigned apStaConnectEvents() const;
+    unsigned apStaDisconnectEvents() const;
+    uint8_t apLastDisconnectReason() const;
+    const char *apLastDisconnectReasonName() const;
+    unsigned long apLastEventMs() const;
+    uint8_t homeChannel() const;
+    const char *psReadbackName() const;
     IPAddress localIP();
     IPAddress softAPIP();
     int softAPgetStationNum();

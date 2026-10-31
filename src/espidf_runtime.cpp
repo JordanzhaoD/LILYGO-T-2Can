@@ -30,6 +30,17 @@ static volatile wl_status_t wifiStaStatus = WL_DISCONNECTED;
 static volatile uint8_t wifiLastDisconnectReason = 0;
 static bool wifiEventHandlersRegistered = false;
 
+// AP-side link diagnostics (2026-11-01 field triage): AP clients dropped after
+// the upstream STA joined, and AP-side events were previously silent. These
+// counters feed /gateway_status; the event logs below give the bench capture
+// its join/leave reason codes and the radio's home-channel movement.
+static volatile unsigned wifiApStaConnects = 0;
+static volatile unsigned wifiApStaDisconnects = 0;
+static volatile uint8_t wifiApLastDiscReason = 0;
+static volatile unsigned long wifiApLastEventMs = 0;
+static volatile uint8_t wifiHomeChannel = 0;
+static volatile uint8_t wifiHomeChannelPrev = 0;
+
 static void configureWifiLogLevels()
 {
     esp_log_level_set("wifi", ESP_LOG_WARN);
@@ -126,6 +137,34 @@ static void wifiEventHandler(void *, esp_event_base_t base, int32_t id, void *ev
                 wifiStaStatus = (wifiStaStatus == WL_CONNECTED) ? WL_CONNECTION_LOST : WL_DISCONNECTED;
                 break;
             }
+            break;
+        }
+        case WIFI_EVENT_AP_STACONNECTED:
+        {
+            wifi_event_ap_staconnected_t *e = static_cast<wifi_event_ap_staconnected_t *>(eventData);
+            wifiApStaConnects = wifiApStaConnects + 1;
+            wifiApLastEventMs = millis();
+            ESP_LOGI("wifiap", "client joined AP mac=%02x:%02x:%02x:%02x:%02x:%02x aid=%u",
+                     e->mac[0], e->mac[1], e->mac[2], e->mac[3], e->mac[4], e->mac[5], e->aid);
+            break;
+        }
+        case WIFI_EVENT_AP_STADISCONNECTED:
+        {
+            wifi_event_ap_stadisconnected_t *e = static_cast<wifi_event_ap_stadisconnected_t *>(eventData);
+            wifiApStaDisconnects = wifiApStaDisconnects + 1;
+            wifiApLastDiscReason = e->reason;
+            wifiApLastEventMs = millis();
+            ESP_LOGI("wifiap", "client left AP mac=%02x:%02x:%02x:%02x:%02x:%02x aid=%u reason=%u(%s)",
+                     e->mac[0], e->mac[1], e->mac[2], e->mac[3], e->mac[4], e->mac[5], e->aid,
+                     e->reason, wifiDisconnectReasonName(e->reason));
+            break;
+        }
+        case WIFI_EVENT_HOME_CHANNEL_CHANGE:
+        {
+            wifi_event_home_channel_change_t *e = static_cast<wifi_event_home_channel_change_t *>(eventData);
+            wifiHomeChannelPrev = e->old_chan;
+            wifiHomeChannel = e->new_chan;
+            ESP_LOGI("wifiap", "home channel %u -> %u", e->old_chan, e->new_chan);
             break;
         }
         default:
@@ -655,6 +694,54 @@ void WiFiClass::setSleep(bool enabled)
 {
     ensure();
     esp_wifi_set_ps(enabled ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
+}
+
+unsigned WiFiClass::apStaConnectEvents() const
+{
+    return wifiApStaConnects;
+}
+
+unsigned WiFiClass::apStaDisconnectEvents() const
+{
+    return wifiApStaDisconnects;
+}
+
+uint8_t WiFiClass::apLastDisconnectReason() const
+{
+    return wifiApLastDiscReason;
+}
+
+const char *WiFiClass::apLastDisconnectReasonName() const
+{
+    return wifiDisconnectReasonName(wifiApLastDiscReason);
+}
+
+unsigned long WiFiClass::apLastEventMs() const
+{
+    return wifiApLastEventMs;
+}
+
+uint8_t WiFiClass::homeChannel() const
+{
+    return wifiHomeChannel;
+}
+
+const char *WiFiClass::psReadbackName() const
+{
+    wifi_ps_type_t ps = WIFI_PS_NONE;
+    if (!initialized_ || esp_wifi_get_ps(&ps) != ESP_OK)
+        return "unknown";
+    switch (ps)
+    {
+    case WIFI_PS_MIN_MODEM:
+        return "min_modem";
+    case WIFI_PS_MAX_MODEM:
+        return "max_modem";
+    case WIFI_PS_NONE:
+        return "none";
+    default:
+        return "other";
+    }
 }
 
 bool WiFiClass::softAPConfig(IPAddress local, IPAddress gateway, IPAddress subnet)

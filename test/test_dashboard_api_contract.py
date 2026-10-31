@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 UI_SRC = ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h"
 UI_GEN = ROOT / "include" / "web" / "mcp2515_dashboard_ui.h"
 DASH = ROOT / "include" / "web" / "mcp2515_dashboard.h"
+GATEWAY = ROOT / "include" / "web" / "dash_gateway.h"
+RUNTIME = ROOT / "src" / "espidf_runtime.cpp"
 HANDLERS = ROOT / "include" / "handlers.h"
 LEGACY_SPEED = ROOT / "include" / "dash_legacy_speed.h"
 LEGACY_SMART_SPEED = ROOT / "include" / "dash_legacy_smart_offset.h"
@@ -27,6 +29,8 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.ui = UI_SRC.read_text(encoding="utf-8")
         cls.ui_gen = UI_GEN.read_text(encoding="utf-8")
         cls.dash = DASH.read_text(encoding="utf-8")
+        cls.gateway = GATEWAY.read_text(encoding="utf-8")
+        cls.runtime = RUNTIME.read_text(encoding="utf-8")
         cls.handlers = HANDLERS.read_text(encoding="utf-8")
         cls.legacy_speed = LEGACY_SPEED.read_text(encoding="utf-8")
         cls.legacy_smart_speed = LEGACY_SMART_SPEED.read_text(encoding="utf-8")
@@ -876,6 +880,36 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('void setUseFiltersMode()', mcp)
         self.assertIn('RXBnCTRL_RXM_STDEXT', mcp)
         self.assertIn('dev.clock_speed_hz = 10000000', mcp)
+
+    def test_gateway_ap_link_diagnostics_for_apsta_triage(self) -> None:
+        """2026-11-01 field triage: AP clients drop after upstream STA joins.
+
+        The AP↔STA coexistence hunt needs bench evidence that discriminates
+        channel-follow vs data-plane vs transport hypotheses. /gateway_status
+        must expose AP-side client events (join/leave counts, last leave
+        reason), the radio's operating home channel and the Wi-Fi power-save
+        readback; the runtime must log client join/leave with reason codes and
+        home-channel changes (previously AP-side events were silent).
+        """
+        for token in [
+            '\\"ap_sta_connects\\"',
+            '\\"ap_sta_disconnects\\"',
+            '\\"ap_last_disc_reason\\"',
+            '\\"ap_last_disc_reason_name\\"',
+            '\\"home_channel\\"',
+            '\\"wifi_ps\\"',
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, self.gateway)
+        for event in [
+            "WIFI_EVENT_AP_STACONNECTED",
+            "WIFI_EVENT_AP_STADISCONNECTED",
+            "WIFI_EVENT_HOME_CHANNEL_CHANGE",
+        ]:
+            with self.subTest(event=event):
+                self.assertIn(event, self.runtime)
+        with self.subTest(token="esp_wifi_get_ps readback"):
+            self.assertIn("esp_wifi_get_ps", self.runtime)
 
     def test_high_beam_shared_bus_limit_is_documented(self) -> None:
         """README should record that shared-bus injection cannot force high-beam during FSD."""
