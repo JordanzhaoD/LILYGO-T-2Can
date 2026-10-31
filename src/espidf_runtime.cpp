@@ -141,30 +141,60 @@ static void wifiEventHandler(void *, esp_event_base_t base, int32_t id, void *ev
         }
         case WIFI_EVENT_AP_STACONNECTED:
         {
+            // eventData may be NULL: payload-less under esp_wifi_remote.
             wifi_event_ap_staconnected_t *e = static_cast<wifi_event_ap_staconnected_t *>(eventData);
             wifiApStaConnects = wifiApStaConnects + 1;
             wifiApLastEventMs = millis();
-            ESP_LOGI("wifiap", "client joined AP mac=%02x:%02x:%02x:%02x:%02x:%02x aid=%u",
-                     e->mac[0], e->mac[1], e->mac[2], e->mac[3], e->mac[4], e->mac[5], e->aid);
+            if (e)
+                ESP_LOGI("wifiap", "client joined AP mac=%02x:%02x:%02x:%02x:%02x:%02x aid=%u",
+                         e->mac[0], e->mac[1], e->mac[2], e->mac[3], e->mac[4], e->mac[5], e->aid);
+            else
+                ESP_LOGI("wifiap", "client joined AP (no payload: remote event)");
             break;
         }
         case WIFI_EVENT_AP_STADISCONNECTED:
         {
+            // eventData may be NULL: payload-less under esp_wifi_remote.
             wifi_event_ap_stadisconnected_t *e = static_cast<wifi_event_ap_stadisconnected_t *>(eventData);
             wifiApStaDisconnects = wifiApStaDisconnects + 1;
-            wifiApLastDiscReason = e->reason;
             wifiApLastEventMs = millis();
-            ESP_LOGI("wifiap", "client left AP mac=%02x:%02x:%02x:%02x:%02x:%02x aid=%u reason=%u(%s)",
-                     e->mac[0], e->mac[1], e->mac[2], e->mac[3], e->mac[4], e->mac[5], e->aid,
-                     e->reason, wifiDisconnectReasonName(e->reason));
+            if (e)
+            {
+                wifiApLastDiscReason = e->reason;
+                ESP_LOGI("wifiap", "client left AP mac=%02x:%02x:%02x:%02x:%02x:%02x aid=%u reason=%u(%s)",
+                         e->mac[0], e->mac[1], e->mac[2], e->mac[3], e->mac[4], e->mac[5], e->aid,
+                         e->reason, wifiDisconnectReasonName(e->reason));
+            }
+            else
+                ESP_LOGI("wifiap", "client left AP (no payload: remote event, reason unknown)");
             break;
         }
         case WIFI_EVENT_HOME_CHANNEL_CHANGE:
         {
+            // eventData may be NULL: payload-less under esp_wifi_remote
+            // (bench-proven: boot panic-loop, Load access fault MTVAL=0).
             wifi_event_home_channel_change_t *e = static_cast<wifi_event_home_channel_change_t *>(eventData);
-            wifiHomeChannelPrev = e->old_chan;
-            wifiHomeChannel = e->new_chan;
-            ESP_LOGI("wifiap", "home channel %u -> %u", e->old_chan, e->new_chan);
+            if (e)
+            {
+                wifiHomeChannelPrev = e->old_chan;
+                wifiHomeChannel = e->new_chan;
+                ESP_LOGI("wifiap", "home channel %u -> %u", e->old_chan, e->new_chan);
+            }
+            else
+            {
+                // No old/new payload through the remote bridge: read the
+                // current channel back over RPC so the observable survives.
+                uint8_t ch = 0;
+                wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
+                if (esp_wifi_get_channel(&ch, &second) == ESP_OK)
+                {
+                    wifiHomeChannelPrev = wifiHomeChannel;
+                    wifiHomeChannel = ch;
+                    ESP_LOGI("wifiap", "home channel change (no payload), now=%u was=%u", ch, wifiHomeChannelPrev);
+                }
+                else
+                    ESP_LOGI("wifiap", "home channel change (no payload, readback failed)");
+            }
             break;
         }
         default:

@@ -910,6 +910,17 @@ class DashboardApiContractTests(unittest.TestCase):
                 self.assertIn(event, self.runtime)
         with self.subTest(token="esp_wifi_get_ps readback"):
             self.assertIn("esp_wifi_get_ps", self.runtime)
+        # 2026-11-01 bench regression: esp_wifi_remote republishes some wifi
+        # events on the host without a payload, so eventData can be NULL —
+        # the new cases must null-guard (like the STA_DISCONNECTED case
+        # always did) or the board panic-loops on home-channel-change at
+        # boot (Load access fault, MTVAL=0).
+        with self.subTest(token="payload-less guards in all three new cases"):
+            self.assertGreaterEqual(
+                self.runtime.count("payload-less under esp_wifi_remote"), 3
+            )
+        with self.subTest(token="home channel fallback read"):
+            self.assertIn("esp_wifi_get_channel", self.runtime)
 
     def test_high_beam_shared_bus_limit_is_documented(self) -> None:
         """README should record that shared-bus injection cannot force high-beam during FSD."""
