@@ -77,6 +77,17 @@ static_assert(sizeof(DASH_PASS) >= 9 && sizeof(DASH_PASS) <= 65, "DASH_PASS must
 #ifndef DASH_DEFAULT_HW
 #define DASH_DEFAULT_HW 1
 #endif
+// beta08: UI display name. The dashboard HTML historically hardcodes
+// "Atlas T-2CAN" as the product brand while module/board carry build
+// identifiers (the golden board's module is "LILYGO-T-2CAN" — a different
+// string on purpose), so the brand cannot be derived from module at
+// runtime without renaming every existing board's UI. Default here is the
+// exact legacy brand; board envs override (P4: Atlas-P4-3CAN). Defined
+// before the first string-concat use in handleStatus (beta09: the
+// post-hoc fallback at the old spot broke every env without -D).
+#ifndef DASH_PRODUCT_NAME
+#define DASH_PRODUCT_NAME "Atlas T-2CAN"
+#endif
 #ifndef DASH_BUILD_ENV
 #define DASH_BUILD_ENV "unknown"
 #endif
@@ -6087,16 +6098,6 @@ static void dashReadCpuLoad(uint8_t &core0Load, uint8_t &core1Load, bool &valid)
 
 #ifndef DASH_BOARD_NAME
 #define DASH_BOARD_NAME "ESP32-S3R8"
-#endif
-
-// beta08: UI display name. The dashboard HTML historically hardcodes
-// "Atlas T-2CAN" as the product brand while module/board carry build
-// identifiers (the golden board's module is "LILYGO-T-2CAN" — a different
-// string on purpose), so the brand cannot be derived from module at
-// runtime without renaming every existing board's UI. Default here is the
-// exact legacy brand; board envs override (P4: Atlas-P4-3CAN).
-#ifndef DASH_PRODUCT_NAME
-#define DASH_PRODUCT_NAME "Atlas T-2CAN"
 #endif
 
 static void handleSystemStatus()

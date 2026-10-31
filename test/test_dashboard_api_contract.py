@@ -2861,6 +2861,17 @@ class DashboardApiContractTests(unittest.TestCase):
             self.dash,
         )
 
+    def test_dash_product_name_default_precedes_first_use(self) -> None:
+        """beta09: DASH_PRODUCT_NAME's #ifndef fallback used to sit after
+        handleStatus' first string-concat use, so every env without an
+        explicit -D (the golden lilygo_t2can_dual among them) failed to
+        compile — masked in beta08 because the golden gate ran before the
+        /status product commit landed. The default must be defined before
+        the first expansion point."""
+        default_idx = self.dash.index("#ifndef DASH_PRODUCT_NAME")
+        first_use_idx = self.dash.index('DASH_PRODUCT_NAME "\\""')
+        self.assertLess(default_idx, first_use_idx)
+
     def test_status_json_reconstruction_guard(self) -> None:
         """Full-endpoint mechanical reconstruction guard.
 

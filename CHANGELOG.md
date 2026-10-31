@@ -17,6 +17,12 @@
   temperature and the dashboard showed `--`. P4 joins the gate — its
   tsens attribute table covers the same -10..80 °C range the existing
   config requests.
+- **Every env without an explicit product flag compiles again.** The
+  `DASH_PRODUCT_NAME` fallback `#define` sat after its first
+  string-concat use, so builds like `lilygo_t2can_dual` (no `-D`
+  override) failed to compile; the beta08 golden gate had run before
+  that commit landed and masked it. The fallback now precedes the first
+  use and a contract test pins the ordering.
 
 ## [6.0.0-beta08] - 2026-11-01
 
