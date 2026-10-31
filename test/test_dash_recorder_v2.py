@@ -105,5 +105,90 @@ class DashRecorderV2ContractTests(unittest.TestCase):
             "the whole engine compiles away on non-P4 boards")
 
 
+class DashRecorderV2LockContractTests(unittest.TestCase):
+    """Task 2: lock state machine + session flush (shrink / rolling delete)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dash = DASH.read_text(encoding="utf-8")
+        cls.rec2 = (
+            REC2.read_text(encoding="utf-8") if REC2.exists() else ""
+        )
+
+    def test_lock_request_validates_bus_mask(self) -> None:
+        self.assertIn("if (!busMask)", self.rec2,
+                      "bus_mask of 0 (all switches off) must be rejected")
+        self.assertIn("bus_mask", self.rec2,
+                      "rejection error names the offending field")
+        self.assertIn("400", self.dash,
+                      "handler answers 400 on validation failures")
+
+    def test_single_writer_guard(self) -> None:
+        self.assertIn("recV2Writing", self.rec2,
+                      "single-writer flag exists")
+        # LockRequest must refuse while arming or flushing.
+        self.assertIn("dashRecV2LockRequest", self.rec2)
+        lock_start = self.rec2.index("dashRecV2LockRequest")
+        guard_region = self.rec2[lock_start:lock_start + 700]
+        self.assertIn("busy", guard_region,
+                      "lock request refuses while a flush is in flight")
+        self.assertIn("409", self.dash,
+                      "handler answers 409 on the busy path")
+
+    def test_flush_failure_cleans_partial_file(self) -> None:
+        # A half-written session must never masquerade as a complete one:
+        # the write-failure branch itself must scrub the partial file.
+        write_fail = self.rec2.find("write failed")
+        self.assertGreaterEqual(
+            write_fail, 0, "flush names its write-failure branch")
+        branch = self.rec2[write_fail:write_fail + 300]
+        self.assertIn("SPIFFS.remove", branch,
+                      "partial file is removed on the write-failure path")
+        self.assertIn("last_error", self.rec2,
+                      "failure surfaces in status as last_error")
+
+    def test_shrink_keeps_recent(self) -> None:
+        self.assertIn("shrink_reason", self.rec2)
+        self.assertIn("recV2CountWindow", self.rec2,
+                      "pre-scan counts matching frames before copying")
+        self.assertIn("- 128 * 1024", self.rec2,
+                      "128KB head-room reserve on SPIFFS free space")
+        self.assertIn("pre_ms_req", self.rec2)
+        self.assertIn("pre_ms_act", self.rec2,
+                      "meta distinguishes requested vs actual window")
+
+    def test_seq_nvs_monotonic(self) -> None:
+        self.assertIn("rv2_seq", self.rec2)
+        self.assertIn("putUInt", self.rec2)
+        self.assertIn("getUInt", self.rec2)
+
+    def test_wraparound_window_extraction(self) -> None:
+        # The flush window test must be wrap-safe: age = (uint32_t)(now - ts).
+        self.assertRegex(self.rec2, r"\(\s*uint32_t\s*\)\s*\(\s*now[A-Za-z]* - ")
+
+    def test_routes_and_loop_wired(self) -> None:
+        self.assertIn(
+            'server.on("/ring_lock", HTTP_POST, handleRingLock)', self.dash)
+        self.assertIn(
+            'server.on("/ring_status", HTTP_GET, handleRingStatus)', self.dash)
+        loop_fn = self.dash.index("static void mcpDashboardLoop()")
+        loop_body = self.dash[loop_fn:loop_fn + 900]
+        self.assertIn("dashRecV2Loop()", loop_body,
+                      "lock state machine is polled from the dashboard loop")
+
+    def test_status_json_shape(self) -> None:
+        for token in ('"enabled"', '"span_s"', '"fps"', '"lock"',
+                      '"state"', '"remain_ms"', '"bus_mask"'):
+            self.assertIn(token, self.rec2,
+                          f"status JSON exposes {token}")
+
+    def test_meta_field_set_complete(self) -> None:
+        for token in ('"seq"', '"boot_ms"', '"trigger"', '"post_ms"',
+                      '"frames"', '"ring_overflow"',
+                      '"ring_overflow_in_window"', '"twai_missed_a"'):
+            self.assertIn(token, self.rec2,
+                          f"session meta records {token}")
+
+
 if __name__ == "__main__":
     unittest.main()

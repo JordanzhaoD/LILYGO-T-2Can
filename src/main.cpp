@@ -126,6 +126,11 @@ static volatile uint32_t t2canSecondaryRxCount = 0;
 static volatile uint32_t t2canSecondaryTxCount = 0;
 static volatile uint32_t t2canSecondaryTxErrCount = 0;
 static volatile uint8_t t2canSecondaryEflg = 0;
+#ifdef DRIVER_P4_3CAN
+// Recorder v2 meta evidence: TWAI rx_missed_count for CAN B, cached in the
+// drain loop (statusInfo is documented same-task; cache instead of locking).
+static volatile uint32_t t2canSecondaryMissed = 0;
+#endif
 static DashTxEvidence serviceTxEvidence;
 static DashTxEvidence stalkTxEvidence;
 const DashTxEvidence &t2canStalkTxEvidence(void) { return stalkTxEvidence; }
@@ -187,6 +192,7 @@ static std::unique_ptr<P4TwaiSecondaryDriver> appDriverTertiary;
 static volatile uint32_t t2canCan3Rx = 0;
 static uint8_t t2canCan3TxErr = 0;
 static uint8_t t2canCan3EflgV = 0;
+static volatile uint32_t t2canCan3Missed = 0;
 
 static void t2canSetupCan3()
 {
@@ -220,12 +226,14 @@ static void t2canDrainCan3()
     {
         t2canCan3TxErr = (uint8_t)st.tx_error_counter;
         t2canCan3EflgV = (uint8_t)st.rx_error_counter;
+        t2canCan3Missed = st.rx_missed_count;
     }
 }
 
 uint32_t t2canCan3RxCount(void) { return t2canCan3Rx; }
 uint8_t t2canCan3TxErrCount(void) { return t2canCan3TxErr; }
 uint8_t t2canCan3Eflg(void) { return t2canCan3EflgV; }
+uint32_t t2canCan3RxMissedCount(void) { return t2canCan3Missed; }
 #endif
 
 // Transmit direct secondary-bus commands. Handler-driven Legacy NAG and smart
@@ -359,7 +367,18 @@ static void t2canDrainSecondary()
             appActiveHandler->handleMessage(f, *appDriverSecondary);
 #endif
     }
+#ifdef DRIVER_P4_3CAN
+    {
+        twai_status_info_t st;
+        if (appDriverSecondary->statusInfo(st))
+            t2canSecondaryMissed = st.rx_missed_count;
+    }
+#endif
 }
+
+#ifdef DRIVER_P4_3CAN
+uint32_t t2canBus2RxMissedCount(void) { return t2canSecondaryMissed; }
+#endif
 
 // ── Service mode (BODY bus / bus B): VCSEC_serviceDiagnosticRequest 0x339 ──
 // Spec 2.4.1: send 4 frames at 10ms spacing on the BODY bus. The signal lives at

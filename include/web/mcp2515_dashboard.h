@@ -8031,6 +8031,73 @@ static void webTask(void *)
 
 static CarManagerBase *handlerPool[3] = {};
 
+#if defined(DASH_RECORDER_V2)
+// Recorder v2 (P4-only): per-bus TWAI missed-frame counters. Bus B/C values
+// are cached by the P4 drain loops in main.cpp; Bus A comes from the primary
+// TWAI driver diag snapshot (same source as appendTwaiDiagJson).
+uint32_t t2canBus2RxMissedCount(void);
+uint32_t t2canCan3RxMissedCount(void);
+
+// POST /ring_lock {pre_s, post_s, bus_mask} — arm the blackbox lock.
+static void handleRingLock()
+{
+    uint32_t preMs = 180000, postMs = 30000, busMask = 0;
+    if (server.hasArg("plain"))
+    {
+        JsonDocument doc;
+        String body = server.arg("plain");
+        if (deserializeJson(doc, body) == DeserializationError::Ok)
+        {
+            if (doc["pre_s"].is<unsigned>())
+                preMs = doc["pre_s"].as<unsigned>() * 1000UL;
+            if (doc["post_s"].is<unsigned>())
+                postMs = doc["post_s"].as<unsigned>() * 1000UL;
+            if (doc["bus_mask"].is<unsigned>())
+                busMask = doc["bus_mask"].as<unsigned>();
+        }
+    }
+    // Query-arg fallback so curl / scripted checks stay one-liners.
+    if (server.hasArg("pre_s"))
+        preMs = (uint32_t)server.arg("pre_s").toInt() * 1000UL;
+    if (server.hasArg("post_s"))
+        postMs = (uint32_t)server.arg("post_s").toInt() * 1000UL;
+    if (server.hasArg("bus_mask"))
+        busMask = (uint32_t)server.arg("bus_mask").toInt();
+    if (preMs < 10000UL || preMs > 600000UL || postMs < 5000UL || postMs > 300000UL)
+    {
+        server.send(400, "application/json",
+                    "{\"ok\":false,\"error\":\"pre_s/post_s out of range\"}");
+        return;
+    }
+    uint32_t missedA = 0;
+#if defined(ESP_PLATFORM) && defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
+    if (dashDriver)
+    {
+        TWAIDriver *twai = static_cast<TWAIDriver *>(dashDriver);
+        if (twai)
+            missedA = twai->snapshotDiag().rxMissed;
+    }
+#endif
+    dashRecV2SetTwaiMissed(missedA, t2canBus2RxMissedCount(),
+                           t2canCan3RxMissedCount());
+    String err;
+    if (!dashRecV2LockRequest(preMs, postMs, (uint8_t)(busMask & 0x07), err))
+    {
+        int code = (err.indexOf("busy") >= 0) ? 409 : 400;
+        server.send(code, "application/json",
+                    "{\"ok\":false,\"error\":\"" + err + "\"}");
+        return;
+    }
+    server.send(200, "application/json", dashRecV2StatusJson());
+}
+
+// GET /ring_status — blackbox ring + lock state machine status.
+static void handleRingStatus()
+{
+    server.send(200, "application/json", dashRecV2StatusJson());
+}
+#endif // DASH_RECORDER_V2
+
 static void dashInitHandlers()
 {
     handlerPool[0] = new LegacyHandler();
@@ -8212,6 +8279,10 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 #endif
     server.on("/rec_download", HTTP_GET, handleRecDownload);
     server.on("/rec_meta", HTTP_GET, handleRecMetaDownload);
+#if defined(DASH_RECORDER_V2)
+    server.on("/ring_lock", HTTP_POST, handleRingLock);
+    server.on("/ring_status", HTTP_GET, handleRingStatus);
+#endif
     server.on("/disable", HTTP_POST, handleDisable);
     server.on("/reboot", HTTP_GET, handleReboot);
     server.on("/reboot", HTTP_POST, handleReboot);
@@ -8284,6 +8355,9 @@ static void mcpDashboardLoop()
         canOnline = false;
         dashLog("[CAN] Bus OFFLINE (timeout)");
     }
+#if defined(DASH_RECORDER_V2)
+    dashRecV2Loop();
+#endif
 #if defined(DASH_RGB_STATUS_LED)
     appRefreshStatusLed(false);
 #endif
