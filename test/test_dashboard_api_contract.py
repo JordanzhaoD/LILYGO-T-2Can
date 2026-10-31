@@ -2153,9 +2153,28 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('"/gear_assist_status"', self.simulator)
         self.assertIn('gear_assist_status', self.simulator)
 
+    def test_p4_sdkconfig_pins_hosted_safety_choices(self) -> None:
+        """P4 hosted transport must never restart the board when the C6 dies.
+
+        The arduino-factory default (TRANSPORT_RESTART_ON_FAILURE=y) reboots
+        the whole board ~every 13 s while the slave link is down — board-1
+        field evidence 2026-10-31 showed this; while driving it would kill
+        the CAN defenses. Streaming RX stays selected: upstream default and
+        the board-2-proven path (packet mode was a board-1 diagnostic only).
+        """
+        sdk = (ROOT / "sdkconfig.p4_3can").read_text(encoding="utf-8")
+        self.assertIn(
+            "# CONFIG_ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE is not set", sdk
+        )
+        self.assertNotIn("CONFIG_ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE=y", sdk)
+        self.assertIn("CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE=y", sdk)
+        self.assertIn("CONFIG_ESP_SDIO_OPTIMIZATION_RX_STREAMING_MODE=y", sdk)
+        self.assertNotIn("CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_NONE=y", sdk)
+        self.assertNotIn("CONFIG_ESP_SDIO_OPTIMIZATION_RX_NONE=y", sdk)
+
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
-        self.assertEqual("6.0.0-beta09", self.version.strip())
+        self.assertEqual("6.0.0-beta10", self.version.strip())
         self.assertIn('file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" PROJECT_VER LIMIT_COUNT 1)', self.cmake)
         self.assertIn("## [4.0.2] - 2026-05-31", self.changelog)
         self.assertIn("lilygo_t2can_dual", self.tests_workflow)

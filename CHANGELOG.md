@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [6.0.0-beta10] - 2026-11-01
+
+### Fixed (P4)
+
+- **P4: board no longer reboots every ~13 s when the C6 WiFi slave is down.**
+  The arduino-factory default `ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE` was
+  inherited into the P4 sdkconfig; with a dead or missing slave the host
+  restarted itself in a loop, which would kill the CAN defenses while
+  driving. The board now degrades to CAN-only instead. Field-proven on the
+  C6-failure bench board: zero restarts over a 5-minute window with the
+  slave link permanently down. Transport stays on streaming RX (packet
+  mode was a diagnostic experiment only).
+
 ## [6.0.0-beta09] - 2026-11-01
 
 ### Fixed
