@@ -31,13 +31,19 @@
 #ifndef T2CAN_SECONDARY_BUS
 #define T2CAN_SECONDARY_BUS CAN_BUS_PARTY
 #endif
+// The dashboard's dual-bus worldview (capability flags, bus2 endpoints,
+// secondary counters, lighting/service-mode/stalk pages) compiles under
+// DRIVER_T2CAN_DUAL, and this is the only translation unit that pulls the
+// dashboard in — so alias it here, before app.h. MCP2515-specific branches
+// under that macro are excluded below via `&& !defined(DRIVER_P4_3CAN)`.
+#define DRIVER_T2CAN_DUAL
 #endif
 
 #include "app.h"
 #include "dash_tx_evidence.h"
 #include "dash_legacy_stalk_burst.h"
 
-#ifdef DRIVER_T2CAN_DUAL
+#if defined(DRIVER_T2CAN_DUAL) && !defined(DRIVER_P4_3CAN)
 #include "drivers/esp32_mcp2515_driver.h"
 #endif
 #ifdef DRIVER_P4_3CAN
@@ -110,7 +116,7 @@ static bool appTwaiGpioValid(gpio_num_t pin, bool tx)
 #if defined(DRIVER_T2CAN_DUAL) || defined(DRIVER_P4_3CAN)
 // Secondary bus (CanB, X197 9/10): MCP2515 over SPI on the T-2CAN board,
 // a second native TWAI controller (TWAI_NUM_1, GPIO 4/5) on the P4 board.
-#if defined(DRIVER_T2CAN_DUAL)
+#if defined(DRIVER_T2CAN_DUAL) && !defined(DRIVER_P4_3CAN)
 using T2canSecondaryDriver = ESP32_MCP2515Driver;
 #else
 using T2canSecondaryDriver = P4TwaiSecondaryDriver;
@@ -138,7 +144,7 @@ static bool t2canTxSecondaryCounted(const CanFrame &f)
 
 static void t2canSetupSecondary()
 {
-#if defined(DRIVER_T2CAN_DUAL)
+#if defined(DRIVER_T2CAN_DUAL) && !defined(DRIVER_P4_3CAN)
 #ifdef MCP2515_RST_PIN
     gpio_set_direction((gpio_num_t)MCP2515_RST_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)MCP2515_RST_PIN, 1);
@@ -550,7 +556,7 @@ static void t2canBus2HealthTick()
     if (now - last < 500)
         return;
     last = now;
-#ifdef DRIVER_T2CAN_DUAL
+#if defined(DRIVER_T2CAN_DUAL) && !defined(DRIVER_P4_3CAN)
     t2canSecondaryEflg = appDriverSecondary->mcp().getErrorFlags();
 #else
     // P4-3CAN: TWAI has no EFLG register to poll; 0 = no flags. Bus health
