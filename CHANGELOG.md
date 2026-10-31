@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [6.0.0-beta09] - 2026-11-01
+
+### Fixed
+
+- **P4-3CAN: desktop drive-status CAN3 card.** The phone UI showed the
+  CAN C lane but the desktop Drive Status metric row did not (beta08
+  shipped only the overview stat and the mobile card). The cockpit row
+  now gains a CAN3 card next to CAN1/CAN2 behind `can3Available`,
+  stretching the row to six columns; all other boards render exactly as
+  before.
+- **P4-3CAN: chip temperature now reads the on-chip sensor.** The tsens
+  driver gate covered ESP32-S2/S3 only, so ESP32-P4 reported no
+  temperature and the dashboard showed `--`. P4 joins the gate — its
+  tsens attribute table covers the same -10..80 °C range the existing
+  config requests.
+
 ## [6.0.0-beta08] - 2026-11-01
 
 ### Added

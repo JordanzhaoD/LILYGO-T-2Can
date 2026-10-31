@@ -461,6 +461,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .cockpit-hold.on { background: linear-gradient(135deg, #047857, #22c55e); box-shadow: 0 18px 42px rgba(34,197,94,.22); }
 .cockpit-metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
 .cockpit-metrics.m5 { grid-template-columns: repeat(5, minmax(0,1fr)); }
+.cockpit-metrics.m6 { grid-template-columns: repeat(6, minmax(0,1fr)); }
 .cockpit-metric { min-height: 96px; border: 1px solid var(--cockpit-stroke); border-radius:var(--cockpit-radius-lg); background: var(--cockpit-soft); padding: 14px; backdrop-filter: var(--cockpit-card-blur); }
 .cockpit-metric .lbl { color: var(--cockpit-muted); font-size: 10px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
 .cockpit-metric .val { margin-top: 8px; color: var(--tx1); font-size: 24px; font-weight: 900; letter-spacing: -0.045em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -471,6 +472,10 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .cockpit-metrics.m5 .val.vf-md { font-size: 16px; }
 .cockpit-metrics.m5 .val.vf-sm { font-size: 14px; }
 .cockpit-metrics.m5 .val.vf-xs { font-size: 12px; }
+.cockpit-metrics.m6 .val { font-size: 17px; }
+.cockpit-metrics.m6 .val.vf-md { font-size: 15px; }
+.cockpit-metrics.m6 .val.vf-sm { font-size: 13px; }
+.cockpit-metrics.m6 .val.vf-xs { font-size: 11px; }
 .cockpit-metric .val.v-ok { color: var(--ok); }
 .cockpit-metric .val.v-err { color: var(--err); }
 .cockpit-metric .val.v-warn { color: var(--warn); }
@@ -754,6 +759,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
             <div class="cockpit-metrics" id="ov-can-row">
               <div class="cockpit-metric"><div class="lbl">CAN1</div><div class="val" id="s-can">Offline</div><div class="hint">--</div></div>
               <div class="cockpit-metric" data-single-hide="1" data-cap="can2"><div class="lbl">CAN2</div><div class="val" id="s-can2">Offline</div><div class="hint">CAN-B</div></div>
+              <div class="cockpit-metric" data-cap="can3"><div class="lbl">CAN3</div><div class="val" id="s-can3">Offline</div><div class="hint">CAN-C</div></div>
               <div class="cockpit-metric" id="ov-ap-metric"><div class="lbl" data-i18n="AP 激活">AP 激活</div><div class="val" id="ov-ap" data-i18n="等待">等待</div><div class="hint" id="ov-ap-hint" data-i18n="门控未触发">门控未触发</div></div>
               <div class="cockpit-metric"><div class="lbl" data-i18n="帧率">帧率</div><div class="val" id="s-fps">0.0 Hz</div><div class="hint">0.0 Hz</div></div>
               <div class="cockpit-metric"><div class="lbl" data-i18n="芯片温度">芯片温度</div><div class="val" id="s-temp">--</div><div class="hint" data-i18n="高于 60°C 标红">高于 60°C 标红</div></div>
@@ -2169,9 +2175,11 @@ function applyCapabilities(c){
   if(active&&active.getAttribute('data-cap')&&!capEnabled(active.getAttribute('data-cap'))){
     showPage('pg-overview');
   }
-  // 5.0.0-beta04: CAN row widens to 5 columns only when CAN2 is present
+  // 5.0.0-beta04: CAN row widens to 5 columns only when CAN2 is present;
+  // beta08 P4: widens to 6 when the CAN C observation lane exists
   var canRow=$('ov-can-row');
   if(canRow)canRow.classList.toggle('m5',capEnabled('can2'));
+  if(canRow)canRow.classList.toggle('m6',capEnabled('can3'));
   applyProductMode();
 }
 function applyI18n(){
@@ -2309,6 +2317,8 @@ function renderStatus(d){
   setCls('s-can3-rx','stat-val '+(c3&&c3.rx>0?'v-info':'v-dim'));
   setCls('m-can3','stat-val '+(c3&&c3.rx>0?'v-ok':'v-dim'));
   setText('m-can3',c3&&c3.rx>0?'Online':'Idle');
+  var sCan3El=$('s-can3');
+  if(sCan3El){sCan3El.className=(sCan3El.classList.contains('val')?'val ':'stat-val ')+((c3&&c3.rx>0)?'v-ok':'v-dim');sCan3El.textContent=(c3&&c3.rx>0)?'Online':'Idle';}
   S.hw3OffsetSlew=d.hw3OffsetSlew;S.hw3SlewRate=d.hw3SlewRate;
   S.hw3CustomSpeed=d.hw3CustomSpeed;
   S.hw3CustomTarget=d.hw3CustomTarget||[45,60,75,90,105];

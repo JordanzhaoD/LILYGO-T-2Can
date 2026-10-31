@@ -2155,7 +2155,7 @@ class DashboardApiContractTests(unittest.TestCase):
 
     def test_release_metadata_and_lilygo_ci_are_wired(self) -> None:
         """Release metadata and workflows must cover the LILYGO T-2CAN artifact."""
-        self.assertEqual("6.0.0-beta08", self.version.strip())
+        self.assertEqual("6.0.0-beta09", self.version.strip())
         self.assertIn('file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" PROJECT_VER LIMIT_COUNT 1)', self.cmake)
         self.assertIn("## [4.0.2] - 2026-05-31", self.changelog)
         self.assertIn("lilygo_t2can_dual", self.tests_workflow)
@@ -2828,6 +2828,38 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('id="m-can3"', self.ui)
         self.assertIn('id="s-can3-rx"', self.ui)
         self.assertIn("d.can3", self.ui)
+
+    def test_can3_cockpit_card_in_desktop_drive_status(self) -> None:
+        """beta08 (P4 hotfix, Jordan 2026-10-31): the phone UI showed CAN3
+        but the desktop 驾驶状态中心 metric row (#ov-can-row) did not. The
+        cockpit row gets a CAN3 card next to CAN1/CAN2, behind
+        data-cap='can3', driven by the /status d.can3 counters, and the row
+        stretches to six columns via .m6 when the capability is present
+        (three-board layout untouched: m6 only toggles when can3 exists)."""
+        self.assertIn(
+            '<div class="cockpit-metric" data-cap="can3"><div class="lbl">CAN3</div>'
+            '<div class="val" id="s-can3">Offline</div><div class="hint">CAN-C</div></div>',
+            self.ui,
+        )
+        self.assertIn("var sCan3El=$('s-can3');", self.ui)
+        self.assertIn("sCan3El.textContent=(c3&&c3.rx>0)?'Online':'Idle';", self.ui)
+        self.assertIn(".cockpit-metrics.m6", self.ui)
+        self.assertIn("canRow.classList.toggle('m6',capEnabled('can3'))", self.ui)
+        self.assertIn("sCan3El", self.ui_gen)
+        self.assertIn("toggle('m6',capEnabled('can3'))", self.ui_gen)
+
+    def test_dash_read_temperature_enables_p4_tsens(self) -> None:
+        """beta08 (P4 hotfix, Jordan 2026-10-31): 芯片温度 was stuck at '--'
+        on the P4 board because dashReadTemperature compiled the IDF tsens
+        path for S2/S3 only. ESP32-P4 has the same tsens peripheral and its
+        attribute table carries the (-10, 80) range the existing
+        TEMPERATURE_SENSOR_CONFIG_DEFAULT already requests, so P4 joins the
+        gate and stock ESP32 keeps the stub."""
+        self.assertIn(
+            "#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)"
+            " || defined(CONFIG_IDF_TARGET_ESP32P4)",
+            self.dash,
+        )
 
     def test_status_json_reconstruction_guard(self) -> None:
         """Full-endpoint mechanical reconstruction guard.
