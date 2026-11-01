@@ -263,5 +263,41 @@ class BlackboxDownloadTests(unittest.TestCase):
         self.assertIn("recBBEnabled ? \"true\" : \"false\"", body)
 
 
+class DeadCodeRemovalTests(unittest.TestCase):
+    """Task 6: the ring/flush/reclaim/orphan era is deleted, not disabled.
+
+    Every symbol here had its last caller die with the blackbox grid; leaving
+    the definitions behind would let a future edit resurrect a second writer
+    path next to the one true ingest → staging → flash pipeline.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.engine = ENGINE.read_text(encoding="utf-8")
+
+    def test_no_dead_engine_symbols(self) -> None:
+        for sym in ("recV2FlushTask", "kRecV2SpaceReserve", "recV2ReclaimSpace",
+                    "recV2SweepOrphans", "recV2CountWindow", "ringHead",
+                    "ringCapacity", "recV2BinPath", "recV2FileSize",
+                    "recV2Writing", "kRecV2Flushing"):
+            self.assertNotIn(sym, self.engine, f"{sym} must be deleted")
+
+    def test_ring_alloc_gone_from_init(self) -> None:
+        # The 20MB PSRAM ring allocation died with the ring; init now wires
+        # the blackbox engine only.
+        self.assertNotIn("kPrimaryBytes", self.engine)
+        self.assertNotIn("no PSRAM for ring", self.engine)
+        init = self.engine.split("static void dashRecV2Init()", 1)[1][:2800]
+        self.assertIn("recBBInitPartition()", init)
+
+    def test_live_badge_and_overflow_survive(self) -> None:
+        # The loss-badge inputs and the submit-side overflow counter are
+        # live blackbox citizens (meta keys are frozen) — the deletion above
+        # must not take them with it.
+        self.assertIn("(overflowNow > recV2OverflowAtLock) &&", self.engine)
+        self.assertIn("ringOverflow", self.engine)
+        self.assertIn('"ring_overflow"', self.engine)
+
+
 if __name__ == "__main__":
     unittest.main()

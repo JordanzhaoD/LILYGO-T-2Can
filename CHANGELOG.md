@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [6.0.0-beta11] - 2026-11-01
+
+### Changed (P4)
+
+- **P4: recorder v2 is now a raw-partition blackbox.** Sessions record into
+  a dedicated 9MB `blackbox` flash partition (18-byte frame grid anchored at
+  a 32-byte header) through a 2×64KB PSRAM staging double-buffer drained by
+  a pinned writer task — one `esp_partition_write` per 64KB buffer replaces
+  the multi-MB SPIFFS flush that died with brownouts in the car. Locking is
+  zero-copy: arming expiry walks per-block RAM summaries, protects the
+  window's blocks, and writes a small meta. Downloads stream from the
+  partition in 4KB chunks filtered to the session's own window; status is
+  idle/arming with a `paused` (grid-full) flag. The 20MB PSRAM ring, the
+  flush task, space reclaim/reserve, and the boot orphan sweep are deleted
+  with the bin era. New partition table (blackbox cut from SPIFFS) — first
+  flash must write the full three-piece chain, not app-only.
+- **P4: STA-disassociation RPC panic fixed.** The 1s dashboard Wi-Fi poll
+  called `rpc_wifi_sta_get_ap_info` while the STA was disassociated;
+  esp_hosted 2.12.13 returns SUCCESS with a NULL pointer there and the
+  memcpy assert rebooted the board (bench-reproducible via the `sta_drop`
+  DIAG). An event-maintained association flag now gates all seven RPC call
+  sites — the most likely driver of the recorder's in-car instability.
+- Host tool: `scripts/decode_blackbox.py` decodes a session bin download to
+  the byte-identical board CSV.
+
 ## [6.0.0-beta10] - 2026-11-01
 
 ### Fixed (P4)

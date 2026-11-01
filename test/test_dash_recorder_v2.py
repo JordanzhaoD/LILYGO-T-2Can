@@ -54,15 +54,17 @@ class DashRecorderV2ContractTests(unittest.TestCase):
             "ordered compares on wrapping timestamps are forbidden")
 
     def test_psram_first_with_fallback(self) -> None:
+        # Blackbox era: PSRAM backs the 2×64KB staging double-buffer (the
+        # 20MB ring died with the ring). No staging → recorder disabled:
+        # the engine refuses to run with a flash-blocking hot path.
         self.assertIn("heap_caps_malloc", self.rec2)
         self.assertIn("MALLOC_CAP_SPIRAM", self.rec2)
-        self.assertIn("20u * 1024u * 1024u", self.rec2,
-                      "primary ring budget is 20MB of PSRAM")
-        self.assertIn("10u * 1024u * 1024u", self.rec2,
-                      "degraded ring budget is 10MB of PSRAM")
         self.assertGreaterEqual(
-            self.rec2.count("heap_caps_malloc"), 2,
-            "allocation must retry at the smaller budget before giving up")
+            self.rec2.count("heap_caps_malloc(kRecBBBlockSize"), 2,
+            "both staging buffers are block-sized PSRAM allocations")
+        self.assertIn(
+            "no PSRAM for blackbox staging - recorder disabled", self.rec2,
+            "missing staging disables the engine instead of degrading it")
 
     # --- dashboard hook wiring ---------------------------------------------
 
@@ -124,12 +126,14 @@ class DashRecorderV2LockContractTests(unittest.TestCase):
                       "handler answers 400 on validation failures")
 
     def test_single_writer_guard(self) -> None:
-        self.assertIn("recV2Writing", self.rec2,
-                      "single-writer flag exists")
-        # LockRequest must refuse while arming or flushing.
+        # Blackbox era: the state machine is idle/arming only — a lock is
+        # refused while an arming window is counting down (the one-writer
+        # invariant; the flush-task flag died with the flush task).
         self.assertIn("dashRecV2LockRequest", self.rec2)
         lock_start = self.rec2.index("dashRecV2LockRequest")
         guard_region = self.rec2[lock_start:lock_start + 700]
+        self.assertIn("if (recV2State != kRecV2Idle)", guard_region,
+                      "lock request refuses while arming is in flight")
         self.assertIn("busy", guard_region,
                       "lock request refuses while a flush is in flight")
         self.assertIn("409", self.dash,
@@ -197,14 +201,20 @@ class DashRecorderV2SessionsContractTests(unittest.TestCase):
             "CSV header is frozen (tools parse it positionally)")
 
     def test_delete_removes_bin_and_meta(self) -> None:
+        # Blackbox era: a session is its meta (the grid range it protects).
+        # Delete drops the meta and unprotects the range; the bin file died
+        # with the flush engine.
         self.assertIn(
             "recV2RemoveSession", self.dash,
-            "delete handler routes through the both-files remover")
+            "delete handler routes through the session remover")
         helper_at = self.rec2.index("recV2RemoveSession")
         helper = self.rec2[helper_at:helper_at + 900]
-        self.assertGreaterEqual(
-            helper.count("SPIFFS.remove"), 2,
-            "the remover drops meta AND bin")
+        self.assertIn(
+            "SPIFFS.remove(recV2MetaPath(seq))", helper,
+            "the remover drops the meta")
+        self.assertNotIn(
+            "SPIFFS.remove(recV2BinPath", helper,
+            "there is no bin to remove")
 
     def test_sessions_json_newest_first(self) -> None:
         self.assertIn("dashRecV2SessionsJson", self.rec2)
@@ -496,33 +506,35 @@ class DashRecorderV2FinalReviewTests(unittest.TestCase):
                    "mcp2515_dashboard_ui.src.h").read_text(encoding="utf-8")
 
     def test_loss_badge_is_and_of_eviction_delta_and_span(self) -> None:
+        # Blackbox era: recBBFinishLock computes the badge from block
+        # summaries — BOTH an actual drop since lock AND a window reaching
+        # past the retention the summaries saw; OR would be always-true.
         self.assertIn(
-            "(overflowAtScan > recV2OverflowAtLock) &&", self.rec2,
-            "badge needs BOTH an actual eviction since lock AND a window "
-            "reaching past the retention the scan saw — OR makes it "
-            "always-true once the ring is full")
-        self.assertIn("(windowUs > spanUs)", self.rec2)
+            "(overflowNow > recV2OverflowAtLock) &&", self.rec2,
+            "badge needs BOTH an actual drop since lock AND a window "
+            "reaching past the retention the summaries saw")
+        self.assertIn(
+            "(windowUs > (uint32_t)(lastTs - oldestTs))", self.rec2)
         self.assertNotIn(
             "(overflowNow > recV2OverflowAtLock) ||", self.rec2,
             "the pre-fix OR form must be gone")
 
     def test_flush_reads_badge_inputs_from_scan_snapshot(self) -> None:
-        # The scan snapshot (head/count critical section) is the moment the
-        # retained set is decided; a live dashRecV2SpanUs() at meta-write
-        # time reads a ring that kept advancing during multi-second writes.
-        flush_at = self.rec2.index("static void recV2FlushTask")
-        flush_end = self.rec2.index("static void dashRecV2SetTwaiMissed")
-        body = self.rec2[flush_at:flush_end]
-        self.assertIn("overflowAtScan = ringOverflow", body,
-                      "overflow delta read next to the scan snapshot")
-        self.assertIn("uint32_t spanUs = count ? (uint32_t)(newestTs - oldestTs) : 0",
-                      body,
-                      "span derived from the snapshot's oldest/newest, "
-                      "0 when the ring is empty")
+        # Blackbox era: recBBFinishLock walks the block summaries — the
+        # retention set as the writer sealed it — and never reads a live
+        # span that the ingest path is still advancing.
+        finish_at = self.rec2.index("static void recBBFinishLock()")
+        body = self.rec2[finish_at:finish_at + 5600]
+        self.assertIn("recBBSums[", body,
+                      "badge and frame counts come from the block summaries")
+        self.assertIn("(overflowNow > recV2OverflowAtLock) &&", body,
+                      "overflow delta read from the frozen snapshot")
+        self.assertIn("(lastTs - oldestTs)", body,
+                      "span derived from the summaries' oldest/newest")
         self.assertNotIn(
             "dashRecV2SpanUs()", body,
-            "flush must not read the live span — the writer keeps "
-            "advancing the ring during SPIFFS writes")
+            "finish must not read the live span — the ingest path keeps "
+            "advancing the grid while the meta is written")
 
     def test_legacy_fold_defaults_open_and_gates_once(self) -> None:
         # Finding 2 (Important): the <details> fold changed the legacy
@@ -624,13 +636,16 @@ class DashRecorderV2CarFieldFixTests(unittest.TestCase):
     # --- fix 1: sessions size truth ---------------------------------------
 
     def test_sessions_size_uses_shim_file_size(self) -> None:
-        # recV2FileSize stat()'d "/sess_N.bin" at the VFS root — ENOENT for
-        # every session. It must delegate to the shim, which knows the mount
-        # prefix, and never bare-stat a SPIFFS-relative path again.
-        self.assertIn("SPIFFS.fileSize(path)", self.rec2,
-                      "recV2FileSize delegates to the shim")
-        self.assertNotIn("stat(path.c_str()", self.rec2,
-                          "no raw stat on SPIFFS-relative paths")
+        # Blackbox era: a session's size is its grid byte range from the
+        # meta (bb_end_off - bb_start_off) — no file is stat'd at all; the
+        # VFS-root stat() bug class is deleted with the bin era.
+        self.assertNotIn("recV2FileSize", self.rec2,
+                         "the file-size query died with the bin files")
+        list_at = self.rec2.index("static String dashRecV2SessionsJson()")
+        list_body = self.rec2[list_at:list_at + 2600]
+        self.assertIn('"bb_start_off"', list_body,
+                      "sessions list reads the grid range from each meta")
+        self.assertIn('"bb_end_off"', list_body)
 
     def test_shim_file_size_prepends_mount_base(self) -> None:
         # exists() prepends kSpiffsBase before stat; fileSize must do the
@@ -649,23 +664,11 @@ class DashRecorderV2CarFieldFixTests(unittest.TestCase):
             "SPIFFSClass declares fileSize next to exists/remove")
 
     # --- fix 2: boot orphan sweep ------------------------------------------
-
-    def test_boot_sweeps_orphan_bins(self) -> None:
-        # A bin without a meta is a flush that died before its meta write
-        # (all five in-car crashes). Boot-time only: init runs before any
-        # flush can exist, so the sweep can never race a live session.
-        self.assertIn("recV2SweepOrphans", self.rec2,
-                      "engine has an orphan sweep")
-        init_body = self.rec2.split("static void dashRecV2Init()", 1)[1][:2800]
-        self.assertIn("recV2SweepOrphans()", init_body,
-                      "init calls the sweep at boot")
-        sweep_pos = self.rec2.find("Boot-time janitor")
-        self.assertNotEqual(sweep_pos, -1, "sweep has its own definition")
-        sweep_body = self.rec2[sweep_pos:sweep_pos + 1600]
-        self.assertIn("SPIFFS.exists(recV2MetaPath", sweep_body,
-                      "a bin is spared only when its meta exists")
-        self.assertIn(".bin", sweep_body,
-                      "sweep targets bin files only")
+    # Removed in 6.0.0-beta11: the bin era ended with the blackbox grid —
+    # no flush ever writes a bin again, so there is nothing to sweep. (The
+    # five field-crash orphans died with the spiffs reformat the beta11
+    # partition-table change forces on first flash.) The no-dead-symbols
+    # contract now lives in test_blackbox_recorder.DeadCodeRemovalTests.
 
     # --- fix 3: crash forensics ledger --------------------------------------
 
@@ -730,44 +733,19 @@ class DashRecorderV2SpacePressureTests(unittest.TestCase):
     SPIFFS GC (1.15KB/s), CPU1 starved (task-wdt prints on IDLE1, HTTP
     timeouts climbed past 6s). Round 3 with a roomy FS wrote 9.6MB at a
     steady 8KB/s with zero starvation, so the reserve margin is the
-    discriminator: keep the FS out of the thrash zone and pace the writer.
+    discriminator.
+
+    The reserve/pacing machinery itself died with the flush engine in
+    6.0.0-beta11 (blackbox grid: one 64KB partition write per staging
+    buffer, writer paced by its own 250ms tick — no multi-MB SPIFFS flush
+    exists to starve anything). The crash-dump prerequisites it motivated
+    survive below.
     """
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.rec2 = REC2.read_text(encoding="utf-8") if REC2.exists() else ""
         cls.sdkcfg = (ROOT / "sdkconfig.p4_3can").read_text(encoding="utf-8")
-
-    def test_space_reserve_is_2_and_half_mb(self) -> None:
-        # 128KB (0.8% of the 15MB FS) landed the flush in deep GC; the safe
-        # floor observed on this bench is ~15% free. 2.5MB keeps every
-        # flush's tail above the thrash zone.
-        self.assertIn(
-            "kRecV2SpaceReserve = 2560u * 1024u", self.rec2,
-            "engine pins one shared space reserve constant")
-
-    def test_reclaim_and_shrink_share_the_reserve(self) -> None:
-        # Both space decisions must use the same floor, or one path can
-        # still size a session into the thrash zone.
-        self.assertGreaterEqual(
-            self.rec2.count("kRecV2SpaceReserve"), 3,
-            "constant defined and used by both reclaim and shrink")
-
-    def test_flush_paces_yields_per_batch(self) -> None:
-        # A batch-per-tick yield bounds the flush task's CPU bursts (feeds
-        # CPU1's idle task between batches) and smooths the flash-write
-        # current draw — the car's brownout margin benefits too.
-        flush_pos = self.rec2.find("static void recV2FlushTask(void *)")
-        self.assertNotEqual(flush_pos, -1, "flush task found")
-        flush_body = self.rec2[flush_pos:flush_pos + 5000]
-        batch_pos = flush_body.find("batchLen = 0;")
-        self.assertNotEqual(batch_pos, -1, "batch-write branch found")
-        pacing = flush_body.find("vTaskDelay(pdMS_TO_TICKS(1))")
-        self.assertGreater(
-            pacing, -1, "flush yields between batches")
-        self.assertLess(
-            pacing, flush_body.find("recFile.close()"),
-            "the yield lives inside the write loop, not after it")
 
     def test_frame_pointer_enabled_for_backtraces(self) -> None:
         # The round-4 watchdog printout asked for it verbatim; without frame

@@ -1,8 +1,9 @@
-// Recorder v2 — always-on PSRAM ring buffer (blackbox) for the P4-3CAN board.
+// Recorder v2 — always-on raw-partition blackbox for the P4-3CAN board.
 //
 // Design: docs/superpowers/specs/2026-11-01-can-recorder-v2-design.md (D1/D6).
-// The ring ingests ALL frames from all three buses, un-gated, from boot until
-// power-off; per-bus switches only mask what a lock exports (D1 ruling).
+// The engine ingests ALL frames from all three buses, un-gated, from boot
+// until power-off into a 9MB flash grid via PSRAM staging; per-bus switches
+// only mask what a lock exports (D1 ruling).
 // Timestamps are esp_timer_get_time() microseconds (32-bit, wraps every
 // 71.6 min); every window computation must use unsigned subtraction, never
 // ordered compares. The whole engine is macro-gated so the shared dashboard
@@ -45,14 +46,11 @@ static constexpr uint8_t kRecV2BusA = 1;
 static constexpr uint8_t kRecV2BusB = 2;
 static constexpr uint8_t kRecV2BusC = 3;
 
-// Ring storage. Single array; head = oldest live frame, count = live frames.
-// RX frames arrive from one task (app_can_task drains all three buses) and
-// TX frames from sender contexts, so submit guards the update with a short
-// critical section — cheaper than lock-free indexing and enough here.
-static RecRingFrame *ring = nullptr;
-static uint32_t ringCapacity = 0;
-static volatile uint32_t ringHead = 0;
-static volatile uint32_t ringCount = 0;
+// Ingest-side state. RX frames arrive from one task (app_can_task drains
+// all three buses) and TX frames from sender contexts, so submit guards
+// the staging update with a short critical section — cheaper than
+// lock-free indexing and enough here. ringOverflow counts frames dropped
+// when both staging buffers are full (the loss badge's input).
 static volatile uint32_t ringOverflow = 0;
 static portMUX_TYPE recV2Mux = portMUX_INITIALIZER_UNLOCKED;
 static bool recV2Initialized = false;
@@ -385,15 +383,15 @@ static void dashRecV2WriterTask(void *)
 }
 
 // --- Lock state machine (task 2) -------------------------------------------
-// idle → arming (post window counting down) → flushing (one-shot task) → idle.
+// idle → arming (post window counting down) → idle: the lock finishes
+// inline in the dashboard loop; the flush-task state is gone with the
+// flush task.
 enum RecV2LockState : uint8_t
 {
     kRecV2Idle = 0,
-    kRecV2Arming = 1,
-    kRecV2Flushing = 2
+    kRecV2Arming = 1
 };
 static volatile uint8_t recV2State = kRecV2Idle;
-static volatile bool recV2Writing = false; // single-writer guard (one flush task ever)
 static uint32_t recV2PreMsReq = 0;
 static uint32_t recV2PreMsAct = 0;
 static uint32_t recV2PostMs = 0;
@@ -468,7 +466,6 @@ static uint8_t recV2DirBits(char dir)
 // paths, so a boot that reads it set DIED inside a flush. reason=BROWNOUT +
 // midFlush=1 is the closed case for the in-car lock crashes; reason=TWDT or
 // PANIC would instead point back at firmware.
-static void recV2SweepOrphans(); // defined after the session path builders
 static void recBBRebuildProtection(); // defined after the session scanner
 static void recV2LedgerBoot()
 {
@@ -496,28 +493,7 @@ static void dashRecV2Init()
     if (recV2Initialized)
         return;
     recV2Initialized = true;
-    const size_t kPrimaryBytes = 20u * 1024u * 1024u;
-    const size_t kFallbackBytes = 10u * 1024u * 1024u;
-    size_t bytes = kPrimaryBytes;
-    void *mem = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
-    if (!mem)
-    {
-        bytes = kFallbackBytes;
-        mem = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
-    }
-    if (!mem)
-    {
-        Serial.println("[REC2] no PSRAM for ring, recorder v2 disabled");
-        return;
-    }
-    ring = static_cast<RecRingFrame *>(mem);
-    ringCapacity = bytes / sizeof(RecRingFrame);
-    ringHead = 0;
-    ringCount = 0;
     ringOverflow = 0;
-    Serial.printf("[REC2] ring ready: %u frames (%.1f MB)\n",
-                  static_cast<unsigned>(ringCapacity),
-                  static_cast<double>(bytes) / (1024.0 * 1024.0));
     recBBInitPartition(); // raw-partition blackbox skeleton (task 2)
     if (recBBEnabled)
         recBBRebuildProtection(); // locked sessions survive reboots (task 4)
@@ -538,10 +514,8 @@ static void dashRecV2Init()
                                 nullptr, 1, &recBBWriterHandle, 1);
         Serial.println("[REC2] blackbox writer task started");
     }
-    // Boot-time only, before any flush can exist: record why we last died,
-    // then reclaim space from flushes that died before their meta write.
+    // Boot-time only, before any session can exist: record why we last died.
     recV2LedgerBoot();
-    recV2SweepOrphans();
 }
 
 // Hot path: one frame into the blackbox staging grid. Never blocks; when
@@ -642,8 +616,8 @@ static uint32_t dashRecV2SpanUs()
 }
 
 // --- Session files ----------------------------------------------------------
-// /sess_<seq>.bin (raw RecRingFrame records) + /sess_<seq>.meta.json.
-// seq is NVS-backed and monotonic: rv2_seq holds the last allocated value.
+// A session is /sess_<seq>.meta.json naming a protected grid range; seq is
+// NVS-backed and monotonic: rv2_seq holds the last allocated value.
 static uint32_t recV2AllocateSeq()
 {
     Preferences p;
@@ -654,10 +628,6 @@ static uint32_t recV2AllocateSeq()
     return seq;
 }
 
-static String recV2BinPath(uint32_t seq)
-{
-    return String("/sess_") + seq + ".bin";
-}
 static String recV2MetaPath(uint32_t seq)
 {
     return String("/sess_") + seq + ".meta.json";
@@ -741,47 +711,7 @@ static bool recV2RemoveSession(uint32_t seq)
                 recBBRangeSet(s, e, false);
         }
     }
-    SPIFFS.remove(recV2BinPath(seq));
     return SPIFFS.remove(recV2MetaPath(seq));
-}
-
-// Boot-time janitor (field fix 2026-11-01): a bin without its meta is a flush
-// that died before the meta write — the five in-car crashes left exactly that
-// (seq 7-12 orphans, one torn mid-batch). Meta is the source of truth, so the
-// orphans are invisible to /sessions, undownloadable, and leak their bytes
-// forever. Sweep them at boot (init runs before any flush can exist, so this
-// can never race a live session). Victims are collected first and removed
-// after the directory walk closes.
-static void recV2SweepOrphans()
-{
-    File root = SPIFFS.open("/");
-    if (!root)
-        return;
-    String victims[32];
-    size_t nVictims = 0;
-    for (File entry = root.openNextFile();
-         entry && nVictims < 32; entry = root.openNextFile())
-    {
-        const char *nm = entry.name(); // basename per the File shim
-        while (*nm == '/')
-            nm++;
-        if (strncmp(nm, "sess_", 5) != 0)
-            continue;
-        char *end = nullptr;
-        unsigned long seq = strtoul(nm + 5, &end, 10);
-        if (end == nm + 5 || strncmp(end, ".bin", 4) != 0)
-            continue; // metas and anything else pass through
-        if (SPIFFS.exists(recV2MetaPath((uint32_t)seq)))
-            continue; // live session — keep
-        victims[nVictims++] = recV2BinPath((uint32_t)seq);
-    }
-    root.close();
-    uint32_t removed = 0;
-    for (size_t i = 0; i < nVictims; i++)
-        removed += SPIFFS.remove(victims[i]) ? 1 : 0;
-    if (removed)
-        Serial.printf("[REC2] swept %u orphan bin(s) from dead flushes\n",
-                      (unsigned)removed);
 }
 
 // --- Zero-copy lock finish (task 4, B2) --------------------------------------
@@ -943,15 +873,6 @@ static void recBBFinishLock()
     }
 }
 
-// Bin size via the shim — the espidf File shim has no size(), and a raw
-// stat() on the SPIFFS-relative path hits the VFS root (ENOENT, size always
-// 0 — field bug 2026-11-01, seq 22: 9.6MB bin reported as 0). The shim
-// prepends the /spiffs mount prefix the same way exists() does.
-static size_t recV2FileSize(const String &path)
-{
-    return SPIFFS.fileSize(path);
-}
-
 // Sessions list, newest first: one JSON object per on-flash meta.
 static String dashRecV2SessionsJson()
 {
@@ -1022,299 +943,6 @@ static String dashRecV2SessionsJson()
     return j;
 }
 
-// Rolling-delete space reclaim: drop oldest sessions (keeping >= 1) until
-// `need` bytes fit. Returns how many were removed. Free space always keeps
-// The space floor every flush/reclaim decision shares. 128KB (0.8% of the
-// 15MB FS) let a space-pressured flush crawl into deep SPIFFS GC — 1.15KB/s,
-// CPU1 starvation, task-wdt prints (bench round 4, 2026-11-01) — while a
-// roomy FS writes steadily. ~15% free is the observed safe zone, so the
-// reserve keeps every flush's tail above the thrash region.
-static constexpr size_t kRecV2SpaceReserve = 2560u * 1024u;
-
-// a head-room reserve for meta writes and FS bookkeeping (shared constant
-// above — see kRecV2SpaceReserve).
-static size_t recV2ReclaimSpace(size_t need)
-{
-    size_t removed = 0;
-    uint32_t seqs[32];
-    for (;;)
-    {
-        size_t n = recV2ScanSessions(seqs, 32);
-        if (n <= 1)
-            break; // never delete the last session
-        size_t used = SPIFFS.usedBytes();
-        size_t freeNow = SPIFFS.totalBytes() > used + kRecV2SpaceReserve
-                             ? SPIFFS.totalBytes() - used - kRecV2SpaceReserve
-                             : 0;
-        if (freeNow >= need)
-            break;
-        uint32_t oldest = seqs[0];
-        for (size_t i = 1; i < n; i++)
-            if (seqs[i] < oldest)
-                oldest = seqs[i];
-        recV2RemoveSession(oldest);
-        removed++;
-    }
-    return removed;
-}
-
-// Pre-scan: how many frames in the ring are inside the window and match the
-// bus mask. Wrap-safe: age = (uint32_t)(nowUs - tsUs).
-static uint32_t recV2CountWindow(uint32_t nowUs, uint32_t windowUs, uint8_t busMask)
-{
-    if (!ring)
-        return 0;
-    portENTER_CRITICAL(&recV2Mux);
-    uint32_t head = ringHead, count = ringCount;
-    portEXIT_CRITICAL(&recV2Mux);
-    uint32_t matching = 0;
-    for (uint32_t i = 0; i < count; i++)
-    {
-        uint32_t idx = head + i;
-        if (idx >= ringCapacity)
-            idx -= ringCapacity;
-        const RecRingFrame &f = ring[idx];
-        uint32_t age = (uint32_t)(nowUs - f.tsUs);
-        if (age > windowUs)
-            continue; // too old (unsigned compare is wrap-safe)
-        uint8_t bus = f.flags & 0x03;
-        if (bus >= kRecV2BusA && bus <= kRecV2BusC && (busMask & (1 << (bus - 1))))
-            matching++;
-    }
-    return matching;
-}
-
-// One-shot flush task: arming expired → copy [flushNow-(pre+post), flushNow]
-// from the ring into a session file, then write the meta. The ring keeps
-// recording throughout (copy iterates a head/count snapshot; the writer can
-// only lap this reader if it overwrites 20MB while we scan, i.e. never).
-static void recV2FlushTask(void *)
-{
-    const uint32_t nowUs = (uint32_t)esp_timer_get_time();
-    uint32_t preMs = recV2PreMsAct ? recV2PreMsAct : recV2PreMsReq;
-    bool shrunk = false;
-    recV2ReclaimSpace(
-        (size_t)recV2CountWindow(nowUs, (preMs + recV2PostMs) * 1000UL,
-                                 recV2BusMask) *
-        sizeof(RecRingFrame));
-    size_t used = SPIFFS.usedBytes();
-    size_t freeBytes = SPIFFS.totalBytes() > used + kRecV2SpaceReserve
-                           ? SPIFFS.totalBytes() - used - kRecV2SpaceReserve
-                           : 0;
-    size_t estBytes = (size_t)recV2CountWindow(nowUs, (preMs + recV2PostMs) * 1000UL,
-                                               recV2BusMask) *
-                      sizeof(RecRingFrame);
-    if (estBytes > freeBytes && estBytes > 0)
-    {
-        // Space shrink, single proportional pass, keeping the most recent
-        // part of the window (the incident is usually seconds old).
-        uint32_t scaled = (uint32_t)(((uint64_t)preMs * freeBytes) / estBytes);
-        if (scaled > preMs)
-            scaled = preMs;
-        preMs = scaled;
-        recV2PreMsAct = scaled;
-        shrunk = true;
-    }
-
-    const uint32_t windowUs = (preMs + recV2PostMs) * 1000UL;
-    const uint32_t seq = recV2AllocateSeq();
-    const String binPath = recV2BinPath(seq);
-
-    uint32_t framesA = 0, framesB = 0, framesC = 0, framesTx = 0;
-    uint32_t startUs = 0, endUs = 0;
-    bool writeFailed = false;
-
-    portENTER_CRITICAL(&recV2Mux);
-    uint32_t head = ringHead, count = ringCount;
-    // Badge inputs come from this same scan snapshot: by meta-write time the
-    // ring has kept advancing (SPIFFS writes take seconds) and a live span
-    // read there would false-positive the loss badge.
-    uint32_t oldestTs = count ? ring[head].tsUs : 0;
-    uint32_t lastIdx = count ? (head + count - 1) : 0;
-    if (count && lastIdx >= ringCapacity)
-        lastIdx -= ringCapacity;
-    uint32_t newestTs = count ? ring[lastIdx].tsUs : 0;
-    uint32_t overflowAtScan = ringOverflow;
-    portEXIT_CRITICAL(&recV2Mux);
-    // Retention the scan actually saw (0 µs when the ring is empty).
-    uint32_t spanUs = count ? (uint32_t)(newestTs - oldestTs) : 0;
-
-    // Forensics flag (see recV2LedgerBoot): raised for the whole flush so a
-    // boot that finds it set knows the previous session died mid-write.
-    {
-        Preferences p;
-        p.begin("rec_v2", false);
-        p.putUChar("rv2_flushing", 1);
-        p.end();
-    }
-    File recFile = SPIFFS.open(binPath, "w");
-    if (!recFile)
-    {
-        writeFailed = true; // named below, on the single failure path
-        Preferences p;
-        p.begin("rec_v2", false);
-        p.putUChar("rv2_flushing", 0);
-        p.end();
-    }
-    else
-    {
-        RecRingFrame batch[64];
-        size_t batchLen = 0;
-        for (uint32_t i = 0; i < count && !writeFailed; i++)
-        {
-            uint32_t idx = head + i;
-            if (idx >= ringCapacity)
-                idx -= ringCapacity;
-            const RecRingFrame &f = ring[idx];
-            uint32_t age = (uint32_t)(nowUs - f.tsUs);
-            if (age > windowUs)
-                continue;
-            uint8_t bus = f.flags & 0x03;
-            uint8_t dir = (f.flags >> 2) & 0x03;
-            if (bus < kRecV2BusA || bus > kRecV2BusC ||
-                !(recV2BusMask & (1 << (bus - 1))))
-                continue;
-            batch[batchLen++] = f;
-            if (startUs == 0)
-                startUs = f.tsUs;
-            endUs = f.tsUs;
-            if (dir == 0)
-            {
-                if (bus == kRecV2BusA)
-                    framesA++;
-                else if (bus == kRecV2BusB)
-                    framesB++;
-                else
-                    framesC++;
-            }
-            else
-                framesTx++;
-            if (batchLen == 64)
-            {
-                if (recFile.write((const uint8_t *)batch,
-                                  batchLen * sizeof(RecRingFrame)) !=
-                    batchLen * sizeof(RecRingFrame))
-                    writeFailed = true;
-                batchLen = 0;
-                // Pace the writer (bench round 4): one yield per batch bounds
-                // this task's CPU bursts — CPU1's idle task gets scheduled
-                // between batches instead of starving into task-wdt prints —
-                // and the flash-write current draws spread out, which also
-                // widens the car's brownout margin. One 10ms tick per 1152B
-                // caps throughput at ~115KB/s, far above the ~8KB/s the FS
-                // actually sustains, so pacing costs nothing real.
-                vTaskDelay(pdMS_TO_TICKS(1));
-            }
-        }
-        if (!writeFailed && batchLen > 0 &&
-            recFile.write((const uint8_t *)batch,
-                          batchLen * sizeof(RecRingFrame)) !=
-                batchLen * sizeof(RecRingFrame))
-            writeFailed = true;
-        recFile.close();
-        // Common completion path (success or mid-write failure): the bin is
-        // sealed, so the next boot must not read diedMidFlush=1.
-        {
-            Preferences p;
-            p.begin("rec_v2", false);
-            p.putUChar("rv2_flushing", 0);
-            p.end();
-        }
-    }
-
-    uint32_t overflowNow = ringOverflow;
-    // D7: evictions that only removed frames older than this window are
-    // harmless — they were rolling out regardless. The badge lights only
-    // when the ring actually evicted since lock (frames were LOST, not
-    // merely never recorded after boot) AND the window reaches past the
-    // retention the scan saw. Both from the scan snapshot: once the ring
-    // reaches steady-state full every submit evicts, so an OR here (the
-    // pre-review form) made the badge always-true (final review, 2026-11-01).
-    bool overflowInWindow = (overflowAtScan > recV2OverflowAtLock) &&
-                            (windowUs > spanUs);
-
-    if (writeFailed)
-    {
-        // session write failed: scrub the partial file so it can never
-        // masquerade as a complete session, and surface the reason.
-        recV2LastError = "session write failed";
-        SPIFFS.remove(binPath);
-        Serial.printf("[REC2] session %u flush FAILED\n", (unsigned)seq);
-    }
-    else
-    {
-        String meta = "{";
-        meta += R"JSON("seq":)JSON";
-        meta += String(seq);
-        meta += R"JSON(,"boot_ms":)JSON";
-        meta += String(millis());
-        meta += R"JSON(,"trigger":"manual")JSON";
-        // Wall timestamp only when SNTP has landed — meta never carries a
-        // fake 1970 date (task 4).
-        if (dashRecV2HasWall())
-        {
-            meta += R"JSON(,"wall":)JSON";
-            meta += String((uint32_t)time(nullptr));
-        }
-        meta += R"JSON(,"pre_ms_req":)JSON";
-        meta += String(recV2PreMsReq);
-        meta += R"JSON(,"pre_ms_act":)JSON";
-        meta += String(preMs);
-        meta += R"JSON(,"post_ms":)JSON";
-        meta += String(recV2PostMs);
-        meta += R"JSON(,"bus_mask":)JSON";
-        meta += String(recV2BusMask);
-        if (shrunk)
-            meta += R"JSON(,"shrink_reason":"space")JSON";
-        meta += R"JSON(,"frames":{"a":)JSON";
-        meta += String(framesA);
-        meta += R"JSON(,"b":)JSON";
-        meta += String(framesB);
-        meta += R"JSON(,"c":)JSON";
-        meta += String(framesC);
-        meta += R"JSON(,"tx":)JSON";
-        meta += String(framesTx);
-        meta += R"JSON(},"ring_overflow":)JSON";
-        meta += String(overflowNow);
-        meta += R"JSON(,"ring_overflow_in_window":)JSON";
-        meta += String(overflowInWindow ? "true" : "false");
-        meta += R"JSON(,"twai_missed_a":)JSON";
-        meta += String(recV2TwaiMissedSnapshot[0]);
-        meta += R"JSON(,"twai_missed_b":)JSON";
-        meta += String(recV2TwaiMissedSnapshot[1]);
-        meta += R"JSON(,"twai_missed_c":)JSON";
-        meta += String(recV2TwaiMissedSnapshot[2]);
-        meta += R"JSON(,"start_boot_us":)JSON";
-        meta += String(startUs);
-        meta += R"JSON(,"end_boot_us":)JSON";
-        meta += String(endUs);
-        meta += "}";
-        File metaFile = SPIFFS.open(recV2MetaPath(seq), "w");
-        if (metaFile)
-        {
-            metaFile.print(meta);
-            metaFile.close();
-            recV2Seq = seq;
-            recV2LastError = "";
-            Serial.printf("[REC2] session %u flushed: a=%u b=%u c=%u tx=%u "
-                          "(pre %lums%s)\n",
-                          (unsigned)seq, (unsigned)framesA, (unsigned)framesB,
-                          (unsigned)framesC, (unsigned)framesTx,
-                          (unsigned long)preMs,
-                          shrunk ? ", shrunk" : "");
-        }
-        else
-        {
-            recV2LastError = "meta write failed";
-            SPIFFS.remove(binPath);
-        }
-    }
-
-    recV2Writing = false;
-    recV2State = kRecV2Idle;
-    vTaskDelete(nullptr);
-}
-
 static void dashRecV2SetTwaiMissed(uint32_t a, uint32_t b, uint32_t c)
 {
     recV2TwaiMissedSnapshot[0] = a;
@@ -1322,8 +950,9 @@ static void dashRecV2SetTwaiMissed(uint32_t a, uint32_t b, uint32_t c)
     recV2TwaiMissedSnapshot[2] = c;
 }
 
-// Lock the ring: capture the last `preMs` (plus `postMs` of continued
-// recording) for the buses in `busMask` (bit0=A, bit1=B, bit2=C).
+// Lock: mark the last `preMs` (plus `postMs` of continued recording) for
+// the buses in `busMask` (bit0=A, bit1=B, bit2=C) — the grid keeps
+// recording; the finisher walks the summaries when arming expires.
 static bool dashRecV2LockRequest(uint32_t preMs, uint32_t postMs,
                                  uint8_t busMask, String &err)
 {
@@ -1337,9 +966,9 @@ static bool dashRecV2LockRequest(uint32_t preMs, uint32_t postMs,
         err = "bus_mask must select at least one bus";
         return false;
     }
-    if (recV2State != kRecV2Idle || recV2Writing)
+    if (recV2State != kRecV2Idle)
     {
-        err = "recorder busy";
+        err = "recorder busy"; // an arming window is still counting down
         return false;
     }
     if (recBBPaused)
