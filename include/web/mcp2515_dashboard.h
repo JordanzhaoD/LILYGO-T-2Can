@@ -5509,7 +5509,7 @@ static bool dashSyncApChannelToSta()
 {
 #ifdef ESP_PLATFORM
     wifi_ap_record_t staInfo = {};
-    if (esp_wifi_sta_get_ap_info(&staInfo) != ESP_OK || staInfo.primary == 0)
+    if (!espWifiStaApInfoSafe(&staInfo) || staInfo.primary == 0)
         return false;
 
     uint8_t staChannel = staInfo.primary;
@@ -6174,7 +6174,7 @@ static void handleSystemStatus()
 
     wifi_ap_record_t apInfo;
     int rssi = 0;
-    bool hasRssi = esp_wifi_sta_get_ap_info(&apInfo) == ESP_OK;
+    bool hasRssi = espWifiStaApInfoSafe(&apInfo);
     if (hasRssi)
         rssi = apInfo.rssi;
 
@@ -6514,6 +6514,7 @@ static void dashSerialPrintHelp()
     Serial.println("  fwd_status     NAT forward-hook counters (2026-11-01 nat triage)");
     Serial.println("  tcp_test       board-originated outbound HTTP fetch (example.com)");
     Serial.println("  nat_probe      dump live lwip netif napt/up/ip/gw state");
+    Serial.println("  sta_drop       disconnect the STA link (esp_hosted panic bench repro)");
 #if defined(DASH_RECORDER_V2)
     Serial.println("  rv2_status     recorder v2 ring/lock status JSON (bench)");
     Serial.println("  rv2_lock <pre_s> <post_s> <bus_mask>  arm blackbox lock (bench)");
@@ -6551,7 +6552,7 @@ static void dashSerialPrintSystemStatus()
     }
 
     wifi_ap_record_t apInfo;
-    bool hasRssi = esp_wifi_sta_get_ap_info(&apInfo) == ESP_OK;
+    bool hasRssi = espWifiStaApInfoSafe(&apInfo);
 
     Serial.println();
     Serial.println("[system_status]");
@@ -6763,6 +6764,11 @@ static void dashSerialRunCommand(char *cmd)
         dashSerialRunTcpTest();
     else if (strcmp(start, "nat_probe") == 0 || strcmp(start, "natp") == 0)
         dashSerialPrintNatProbe();
+    else if (strcmp(start, "sta_drop") == 0)
+    {
+        Serial.println("[sta_drop] disconnecting STA (bench panic repro)");
+        WiFi.disconnect(false, false);
+    }
 #if defined(DASH_RECORDER_V2)
     else if (strcmp(start, "rv2_status") == 0 || strcmp(start, "rv2s") == 0)
     {

@@ -430,6 +430,12 @@ public:
 
 extern SPIFFSClass SPIFFS;
 
+// STA AP-info guard (field fix 2026-11-01): under esp_hosted, querying AP
+// info while the STA is disassociated returns SUCCESS + a NULL payload and
+// hosted_memcpy panics the board. Route every esp_wifi_sta_get_ap_info call
+// through this helper; returns true only when *ap was filled.
+bool espWifiStaApInfoSafe(wifi_ap_record_t *ap);
+
 class WiFiClass
 {
 public:

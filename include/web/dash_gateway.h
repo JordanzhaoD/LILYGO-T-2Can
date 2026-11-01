@@ -13,6 +13,7 @@
 #include <esp_netif.h>
 #include <esp_netif_net_stack.h>
 #include <nvs.h>
+#include "platform/espidf_runtime.h"  // espWifiStaApInfoSafe (esp_hosted NULL-assert guard)
 #include <apps/dhcpserver/dhcpserver.h>
 #include <lwip/inet.h>
 #include <lwip/lwip_napt.h>
@@ -1441,7 +1442,7 @@ static String dashGatewayStatusJson()
     String customDnsStr = dashGatewayIpToString(gatewayCustomUpstreamDns, "");
 
     wifi_ap_record_t staInfo = {};
-    bool hasStaInfo = esp_wifi_sta_get_ap_info(&staInfo) == ESP_OK;
+    bool hasStaInfo = espWifiStaApInfoSafe(&staInfo);
     wifi_config_t apConfig = {};
     uint8_t apChannel = 0;
     if (esp_wifi_get_config(WIFI_IF_AP, &apConfig) == ESP_OK)

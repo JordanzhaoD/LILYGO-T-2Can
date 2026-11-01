@@ -28,6 +28,11 @@ static bool serialUsbJtagTried = false;
 static int serialPeekByte = -1;
 static volatile wl_status_t wifiStaStatus = WL_DISCONNECTED;
 static volatile uint8_t wifiLastDisconnectReason = 0;
+// esp_hosted NULL-assert guard (field fix 2026-11-01): maintained by
+// wifiEventHandler — true only while the STA is associated, so the
+// ap-info RPC is never issued into the disassociated state where the C6
+// answers SUCCESS + NULL and hosted_memcpy panics.
+static volatile bool wifiStaAssociated = false;
 static bool wifiEventHandlersRegistered = false;
 
 // AP-side link diagnostics (2026-11-01 field triage): AP clients dropped after
@@ -115,6 +120,7 @@ static void wifiEventHandler(void *, esp_event_base_t base, int32_t id, void *ev
         case WIFI_EVENT_STA_CONNECTED:
             wifiStaStatus = WL_IDLE_STATUS; // wait for DHCP/GOT_IP before reporting connected
             wifiLastDisconnectReason = 0;
+            wifiStaAssociated = true;
             break;
         case WIFI_EVENT_STA_DISCONNECTED:
         {
@@ -122,6 +128,7 @@ static void wifiEventHandler(void *, esp_event_base_t base, int32_t id, void *ev
             if (eventData)
                 reason = static_cast<wifi_event_sta_disconnected_t *>(eventData)->reason;
             wifiLastDisconnectReason = reason;
+            wifiStaAssociated = false;
             switch (reason)
             {
             case WIFI_REASON_NO_AP_FOUND:
@@ -831,7 +838,7 @@ void WiFiClass::begin(const char *ssid, const char *pass)
         esp_wifi_start();
     }
     wifi_ap_record_t ap = {};
-    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+    if (espWifiStaApInfoSafe(&ap))
         esp_wifi_disconnect();
     wifi_config_t cfg = {};
     std::snprintf(reinterpret_cast<char *>(cfg.sta.ssid), sizeof(cfg.sta.ssid), "%s", ssid ? ssid : "");
@@ -850,10 +857,25 @@ void WiFiClass::begin(const char *ssid, const char *pass)
     esp_wifi_connect();
 }
 
+// esp_hosted NULL-assert guard (field fix 2026-11-01): the in-car PANICs
+// (resets=[[4,1]x5]) landed in hosted_memcpy — rpc_wifi_sta_get_ap_info
+// returns SUCCESS with a NULL payload whenever the STA is disassociated,
+// and the unconditional copy asserts. The event-maintained association
+// flag skips the RPC entirely in that state. T2CAN's native API returns a
+// safe error instead of asserting, so it takes the passthrough unchanged.
+bool espWifiStaApInfoSafe(wifi_ap_record_t *ap)
+{
+#if defined(DRIVER_P4_3CAN)
+    if (!wifiStaAssociated)
+        return false;
+#endif
+    return esp_wifi_sta_get_ap_info(ap) == ESP_OK;
+}
+
 wl_status_t WiFiClass::status()
 {
     wifi_ap_record_t ap = {};
-    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+    if (espWifiStaApInfoSafe(&ap))
     {
         esp_netif_ip_info_t ip = {};
         if (staNetif_ && esp_netif_get_ip_info(staNetif_, &ip) == ESP_OK && ip.ip.addr != 0)
@@ -959,7 +981,7 @@ String WiFiClass::SSID(int index)
 String WiFiClass::SSID()
 {
     wifi_ap_record_t ap = {};
-    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK)
+    if (!espWifiStaApInfoSafe(&ap))
         return "";
     return reinterpret_cast<const char *>(ap.ssid);
 }
