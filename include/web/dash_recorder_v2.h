@@ -16,6 +16,7 @@
 // dashboard header pulls platform/espidf_runtime.h (ESP-IDF builds) or
 // Arduino.h (native) before this file.
 #include <esp_heap_caps.h>
+#include <esp_partition.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <string.h>
@@ -55,6 +56,89 @@ static volatile uint32_t ringCount = 0;
 static volatile uint32_t ringOverflow = 0;
 static portMUX_TYPE recV2Mux = portMUX_INITIALIZER_UNLOCKED;
 static bool recV2Initialized = false;
+
+// --- Blackbox partition: frame grid + header (task 2, B2) -------------------
+// Raw-partition recorder skeleton. The 9MB `blackbox` partition holds ONE
+// global 18-byte frame grid anchored at a 32B header: frame k lives at
+// kRecBBHeaderSize + k*18 forever — 64KB blocks are erase units only and
+// never re-anchor the grid (a frame may straddle a block edge). Geometry
+// comes from the found esp_partition_t; the constants below are grid
+// constants, and a partition smaller than the design is refused.
+static constexpr const char *kRecBBPartLabel = "blackbox";
+static constexpr uint16_t kRecBBVersion = 1;
+static constexpr char kRecBBMagic[5] = "BBX1";
+static constexpr uint32_t kRecBBHeaderSize = 32u;
+static constexpr uint32_t kRecBBBlockSize = 65536u; // erase unit
+static constexpr uint32_t kRecBBBlockCount = 144u;  // 144 * 64KB = 9MB
+
+struct RecBBHeader
+{
+    char magic[4];
+    uint16_t version;
+    uint16_t headerSize; // grid anchor travels with the header
+    uint8_t reserved[24];
+} __attribute__((packed));
+static_assert(sizeof(RecBBHeader) == 32, "blackbox header layout is frozen");
+
+static const esp_partition_t *recBBPart = nullptr;
+static bool recBBEnabled = false;
+static uint32_t recBBWriteOff = 0; // next grid byte to write (writer lands in task 3)
+
+// Grid addressing: header-anchored, block edges deliberately ignored.
+static uint32_t recBBFrameOff(uint32_t idx)
+{
+    return kRecBBHeaderSize + idx * sizeof(RecRingFrame);
+}
+
+// Locate the partition, stamp a fresh header on first boot (or a stale
+// layout), and arm the engine. Any failure leaves recBBEnabled=false —
+// the PSRAM ring above keeps running and lock/export degrade later.
+static bool recBBInitPartition()
+{
+    recBBPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                         (esp_partition_subtype_t)0x40,
+                                         kRecBBPartLabel);
+    if (!recBBPart)
+    {
+        recBBEnabled = false;
+        Serial.println("[REC2] blackbox partition missing - recorder disabled");
+        return false;
+    }
+    if (recBBPart->size < kRecBBBlockSize * kRecBBBlockCount)
+    {
+        recBBEnabled = false;
+        Serial.printf("[REC2] blackbox partition too small (%u < %u) - recorder disabled\n",
+                      (unsigned)recBBPart->size,
+                      (unsigned)(kRecBBBlockSize * kRecBBBlockCount));
+        return false;
+    }
+    RecBBHeader hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    bool fresh = esp_partition_read(recBBPart, 0, &hdr, sizeof(hdr)) != ESP_OK ||
+                 memcmp(hdr.magic, kRecBBMagic, 4) != 0 ||
+                 hdr.version != kRecBBVersion;
+    if (fresh)
+    {
+        RecBBHeader stamp;
+        memset(&stamp, 0, sizeof(stamp));
+        memcpy(stamp.magic, kRecBBMagic, 4);
+        stamp.version = kRecBBVersion;
+        stamp.headerSize = (uint16_t)kRecBBHeaderSize;
+        if (esp_partition_erase_range(recBBPart, 0, kRecBBBlockSize) != ESP_OK ||
+            esp_partition_write(recBBPart, 0, &stamp, sizeof(stamp)) != ESP_OK)
+        {
+            recBBEnabled = false;
+            Serial.println("[REC2] blackbox header stamp failed - recorder disabled");
+            return false;
+        }
+    }
+    recBBWriteOff = kRecBBHeaderSize;
+    recBBEnabled = true;
+    Serial.printf("[REC2] blackbox ready: %u bytes at 0x%08x (%s header)\n",
+                  (unsigned)recBBPart->size, (unsigned)recBBPart->address,
+                  fresh ? "fresh" : "existing");
+    return true;
+}
 
 // --- Lock state machine (task 2) -------------------------------------------
 // idle → arming (post window counting down) → flushing (one-shot task) → idle.
@@ -189,6 +273,7 @@ static void dashRecV2Init()
     Serial.printf("[REC2] ring ready: %u frames (%.1f MB)\n",
                   static_cast<unsigned>(ringCapacity),
                   static_cast<double>(bytes) / (1024.0 * 1024.0));
+    recBBInitPartition(); // raw-partition blackbox skeleton (task 2)
     // Boot-time only, before any flush can exist: record why we last died,
     // then reclaim space from flushes that died before their meta write.
     recV2LedgerBoot();
