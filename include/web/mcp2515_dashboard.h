@@ -8207,8 +8207,10 @@ static void handleSessionDownload()
     uint32_t startUs = doc["start_boot_us"] | 0u;
     uint32_t endUs = doc["end_boot_us"] | 0u;
     uint8_t busMask = doc["bus_mask"] | 0u;
-    if (bbEnd <= bbStart || bbStart < kRecBBHeaderSize ||
-        bbEnd > recBBPart->size)
+    bool wrapped = bbEnd < bbStart; // ring range across the rolling seam
+    if (bbStart < kRecBBHeaderSize || bbStart > recBBPart->size ||
+        bbEnd > recBBPart->size || bbEnd < kRecBBHeaderSize ||
+        (!wrapped && bbEnd == bbStart))
     {
         server.send(500, "text/plain",
                     "corrupt session meta (grid range)");
@@ -8224,6 +8226,12 @@ static void handleSessionDownload()
     uint32_t lastOff =
         kRecBBHeaderSize +
         ((bbEnd - kRecBBHeaderSize) / sizeof(RecRingFrame)) *
+            sizeof(RecRingFrame);
+    // Segment A of a wrapped range runs to the last whole grid frame at
+    // or below the partition end; segment B resumes at the header anchor.
+    const uint32_t gridEndOff =
+        kRecBBHeaderSize +
+        ((recBBPart->size - kRecBBHeaderSize) / sizeof(RecRingFrame)) *
             sizeof(RecRingFrame);
     const uint32_t winSpan = endUs - startUs;
 
@@ -8242,9 +8250,11 @@ static void handleSessionDownload()
             return;
         size_t batchLen = 0;
         bool ok = true;
-        for (uint32_t base = firstOff; base < lastOff && ok;)
+        uint32_t limit = wrapped ? gridEndOff : lastOff;
+        uint32_t base = firstOff;
+        while (base < limit && ok)
         {
-            uint32_t remain = lastOff - base;
+            uint32_t remain = limit - base;
             uint32_t want = remain < sizeof(chunk) ? remain : sizeof(chunk);
             if (!recBBReadFrames(base, chunk, want))
             {
@@ -8274,6 +8284,14 @@ static void handleSessionDownload()
                 }
             }
             base += frames * sizeof(RecRingFrame);
+            // Wrapped range: after segment A drains, resume at the
+            // header anchor for segment B ([32, bbEnd)) — once (C-1).
+            if (wrapped && base >= limit)
+            {
+                base = kRecBBHeaderSize; // segment B
+                limit = lastOff;
+                wrapped = false;
+            }
         }
         if (ok && batchLen)
             server.sendChunk((const char *)batch, batchLen * sizeof(RecRingFrame));
@@ -8295,9 +8313,11 @@ static void handleSessionDownload()
     char line[128];
     uint32_t rows = 0;
     bool ok = true;
-    for (uint32_t base = firstOff; base < lastOff && ok;)
+    uint32_t limit = wrapped ? gridEndOff : lastOff;
+    uint32_t base = firstOff;
+    while (base < limit && ok)
     {
-        uint32_t remain = lastOff - base;
+        uint32_t remain = limit - base;
         uint32_t want = remain < sizeof(chunk) ? remain : sizeof(chunk);
         if (!recBBReadFrames(base, chunk, want))
             break; // partition read error: stop the stream clean
@@ -8337,6 +8357,14 @@ static void handleSessionDownload()
                 vTaskDelay(1);
         }
         base += frames * sizeof(RecRingFrame);
+        // Wrapped range: after segment A drains, resume at the
+        // header anchor for segment B ([32, bbEnd)) — once (C-1).
+        if (wrapped && base >= limit)
+        {
+            base = kRecBBHeaderSize; // segment B
+            limit = lastOff;
+            wrapped = false;
+        }
     }
     server.endChunkedResponse();
 }

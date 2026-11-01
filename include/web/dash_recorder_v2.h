@@ -186,31 +186,40 @@ static bool recBBProtGet(uint32_t b)
 }
 static void recBBProtSet(uint32_t b, bool on)
 {
+    // Byte RMW raced between loopTask (lock finish marks) and webTask
+    // (delete clears) — final-review I-2: two interleaved RMWs on the
+    // same byte lose one bit and silently unprotect a block. Readers
+    // (writer task) do single-byte loads, which stay atomic.
+    portENTER_CRITICAL(&recV2Mux);
     if (on)
         recBBProt[b >> 3] |= (uint8_t)(1u << (b & 7));
     else
         recBBProt[b >> 3] &= (uint8_t)~(1u << (b & 7));
+    portEXIT_CRITICAL(&recV2Mux);
 }
 
-// Set/clear protection for every block covering the byte range
-// [startOff, endOff). Block-rounded and wrap-safe: a range that spans the
-// grid end marks the tail blocks and the head blocks.
+// Set/clear protection for every block covering the session's byte range.
+// Block-rounded. WRAP CONVENTION (final-review C-1): endOff < startOff is
+// a RING range — a lock window that crossed the rolling seam — and marks
+// BOTH segments, [startOff, grid end) and [0, endOff). The old
+// `endOff <= startOff` early return protected nothing for such sessions
+// and the rolling window silently overwrote the locked evidence.
 static void recBBRangeSet(uint32_t startOff, uint32_t endOff, bool on)
 {
-    if (endOff <= startOff)
-        return;
+    if (endOff == startOff)
+        return; // degenerate: no blocks
+    bool wrapped = endOff < startOff;
     uint32_t b0 = startOff / kRecBBBlockSize;
-    uint32_t b1 = (endOff - 1) / kRecBBBlockSize;
-    if (b1 >= b0)
+    uint32_t b1 = wrapped ? kRecBBBlockCount - 1
+                          : (endOff - 1) / kRecBBBlockSize;
+    for (uint32_t b = b0; b <= b1 && b < kRecBBBlockCount; b++)
+        recBBProtSet(b, on);
+    if (wrapped)
     {
-        for (uint32_t b = b0; b <= b1 && b < kRecBBBlockCount; b++)
-            recBBProtSet(b, on);
-    }
-    else
-    {
-        for (uint32_t b = b0; b < kRecBBBlockCount; b++)
-            recBBProtSet(b, on);
-        for (uint32_t b = 0; b <= b1; b++)
+        // Segment B starts at block 0; bytes [0, 32) are the grid header,
+        // protected with the block it lives in.
+        uint32_t h1 = (endOff - 1) / kRecBBBlockSize;
+        for (uint32_t b = 0; b <= h1; b++)
             recBBProtSet(b, on);
     }
 }
@@ -353,7 +362,12 @@ static void recBBSkipOrPause()
         {
             recBBPaused = false;
             if (blk != startBlk)
+            {
+                // Leaving a protected block behind: retire its erase bit
+                // with it (same I-1 reasoning as the flush early return).
+                recBBErasedClr(startBlk);
                 recBBWriteOff = recBBGridSnap(blk);
+            }
             return;
         }
         blk++;
@@ -394,6 +408,12 @@ static void recBBFlushBuffer(uint8_t di)
         {
             if (b == b0)
             {
+                // Evicted mid-fill (protection landed while this block was
+                // being written): retire the erase bit now — after the
+                // session is deleted, the next same-boot visit must
+                // re-erase, not program dirty flash over these bytes
+                // (final-review I-1).
+                recBBErasedClr(b0);
                 return; // pointer sits on a protected block: skip pass repositions
             }
             lenEff = b * kRecBBBlockSize - off; // clamp before the protected block
@@ -557,7 +577,20 @@ static uint8_t recV2BusMask = 0;
 static uint32_t recV2LockStartMs = 0;
 static uint32_t recV2OverflowAtLock = 0;
 static uint32_t recV2TwaiMissedSnapshot[3] = {0, 0, 0};
-static String recV2LastError = "";
+// Cross-task error text (final-review I-2): written by loopTask at lock
+// finish, read by webTask in the status JSON. A String would be a torn
+// heap object between tasks; a fixed buffer with a guarded bounded copy
+// is race-free.
+static char recV2LastErr[48] = {0};
+static void recV2SetLastError(const char *msg)
+{
+    portENTER_CRITICAL(&recV2Mux);
+    if (msg && msg[0])
+        strlcpy(recV2LastErr, msg, sizeof(recV2LastErr));
+    else
+        recV2LastErr[0] = '\0';
+    portEXIT_CRITICAL(&recV2Mux);
+}
 static uint32_t recV2Seq = 0; // seq of the most recent session (0 = none)
 
 // --- Wall clock (task 4) -----------------------------------------------------
@@ -714,6 +747,19 @@ static void dashRecV2Submit(const CanFrame &f, uint8_t busTag, char dir)
     // Attribute to the grid block this frame will land in: the write
     // pointer plus the undrained buffers plus the position in this buffer.
     uint32_t absOff = recBBWriteOff + recBBStageLen[fi ^ 1] + recBBStageLen[fi];
+    // Seam-park fold (bench 2026-11-02): while the pointer parks at the
+    // grid end waiting for the pad jump, raw absOff runs past the partition
+    // and /64K names block 144+ — the count guard below silently dropped
+    // exactly the frames that land at the anchor after the jump (block 0's
+    // entire 64KB comes from that handed-over buffer), so slot 0 could
+    // never fill and no lock window could ever wrap. Past the last grid
+    // point the landing offset is anchor + (absOff - gridEnd).
+    const uint32_t gridEnd =
+        kRecBBHeaderSize +
+        ((recBBPart->size - kRecBBHeaderSize) / sizeof(RecRingFrame)) *
+            sizeof(RecRingFrame);
+    if (absOff > gridEnd)
+        absOff = kRecBBHeaderSize + (absOff - gridEnd);
     uint32_t blk = absOff / kRecBBBlockSize;
     if (blk < kRecBBBlockCount)
     {
@@ -853,7 +899,7 @@ static void recBBRebuildProtection()
             continue; // torn meta: its range stays unprotected (swept later)
         uint32_t s = doc["bb_start_off"] | 0u;
         uint32_t e = doc["bb_end_off"] | 0u;
-        if (e > s)
+        if (e != s) // e < s = wrapped seam range (C-1): mark both segments
             recBBMarkRange(s, e);
     }
     Serial.printf("[REC2] protection rebuilt from %u session meta(s)\n",
@@ -875,7 +921,7 @@ static bool recV2RemoveSession(uint32_t seq)
         {
             uint32_t s = doc["bb_start_off"] | 0u;
             uint32_t e = doc["bb_end_off"] | 0u;
-            if (e > s)
+            if (e != s) // e < s = wrapped seam range (C-1): free both
                 recBBRangeSet(s, e, false);
         }
     }
@@ -956,7 +1002,7 @@ static void recBBFinishLock()
 
     if (!haveFrames)
     {
-        recV2LastError = "no frames recorded";
+        recV2SetLastError("no frames recorded");
         Serial.println("[REC2] lock finished with no frames - meta skipped");
         return;
     }
@@ -1037,7 +1083,7 @@ static void recBBFinishLock()
         metaFile.print(meta);
         metaFile.close();
         recV2Seq = seq;
-        recV2LastError = "";
+        recV2SetLastError("");
         Serial.printf("[REC2] session %u locked zero-copy: a=%u b=%u c=%u "
                       "tx=%u pre=%lums blocks %u..%u\n",
                       (unsigned)seq, (unsigned)cntA, (unsigned)cntB,
@@ -1047,7 +1093,7 @@ static void recBBFinishLock()
     }
     else
     {
-        recV2LastError = "meta write failed";
+        recV2SetLastError("meta write failed");
         Serial.printf("[REC2] session %u meta write FAILED\n", (unsigned)seq);
     }
 }
@@ -1112,7 +1158,14 @@ static String dashRecV2SessionsJson()
         {
             uint32_t s0 = doc["bb_start_off"] | 0u;
             uint32_t e0 = doc["bb_end_off"] | 0u;
-            j += String(e0 > s0 ? e0 - s0 : 0);
+            // e0 < s0 = wrapped seam range (C-1): report both segments
+            j += String(e0 > s0 ? e0 - s0
+                                : (e0 < s0)
+                                      ? (kRecBBBlockCount *
+                                             kRecBBBlockSize -
+                                         s0) +
+                                            e0
+                                      : 0);
         }
         j += R"JSON(,"loss_badge":)JSON";
         j += String(doc["ring_overflow_in_window"] | false ? "true" : "false");
@@ -1246,10 +1299,14 @@ static String dashRecV2StatusJson()
         }
         j += "]";
     }
-    if (recV2LastError.length())
+    char errCopy[sizeof(recV2LastErr)];
+    portENTER_CRITICAL(&recV2Mux);
+    memcpy(errCopy, recV2LastErr, sizeof(errCopy));
+    portEXIT_CRITICAL(&recV2Mux);
+    if (errCopy[0])
     {
         j += R"JSON(,"last_error":")JSON";
-        j += recV2LastError;
+        j += errCopy;
         j += "\"";
     }
     j += "}";

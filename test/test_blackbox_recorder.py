@@ -196,7 +196,7 @@ class BlackboxWriterTests(unittest.TestCase):
         # still programmable — while park/jump/wrap retire every block the
         # pointer left, so the next pass re-erases before reprogramming.
         self.assertIn("static void recBBErasedClr(uint32_t b)", self.engine)
-        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 7400)
         self.assertIn("while (b0 != nb)", body,
                       "erase bit retires when the pointer leaves the block")
 
@@ -222,9 +222,12 @@ class BlackboxWriterTests(unittest.TestCase):
         # subtraction underflowed to ~4G and the erase loop then OOB-read the
         # 18-byte bitmaps with block indices up to ~65K. A pointer sitting
         # ON a protected block must return immediately (the skip pass
-        # repositions); the clamp only applies to later blocks.
-        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
-        self.assertRegex(body, r"if \(b == b0\)\s*\{\s*return;")
+        # repositions); the clamp only applies to later blocks. The return
+        # is preceded by the I-1 erase-bit retirement: the eviction leaves
+        # the entry block, so its bit must retire before returning.
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 7400)
+        self.assertRegex(
+            body, r"if \(b == b0\)\s*\{[^{}]*recBBErasedClr\(b0\);[^{}]*return;")
         clamp = body[body.index("lenEff = b * kRecBBBlockSize - off"):]
         self.assertIn("lenEff = b * kRecBBBlockSize - off;", clamp)
 
@@ -290,7 +293,7 @@ class BlackboxWriterTests(unittest.TestCase):
         # The freshness anchor the close loop tests against: every staged
         # frame's tsUs, updated in the same critical section as the
         # attribution itself (a stale anchor would zero live summaries).
-        body = self._fn(self.engine, "static void dashRecV2Submit(", 2200)
+        body = self._fn(self.engine, "static void dashRecV2Submit(", 3000)
         self.assertIn("recBBNewestTsUs = r.tsUs;", body)
 
     def test_lock_walk_skips_empty_lead_slots(self) -> None:
@@ -472,6 +475,138 @@ class BlackboxDownloadTests(unittest.TestCase):
         self.assertIn("kRecBBBlockSize", body)
         # enabled keys on the blackbox engine, not the dead ring.
         self.assertIn("recBBEnabled ? \"true\" : \"false\"", body)
+
+
+class FinalReviewFixPassTests(unittest.TestCase):
+    """Whole-branch review fix pass: seam-crossing locks, eviction, races."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.engine = ENGINE.read_text(encoding="utf-8")
+        cls.dash = (ROOT / "include" / "web" / "mcp2515_dashboard.h").read_text(
+            encoding="utf-8")
+
+    @staticmethod
+    def _fn(source: str, signature: str, span: int) -> str:
+        start = source.index(signature)
+        return source[start : start + span]
+
+    def test_range_set_marks_wrapped_ranges(self) -> None:
+        # C-1: a lock window crossing the rolling seam yields
+        # bb_start_off > bb_end_off. recBBRangeSet's old
+        # `endOff <= startOff` early return protected NOTHING for such a
+        # session — the rolling window then silently overwrote the locked
+        # evidence (the spec's named anti-goal). A wrapped range must mark
+        # BOTH segments: [start, grid end) and [0, end).
+        body = self._fn(self.engine, "static void recBBRangeSet(", 1600)
+        self.assertNotIn("endOff <= startOff", body)
+        self.assertIn("endOff < startOff", body,
+                      "wrap detection: end below start is a ring range")
+        # Segment A runs to the last grid block; segment B re-enters from
+        # block 0 (the head bytes [0, 32) are the grid header, protected
+        # with the block).
+        self.assertIn("kRecBBBlockCount - 1", body)
+        self.assertIn("recBBProtSet(b, on)", body)
+
+    def test_rebuild_and_delete_accept_wrapped_ranges(self) -> None:
+        # C-1 consumers: the `if (e > s)` guards made rebuild skip a seam
+        # session's protection after reboot (unprotected = overwritable)
+        # and made delete unable to release its blocks. Both must accept
+        # the wrap convention (e != s).
+        # "()\n{" anchors the definition; the forward declaration at the
+        # top of the session scanner reads "();" and must not match.
+        for sig in ("static void recBBRebuildProtection()\n{",
+                    "static bool recV2RemoveSession("):
+            body = self._fn(self.engine, sig, 2000)
+            self.assertIn("if (e != s)", body,
+                          "%s must honor wrapped meta ranges" % sig)
+
+    def test_sessions_size_covers_wrapped_ranges(self) -> None:
+        # The /sessions size field reported 0 for seam sessions
+        # (e0 > s0 ? e0 - s0 : 0) — the covered span of a wrapped range is
+        # (grid bytes - s0) + e0. Whitespace-normalized: clang-format
+        # wraps the nested ternary across lines.
+        body = re.sub(r"\s+", " ",
+                      self._fn(self.engine, "dashRecV2SessionsJson", 4600))
+        self.assertIn("(kRecBBBlockCount * kRecBBBlockSize - s0) + e0", body)
+
+    def test_download_streams_wrapped_ranges(self) -> None:
+        # C-1 consumer: the download handler 500-rejected seam metas
+        # (`bbEnd <= bbStart` → "corrupt session meta (grid range)") —
+        # locked evidence undownloadable. A wrapped meta streams two
+        # grid-snapped segments: [bbStart, partition grid end) then
+        # [header anchor, bbEnd).
+        body = self._fn(self.dash, "static void handleSessionDownload(", 9000)
+        self.assertNotIn("bbEnd <= bbStart", body)
+        self.assertIn("bbEnd < bbStart", body,
+                      "wrapped metas are valid ring ranges, not corrupt")
+        self.assertIn("wrapped ? gridEndOff : lastOff", body,
+                      "segment A ends at the grid end, not the meta end")
+        # Segment B starts at the grid anchor (never byte 0: the header).
+        self.assertIn("base = kRecBBHeaderSize", body)
+
+    def test_evicted_block_retires_erase_bit(self) -> None:
+        # I-1: protection landing mid-fill evicts the writer from its entry
+        # block. That block's erase bit (set by this pass's erase-ahead)
+        # must retire at eviction: after session_delete, the writer's next
+        # same-boot visit would otherwise program dirty flash over the old
+        # bytes (flash only clears bits — the block becomes AND garbage).
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        early = body[body.index("if (b == b0)"):]
+        self.assertIn("recBBErasedClr", early[:400],
+                      "the protected-entry early return retires the bit")
+        skip = self._fn(self.engine, "static void recBBSkipOrPause(", 1600)
+        self.assertIn("recBBErasedClr(startBlk)", skip,
+                      "leaving a block via skip reposition retires it too")
+
+    def test_bitmap_rmw_and_last_error_are_mux_guarded(self) -> None:
+        # I-2: recBBProtSet is a byte read-modify-write raced between
+        # loopTask (lock finish) and webTask (session delete) — two RMWs
+        # interleaving on the same byte lose one bit, silently
+        # unprotecting a block. And recV2LastError is an Arduino String
+        # written by one task and read by another: torn heap state. The
+        # RMW runs under recV2Mux; the error becomes a fixed buffer with
+        # a guarded setter.
+        body = self._fn(self.engine, "static void recBBProtSet(", 700)
+        self.assertIn("portENTER_CRITICAL(&recV2Mux)", body)
+        self.assertIn("portEXIT_CRITICAL(&recV2Mux)", body)
+        self.assertIn("static char recV2LastErr[", self.engine,
+                      "no cross-task String: fixed buffer + guarded setter")
+        self.assertIn("static void recV2SetLastError(", self.engine)
+        self.assertNotIn("recV2LastError =", self.engine)
+        status = self._fn(self.engine, "static String dashRecV2StatusJson(", 4000)
+        self.assertIn("recV2LastErr", status)
+
+    def test_submit_attribution_folds_seam_park_overshoot(self) -> None:
+        # Bench 2026-11-02 (seam hunt, all 5 rounds + a 295s-wide window):
+        # block 0's flash held 3639/3639 frames with byte-continuous
+        # 143->0 timestamps (+2us across the seam), yet every lock walk
+        # stopped at block 1 — with block 0 frames 1.3s old inside a 120s
+        # window, so the summary slot was EMPTY, not stale. Frames staged
+        # while the pointer parks at the grid end (the pad-jump window)
+        # compute raw absOff = gridEnd + undrained staging; /64K then
+        # names block 144+ and the count guard silently drops the
+        # attribution. Those exact frames are the ones that land at the
+        # anchor after the jump — the WHOLE of block 0 comes from that
+        # one handed-over buffer — so slot 0 could never fill and no
+        # lock window could ever wrap. Past the last grid point the
+        # landing offset is anchor + (absOff - gridEnd): fold the
+        # overshoot back before the block math. (Line wrapping is
+        # clang-format's choice; assert on whitespace-normalized text.)
+        body = re.sub(
+            r"\s+", " ",
+            self._fn(self.engine, "static void dashRecV2Submit(", 3400))
+        self.assertIn(
+            "((recBBPart->size - kRecBBHeaderSize) / sizeof(RecRingFrame))",
+            body, "gridEnd must be the LAST grid point, not the byte end")
+        self.assertIn("if (absOff > gridEnd)", body,
+                      "park-window overshoot must fold before the block math")
+        self.assertIn("absOff = kRecBBHeaderSize + (absOff - gridEnd)", body)
+        # The fold precedes the block index math — order is the fix.
+        self.assertLess(body.index("if (absOff > gridEnd)"),
+                        body.index("uint32_t blk = absOff / kRecBBBlockSize"))
+        # The range guard survives as the pathological backstop.
+        self.assertIn("if (blk < kRecBBBlockCount)", body)
 
 
 class DeadCodeRemovalTests(unittest.TestCase):
