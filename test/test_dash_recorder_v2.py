@@ -151,8 +151,10 @@ class DashRecorderV2LockContractTests(unittest.TestCase):
         self.assertIn("shrink_reason", self.rec2)
         self.assertIn("recV2CountWindow", self.rec2,
                       "pre-scan counts matching frames before copying")
-        self.assertIn("- 128 * 1024", self.rec2,
-                      "128KB head-room reserve on SPIFFS free space")
+        self.assertIn("kRecV2SpaceReserve", self.rec2,
+                      "head-room reserve on SPIFFS free space (shared "
+                      "constant; raised 128KB -> 2.5MB by the round-4 "
+                      "space-pressure finding, 2026-11-01)")
         self.assertIn("pre_ms_req", self.rec2)
         self.assertIn("pre_ms_act", self.rec2,
                       "meta distinguishes requested vs actual window")
@@ -739,3 +741,55 @@ class DashRecorderV2CarFieldFixTests(unittest.TestCase):
     def test_partition_table_keeps_coredump(self) -> None:
         self.assertIn("coredump", self.parts,
                       "the coredump partition row stays in the table")
+
+
+class DashRecorderV2SpacePressureTests(unittest.TestCase):
+    """Round-4 bench finding (2026-11-01): lock during traffic with only
+    2.8MB free → shrink left a 128KB margin → the flush crawled into deep
+    SPIFFS GC (1.15KB/s), CPU1 starved (task-wdt prints on IDLE1, HTTP
+    timeouts climbed past 6s). Round 3 with a roomy FS wrote 9.6MB at a
+    steady 8KB/s with zero starvation, so the reserve margin is the
+    discriminator: keep the FS out of the thrash zone and pace the writer.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.rec2 = REC2.read_text(encoding="utf-8") if REC2.exists() else ""
+        cls.sdkcfg = (ROOT / "sdkconfig.p4_3can").read_text(encoding="utf-8")
+
+    def test_space_reserve_is_2_and_half_mb(self) -> None:
+        # 128KB (0.8% of the 15MB FS) landed the flush in deep GC; the safe
+        # floor observed on this bench is ~15% free. 2.5MB keeps every
+        # flush's tail above the thrash zone.
+        self.assertIn(
+            "kRecV2SpaceReserve = 2560u * 1024u", self.rec2,
+            "engine pins one shared space reserve constant")
+
+    def test_reclaim_and_shrink_share_the_reserve(self) -> None:
+        # Both space decisions must use the same floor, or one path can
+        # still size a session into the thrash zone.
+        self.assertGreaterEqual(
+            self.rec2.count("kRecV2SpaceReserve"), 3,
+            "constant defined and used by both reclaim and shrink")
+
+    def test_flush_paces_yields_per_batch(self) -> None:
+        # A batch-per-tick yield bounds the flush task's CPU bursts (feeds
+        # CPU1's idle task between batches) and smooths the flash-write
+        # current draw — the car's brownout margin benefits too.
+        flush_pos = self.rec2.find("static void recV2FlushTask(void *)")
+        self.assertNotEqual(flush_pos, -1, "flush task found")
+        flush_body = self.rec2[flush_pos:flush_pos + 5000]
+        batch_pos = flush_body.find("batchLen = 0;")
+        self.assertNotEqual(batch_pos, -1, "batch-write branch found")
+        pacing = flush_body.find("vTaskDelay(pdMS_TO_TICKS(1))")
+        self.assertGreater(
+            pacing, -1, "flush yields between batches")
+        self.assertLess(
+            pacing, flush_body.find("recFile.close()"),
+            "the yield lives inside the write loop, not after it")
+
+    def test_frame_pointer_enabled_for_backtraces(self) -> None:
+        # The round-4 watchdog printout asked for it verbatim; without frame
+        # pointers a panic or watchdog leaves registers but no stack.
+        self.assertIn("CONFIG_ESP_SYSTEM_USE_FRAME_POINTER=y", self.sdkcfg,
+                      "crash dumps must carry a real backtrace")

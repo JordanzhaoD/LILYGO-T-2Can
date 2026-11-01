@@ -421,7 +421,15 @@ static String dashRecV2SessionsJson()
 
 // Rolling-delete space reclaim: drop oldest sessions (keeping >= 1) until
 // `need` bytes fit. Returns how many were removed. Free space always keeps
-// a 128KB head-room reserve for meta writes and FS bookkeeping.
+// The space floor every flush/reclaim decision shares. 128KB (0.8% of the
+// 15MB FS) let a space-pressured flush crawl into deep SPIFFS GC — 1.15KB/s,
+// CPU1 starvation, task-wdt prints (bench round 4, 2026-11-01) — while a
+// roomy FS writes steadily. ~15% free is the observed safe zone, so the
+// reserve keeps every flush's tail above the thrash region.
+static constexpr size_t kRecV2SpaceReserve = 2560u * 1024u;
+
+// a head-room reserve for meta writes and FS bookkeeping (shared constant
+// above — see kRecV2SpaceReserve).
 static size_t recV2ReclaimSpace(size_t need)
 {
     size_t removed = 0;
@@ -432,8 +440,8 @@ static size_t recV2ReclaimSpace(size_t need)
         if (n <= 1)
             break; // never delete the last session
         size_t used = SPIFFS.usedBytes();
-        size_t freeNow = SPIFFS.totalBytes() > used + 128 * 1024
-                             ? SPIFFS.totalBytes() - used - 128 * 1024
+        size_t freeNow = SPIFFS.totalBytes() > used + kRecV2SpaceReserve
+                             ? SPIFFS.totalBytes() - used - kRecV2SpaceReserve
                              : 0;
         if (freeNow >= need)
             break;
@@ -487,8 +495,8 @@ static void recV2FlushTask(void *)
                                  recV2BusMask) *
         sizeof(RecRingFrame));
     size_t used = SPIFFS.usedBytes();
-    size_t freeBytes = SPIFFS.totalBytes() > used + 128 * 1024
-                           ? SPIFFS.totalBytes() - used - 128 * 1024
+    size_t freeBytes = SPIFFS.totalBytes() > used + kRecV2SpaceReserve
+                           ? SPIFFS.totalBytes() - used - kRecV2SpaceReserve
                            : 0;
     size_t estBytes = (size_t)recV2CountWindow(nowUs, (preMs + recV2PostMs) * 1000UL,
                                                recV2BusMask) *
@@ -585,6 +593,14 @@ static void recV2FlushTask(void *)
                     batchLen * sizeof(RecRingFrame))
                     writeFailed = true;
                 batchLen = 0;
+                // Pace the writer (bench round 4): one yield per batch bounds
+                // this task's CPU bursts — CPU1's idle task gets scheduled
+                // between batches instead of starving into task-wdt prints —
+                // and the flash-write current draws spread out, which also
+                // widens the car's brownout margin. One 10ms tick per 1152B
+                // caps throughput at ~115KB/s, far above the ~8KB/s the FS
+                // actually sustains, so pacing costs nothing real.
+                vTaskDelay(pdMS_TO_TICKS(1));
             }
         }
         if (!writeFailed && batchLen > 0 &&
