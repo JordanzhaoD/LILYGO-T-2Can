@@ -90,6 +90,74 @@ static uint32_t recBBFrameOff(uint32_t idx)
     return kRecBBHeaderSize + idx * sizeof(RecRingFrame);
 }
 
+// --- Blackbox streaming writer (task 3, B2) ----------------------------------
+// Producer (dashRecV2Submit, under recV2Mux) appends 18B frames into a
+// 2×64KB PSRAM staging double-buffer; the writer task drains a full buffer
+// with ONE flash write, erasing blocks lazily ahead of the write pointer
+// (tracked by recBBErased bits). Protected blocks are skipped whole — the
+// gap reads back as erased-zeros and the timestamp-filtered export ignores
+// it; when every block is protected the writer pauses, staging keeps
+// absorbing until full, then frames drop with the overflow counter so the
+// loss stays visible in every session (badge semantics preserved).
+struct RecBBBlockSum
+{
+    uint32_t firstTsUs;
+    uint32_t lastTsUs;
+    uint32_t cntA;
+    uint32_t cntB;
+    uint32_t cntC;
+    uint32_t cntTx;
+};
+static_assert(sizeof(RecBBBlockSum) == 24, "block summary layout is frozen");
+static RecBBBlockSum recBBSums[kRecBBBlockCount]; // RAM-only; zeroed at boot
+
+static uint8_t *recBBStage[2] = {nullptr, nullptr}; // PSRAM, kRecBBBlockSize each
+static volatile uint32_t recBBStageLen[2] = {0, 0};
+static volatile uint8_t recBBStageFillIdx = 0;
+static SemaphoreHandle_t recBBFlushSem = nullptr;
+static TaskHandle_t recBBWriterHandle = nullptr;
+static volatile bool recBBPaused = false;
+static uint32_t recBBLiveBlk = 0;      // block the write pointer writes into
+static uint32_t recBBClosedBlocks = 0; // blocks fully written through (NVS cadence)
+static uint32_t recBBWptrBlocks = 0;   // closed-block count at the last wptr save
+
+// Protection bitmap (144 bits). Task 4 rebuilds it from session metas at
+// boot and sets bits at lock; the writer honors it via recBBProtGet.
+static uint8_t recBBProt[kRecBBBlockCount / 8];
+static bool recBBProtGet(uint32_t b)
+{
+    return (recBBProt[b >> 3] >> (b & 7)) & 1;
+}
+static void recBBProtSet(uint32_t b, bool on)
+{
+    if (on)
+        recBBProt[b >> 3] |= (uint8_t)(1u << (b & 7));
+    else
+        recBBProt[b >> 3] &= (uint8_t)~(1u << (b & 7));
+}
+
+// Erased-ahead bitmap: each block is erased exactly once per pass over the
+// grid; bits clear at boot (nothing is pre-erased after a resume).
+static uint8_t recBBErased[kRecBBBlockCount / 8];
+static bool recBBErasedGet(uint32_t b)
+{
+    return (recBBErased[b >> 3] >> (b & 7)) & 1;
+}
+static void recBBErasedSet(uint32_t b)
+{
+    recBBErased[b >> 3] |= (uint8_t)(1u << (b & 7));
+}
+
+// NVS resume pointer: byte offset of the next grid write. Saved every 8
+// closed blocks and at lock; read back at boot in recBBInitPartition.
+static void recBBWptrSave()
+{
+    Preferences p;
+    p.begin("rec_v2", false);
+    p.putUInt("rv2_wptr", recBBWriteOff);
+    p.end();
+}
+
 // Locate the partition, stamp a fresh header on first boot (or a stale
 // layout), and arm the engine. Any failure leaves recBBEnabled=false —
 // the PSRAM ring above keeps running and lock/export degrade later.
@@ -133,11 +201,150 @@ static bool recBBInitPartition()
         }
     }
     recBBWriteOff = kRecBBHeaderSize;
+    if (!fresh)
+    {
+        // Resume: NVS pointer, frame-aligned down so a torn partial frame
+        // from a mid-write power cut is dropped, not resurrected.
+        Preferences p;
+        p.begin("rec_v2", true);
+        uint32_t saved = p.getUInt("rv2_wptr", 0);
+        p.end();
+        if (saved > kRecBBHeaderSize && saved < recBBPart->size)
+        {
+            uint32_t rel = (saved - kRecBBHeaderSize) / sizeof(RecRingFrame);
+            recBBWriteOff = kRecBBHeaderSize + rel * sizeof(RecRingFrame);
+        }
+    }
+    recBBLiveBlk = recBBWriteOff / kRecBBBlockSize;
     recBBEnabled = true;
     Serial.printf("[REC2] blackbox ready: %u bytes at 0x%08x (%s header)\n",
                   (unsigned)recBBPart->size, (unsigned)recBBPart->address,
                   fresh ? "fresh" : "existing");
     return true;
+}
+
+// Advance/skip the write pointer past protected blocks (wrapping at the
+// partition end); pause when every block is protected. Also the recovery
+// path: a flash-error pause re-runs this and retries on the next tick.
+static void recBBSkipOrPause()
+{
+    uint32_t startBlk = recBBWriteOff / kRecBBBlockSize;
+    uint32_t blk = startBlk;
+    bool wrapped = false;
+    for (;;)
+    {
+        if (blk >= kRecBBBlockCount)
+        {
+            if (wrapped)
+                break; // full circle: every block protected → refuse-when-full
+            wrapped = true;
+            blk = 0; // rolling window wraps to the grid start
+        }
+        if (!recBBProtGet(blk))
+        {
+            recBBPaused = false;
+            if (blk != startBlk)
+                recBBWriteOff = blk * kRecBBBlockSize;
+            return;
+        }
+        blk++;
+    }
+    recBBPaused = true;
+}
+
+// Drain one full staging buffer into the grid: ONE erase pass over the
+// blocks it touches (lazy, tracked by recBBErased) and ONE
+// esp_partition_write for the whole buffer — never per-frame flash calls.
+// The flush is clamped at the first protected block and at the partition
+// end; the remainder stays in staging and lands after the skip pass
+// repositions the pointer.
+static void recBBFlushBuffer(uint8_t di)
+{
+    portENTER_CRITICAL(&recV2Mux);
+    uint32_t len = recBBStageLen[di];
+    uint32_t off = recBBWriteOff;
+    portEXIT_CRITICAL(&recV2Mux);
+    if (!len)
+        return;
+    uint32_t lenEff = len;
+    if (off + lenEff > recBBPart->size)
+        lenEff = recBBPart->size - off; // clamp at the partition end
+    uint32_t b0 = off / kRecBBBlockSize;
+    uint32_t b1 = lenEff ? (off + lenEff - 1) / kRecBBBlockSize : b0;
+    for (uint32_t b = b0; b <= b1; ++b)
+    {
+        if (recBBProtGet(b))
+        {
+            lenEff = b * kRecBBBlockSize - off; // clamp before the protected block
+            break;
+        }
+    }
+    if (lenEff == 0)
+        return; // pointer sits on a protected block: skip pass repositions
+    for (uint32_t b = off / kRecBBBlockSize; b <= (off + lenEff - 1) / kRecBBBlockSize; ++b)
+    {
+        if (recBBErasedGet(b))
+            continue;
+        if (esp_partition_erase_range(recBBPart, b * kRecBBBlockSize,
+                                      kRecBBBlockSize) != ESP_OK)
+        {
+            recBBPaused = true; // flash error: retry on the next tick
+            return;
+        }
+        recBBErasedSet(b);
+    }
+    if (esp_partition_write(recBBPart, off, recBBStage[di], lenEff) != ESP_OK)
+    {
+        recBBPaused = true; // write error: retry on the next tick
+        return;
+    }
+    portENTER_CRITICAL(&recV2Mux);
+    if (lenEff == len)
+    {
+        recBBStageLen[di] = 0;
+    }
+    else
+    {
+        memmove(recBBStage[di], recBBStage[di] + lenEff, len - lenEff);
+        recBBStageLen[di] = len - lenEff;
+    }
+    recBBWriteOff = off + lenEff;
+    // Close summaries for blocks the pointer has fully left; open the new
+    // live block with a zeroed slot (skipped blocks zero out too — no
+    // frames of this pass ever land in them).
+    uint32_t nb = recBBWriteOff / kRecBBBlockSize;
+    while (recBBLiveBlk != nb)
+    {
+        recBBLiveBlk = (recBBLiveBlk + 1) % kRecBBBlockCount;
+        recBBClosedBlocks = recBBClosedBlocks + 1;
+        memset(&recBBSums[recBBLiveBlk], 0, sizeof(recBBSums[recBBLiveBlk]));
+    }
+    portEXIT_CRITICAL(&recV2Mux);
+}
+
+// Writer: pinned to core 1 at prio 1 — the CAN ingest on core 0 keeps its
+// headroom; a stalled flash only stalls this task. Wakes on a full staging
+// buffer (producer's semaphore) or a 250ms tick; the tick re-checks pause
+// (protection may have cleared) and retries after flash errors.
+static void dashRecV2WriterTask(void *)
+{
+    for (;;)
+    {
+        xSemaphoreTake(recBBFlushSem, pdMS_TO_TICKS(250));
+        for (uint8_t pass = 0; pass < 2; ++pass)
+        {
+            uint8_t di = (uint8_t)(recBBStageFillIdx ^ 1);
+            if (recBBStageLen[di] == 0 || recBBPaused)
+                break;
+            recBBFlushBuffer(di);
+        }
+        recBBSkipOrPause(); // skip protected blocks / wrap / unpause
+        if (recBBClosedBlocks >= recBBWptrBlocks + 8)
+        {
+            recBBWptrSave(); // NVS cadence: every 8 closed blocks
+            recBBWptrBlocks = recBBClosedBlocks;
+        }
+    }
 }
 
 // --- Lock state machine (task 2) -------------------------------------------
@@ -274,17 +481,36 @@ static void dashRecV2Init()
                   static_cast<unsigned>(ringCapacity),
                   static_cast<double>(bytes) / (1024.0 * 1024.0));
     recBBInitPartition(); // raw-partition blackbox skeleton (task 2)
+    if (recBBEnabled)
+    {
+        recBBStage[0] = (uint8_t *)heap_caps_malloc(kRecBBBlockSize, MALLOC_CAP_SPIRAM);
+        recBBStage[1] = (uint8_t *)heap_caps_malloc(kRecBBBlockSize, MALLOC_CAP_SPIRAM);
+        if (!recBBStage[0] || !recBBStage[1])
+        {
+            recBBEnabled = false; // staging fallback is disabled by design
+            Serial.println("[REC2] no PSRAM for blackbox staging - recorder disabled");
+        }
+    }
+    if (recBBEnabled)
+    {
+        recBBFlushSem = xSemaphoreCreateBinary();
+        xTaskCreatePinnedToCore(dashRecV2WriterTask, "recbb_write", 6144,
+                                nullptr, 1, &recBBWriterHandle, 1);
+        Serial.println("[REC2] blackbox writer task started");
+    }
     // Boot-time only, before any flush can exist: record why we last died,
     // then reclaim space from flushes that died before their meta write.
     recV2LedgerBoot();
     recV2SweepOrphans();
 }
 
-// Hot path: one frame into the ring. Never blocks, never drops the caller's
-// frame silently — a full ring overwrites the oldest entry and counts it.
+// Hot path: one frame into the blackbox staging grid. Never blocks; when
+// both staging buffers are full (writer behind, or paused on a full grid)
+// the frame drops and the overflow counter keeps the loss visible in every
+// session meta (badge semantics preserved from the ring era).
 static void dashRecV2Submit(const CanFrame &f, uint8_t busTag, char dir)
 {
-    if (!ring)
+    if (!recBBEnabled || !recBBStage[0])
         return;
     RecRingFrame r;
     r.tsUs = static_cast<uint32_t>(esp_timer_get_time());
@@ -294,26 +520,55 @@ static void dashRecV2Submit(const CanFrame &f, uint8_t busTag, char dir)
     memcpy(r.data, f.data, r.dlc);
     if (r.dlc < 8)
         memset(r.data + r.dlc, 0, 8 - r.dlc);
+    bool wake = false;
     portENTER_CRITICAL(&recV2Mux);
-    if (ringCount >= ringCapacity)
+    uint8_t fi = recBBStageFillIdx;
+    if (recBBStageLen[fi] + sizeof(r) > kRecBBBlockSize)
     {
-        // Full: overwrite the oldest slot and advance head (rolling loss,
-        // by design — overflow counter lands in every session meta).
-        ring[ringHead] = r;
-        ringHead = (ringHead + 1 < ringCapacity) ? ringHead + 1 : 0;
-        ringOverflow = ringOverflow + 1;
+        uint8_t other = fi ^ 1;
+        if (recBBStageLen[other] != 0)
+        {
+            // Writer still holds the other buffer (behind or paused): drop
+            // the frame, count it — never block the CAN ingest path.
+            ringOverflow = ringOverflow + 1;
+            portEXIT_CRITICAL(&recV2Mux);
+            return;
+        }
+        recBBStageFillIdx = other; // hand the full buffer to the writer
+        fi = other;
+        wake = true;
     }
-    else
+    memcpy(recBBStage[fi] + recBBStageLen[fi], &r, sizeof(r));
+    // Attribute to the grid block this frame will land in: the write
+    // pointer plus the undrained buffers plus the position in this buffer.
+    uint32_t absOff = recBBWriteOff + recBBStageLen[fi ^ 1] + recBBStageLen[fi];
+    uint32_t blk = absOff / kRecBBBlockSize;
+    if (blk < kRecBBBlockCount)
     {
-        uint32_t idx = ringHead + ringCount;
-        if (idx >= ringCapacity)
-            idx -= ringCapacity;
-        ring[idx] = r;
-        ringCount = ringCount + 1;
+        RecBBBlockSum &s = recBBSums[blk];
+        if (s.firstTsUs == 0)
+            s.firstTsUs = r.tsUs; // first frame of this block's pass
+        s.lastTsUs = r.tsUs;
+        if ((r.flags >> 2) == 0)
+        {
+            if (busTag == kRecV2BusA)
+                s.cntA = s.cntA + 1;
+            else if (busTag == kRecV2BusB)
+                s.cntB = s.cntB + 1;
+            else if (busTag == kRecV2BusC)
+                s.cntC = s.cntC + 1;
+        }
+        else
+        {
+            s.cntTx = s.cntTx + 1; // T and E both count as our own traffic
+        }
     }
+    recBBStageLen[fi] = recBBStageLen[fi] + sizeof(r);
     if (busTag >= kRecV2BusA && busTag <= kRecV2BusC)
         recV2FpsAccum[busTag - 1] = recV2FpsAccum[busTag - 1] + 1;
     portEXIT_CRITICAL(&recV2Mux);
+    if (wake)
+        xSemaphoreGive(recBBFlushSem); // outside the critical section
 }
 
 // Oldest→newest duration in µs. Unsigned subtraction is wrap-safe: when
@@ -830,6 +1085,7 @@ static bool dashRecV2LockRequest(uint32_t preMs, uint32_t postMs,
     recV2BusMask = busMask;
     recV2LockStartMs = millis();
     recV2OverflowAtLock = ringOverflow;
+    recBBWptrSave(); // persist the grid pointer the moment a session locks
     recV2State = kRecV2Arming;
     return true;
 }

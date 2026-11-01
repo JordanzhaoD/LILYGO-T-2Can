@@ -675,7 +675,7 @@ class DashRecorderV2CarFieldFixTests(unittest.TestCase):
         # flush can exist, so the sweep can never race a live session.
         self.assertIn("recV2SweepOrphans", self.rec2,
                       "engine has an orphan sweep")
-        init_body = self.rec2.split("static void dashRecV2Init()", 1)[1][:1600]
+        init_body = self.rec2.split("static void dashRecV2Init()", 1)[1][:2800]
         self.assertIn("recV2SweepOrphans()", init_body,
                       "init calls the sweep at boot")
         sweep_pos = self.rec2.find("Boot-time janitor")
@@ -694,7 +694,7 @@ class DashRecorderV2CarFieldFixTests(unittest.TestCase):
         # survives power cycles, so the next car run needs no serial.
         self.assertIn("recV2LedgerBoot", self.rec2,
                       "engine records boot reset reasons")
-        init_body = self.rec2.split("static void dashRecV2Init()", 1)[1][:1600]
+        init_body = self.rec2.split("static void dashRecV2Init()", 1)[1][:2800]
         self.assertIn("recV2LedgerBoot()", init_body,
                       "init feeds the ledger at every boot")
         ledger_pos = self.rec2.find("recV2LedgerBoot")
