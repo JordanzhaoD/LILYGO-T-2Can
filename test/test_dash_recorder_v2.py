@@ -179,11 +179,16 @@ class DashRecorderV2SessionsContractTests(unittest.TestCase):
         )
 
     def test_download_validates_frame_alignment(self) -> None:
+        # Blackbox era: the meta names a grid byte range; the handler snaps
+        # it onto the 18B frame grid so only whole grid frames stream, and
+        # refuses a range that escapes the real partition bounds.
+        dl_at = self.dash.index("static void handleSessionDownload(")
+        dl = self.dash[dl_at:dl_at + 3000]
         self.assertIn(
-            "size % sizeof(RecRingFrame)", self.dash,
-            "download refuses files whose size is not a whole record count")
+            "sizeof(RecRingFrame)", dl,
+            "range is snapped onto whole grid frames")
         self.assertIn(
-            "corrupt", self.dash,
+            "corrupt", dl,
             "the alignment failure names the problem")
 
     def test_csv_header_exact(self) -> None:

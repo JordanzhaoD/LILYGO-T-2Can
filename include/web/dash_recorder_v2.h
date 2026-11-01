@@ -187,6 +187,14 @@ static void recBBWptrSave()
     p.end();
 }
 
+// Batch read primitive both download endpoints share: `bytes` from grid
+// byte offset `off` (any grid offset — block edges are invisible to reads).
+static bool recBBReadFrames(uint32_t off, uint8_t *dst, uint32_t bytes)
+{
+    return recBBPart != nullptr &&
+           esp_partition_read(recBBPart, off, dst, bytes) == ESP_OK;
+}
+
 // Locate the partition, stamp a fresh header on first boot (or a stale
 // layout), and arm the engine. Any failure leaves recBBEnabled=false —
 // the PSRAM ring above keeps running and lock/export degrade later.
@@ -603,20 +611,34 @@ static void dashRecV2Submit(const CanFrame &f, uint8_t busTag, char dir)
         xSemaphoreGive(recBBFlushSem); // outside the critical section
 }
 
-// Oldest→newest duration in µs. Unsigned subtraction is wrap-safe: when
-// tsUs wraps mid-window the difference is still the true elapsed time.
+// Retention in µs: oldest live block summary firstTs → now. Unsigned
+// subtraction is wrap-safe across the 71.6-min tsUs rollover.
 static uint32_t dashRecV2SpanUs()
 {
-    if (!ring || ringCount == 0)
+    if (!recBBEnabled)
         return 0;
     portENTER_CRITICAL(&recV2Mux);
-    uint32_t oldest = ring[ringHead].tsUs;
-    uint32_t lastIdx = ringHead + ringCount - 1;
-    if (lastIdx >= ringCapacity)
-        lastIdx -= ringCapacity;
-    uint32_t newest = ring[lastIdx].tsUs;
+    uint32_t frontierBlk =
+        (recBBWriteOff + recBBStageLen[0] + recBBStageLen[1]) / kRecBBBlockSize;
+    if (frontierBlk >= kRecBBBlockCount)
+        frontierBlk = kRecBBBlockCount - 1;
+    uint32_t oldestTs = 0;
+    uint32_t b = frontierBlk;
+    for (uint32_t guard = 0; guard < kRecBBBlockCount; guard++)
+    {
+        const RecBBBlockSum &s = recBBSums[b];
+        if (s.firstTsUs == 0 && s.lastTsUs == 0)
+            break; // pass boundary: nothing older belongs to this pass
+        oldestTs = s.firstTsUs;
+        if (b == 0)
+            b = kRecBBBlockCount - 1;
+        else
+            b--;
+    }
     portEXIT_CRITICAL(&recV2Mux);
-    return (uint32_t)(newest - oldest);
+    if (!oldestTs)
+        return 0;
+    return (uint32_t)((uint32_t)esp_timer_get_time() - oldestTs);
 }
 
 // --- Session files ----------------------------------------------------------
@@ -985,7 +1007,13 @@ static String dashRecV2SessionsJson()
         j += R"JSON(,"tx":)JSON";
         j += String(doc["frames"]["tx"] | 0UL);
         j += R"JSON(},"size":)JSON";
-        j += String((uint32_t)recV2FileSize(recV2BinPath(seq)));
+        // Blackbox era: the session's grid byte range from its own meta
+        // (ring-era sessions without bb keys report 0).
+        {
+            uint32_t s0 = doc["bb_start_off"] | 0u;
+            uint32_t e0 = doc["bb_end_off"] | 0u;
+            j += String(e0 > s0 ? e0 - s0 : 0);
+        }
         j += R"JSON(,"loss_badge":)JSON";
         j += String(doc["ring_overflow_in_window"] | false ? "true" : "false");
         j += "}";
@@ -1340,9 +1368,9 @@ static bool dashRecV2LockRequest(uint32_t preMs, uint32_t postMs,
 
 static String dashRecV2StatusJson()
 {
-    const char *stateName = recV2State == kRecV2Arming
-                                ? "arming"
-                                : (recV2State == kRecV2Flushing ? "flushing" : "idle");
+    // Zero-copy era: idle/arming only — the finisher runs inline, no flush
+    // state exists anymore.
+    const char *stateName = recV2State == kRecV2Arming ? "arming" : "idle";
     uint32_t remain = 0;
     if (recV2State == kRecV2Arming)
     {
@@ -1351,7 +1379,9 @@ static String dashRecV2StatusJson()
     }
     String j = "{";
     j += R"JSON("enabled":)JSON";
-    j += String(ring ? "true" : "false");
+    j += String(recBBEnabled ? "true" : "false");
+    j += R"JSON(,"paused":)JSON";
+    j += String(recBBPaused ? "true" : "false");
     j += R"JSON(,"span_s":)JSON";
     j += String((uint32_t)(dashRecV2SpanUs() / 1000000UL));
     j += R"JSON(,"fps":{"a":)JSON";
@@ -1370,11 +1400,14 @@ static String dashRecV2StatusJson()
     j += String(recV2PostMs);
     j += R"JSON(,"bus_mask":)JSON";
     j += String(recV2State == kRecV2Idle ? 0 : recV2BusMask);
-    size_t freeBytes = SPIFFS.totalBytes() > SPIFFS.usedBytes()
-                           ? SPIFFS.totalBytes() - SPIFFS.usedBytes()
-                           : 0;
+    // Free grid space = unprotected blocks × block size (the SPIFFS free
+    // byte count belongs to the bin era).
+    uint32_t freeBlks = 0;
+    for (uint32_t b = 0; b < kRecBBBlockCount; b++)
+        if (!recBBProtGet(b))
+            freeBlks++;
     j += R"JSON(},"sessions_space_free":)JSON";
-    j += String((uint32_t)freeBytes);
+    j += String(freeBlks * kRecBBBlockSize);
     j += R"JSON(,"seq":)JSON";
     j += String(recV2Seq);
     // Reset ledger, newest first: [reasonCode, diedMidFlush] pairs from NVS.

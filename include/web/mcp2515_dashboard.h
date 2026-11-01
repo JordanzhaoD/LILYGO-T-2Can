@@ -8163,9 +8163,14 @@ static void handleSessions()
     server.send(200, "application/json", dashRecV2SessionsJson());
 }
 
-// GET /session_download?seq=&fmt=csv|bin — chunked stream (handleRecDownload
-// precedent). A bin whose size is not a whole record count is refused, never
-// streamed: truncated tails must not masquerade as valid frames.
+// GET /session_download?seq=&fmt=csv|bin — streams the locked window out of
+// the blackbox partition in 4KB chunks (zero-copy era: the meta names the
+// grid byte range; the bin files are gone). Both formats share
+// recBBReadFrames and a per-frame filter anchored to the meta's own window:
+// timestamp inside [start_boot_us, end_boot_us] (wrap-safe single-span
+// compare — both bounds come from one boot clock) and bus selected by the
+// session's bus_mask. A torn flash tail reads back timestamps that fail the
+// window test, so it can never masquerade as a frame.
 static void handleSessionDownload()
 {
     if (!server.hasArg("seq"))
@@ -8176,42 +8181,102 @@ static void handleSessionDownload()
     uint32_t seq = (uint32_t)server.arg("seq").toInt();
     String fmt = server.arg("fmt");
     fmt.toLowerCase();
-    String binPath = recV2BinPath(seq);
-    if (!SPIFFS.exists(binPath))
+    if (!recBBEnabled)
+    {
+        server.send(500, "text/plain", "recorder v2 disabled");
+        return;
+    }
+    File mf = SPIFFS.open(recV2MetaPath(seq), "r");
+    if (!mf)
     {
         server.send(404, "text/plain", "session not found");
         return;
     }
-    size_t size = recV2FileSize(binPath);
-    if (size % sizeof(RecRingFrame) != 0)
+    String metaBody = mf.readString();
+    mf.close();
+    JsonDocument doc;
+    if (deserializeJson(doc, metaBody) ||
+        doc["bb_start_off"].isNull() || doc["bb_end_off"].isNull() ||
+        doc["start_boot_us"].isNull() || doc["end_boot_us"].isNull())
+    {
+        server.send(500, "text/plain", "corrupt session meta");
+        return;
+    }
+    uint32_t bbStart = doc["bb_start_off"] | 0u;
+    uint32_t bbEnd = doc["bb_end_off"] | 0u;
+    uint32_t startUs = doc["start_boot_us"] | 0u;
+    uint32_t endUs = doc["end_boot_us"] | 0u;
+    uint8_t busMask = doc["bus_mask"] | 0u;
+    if (bbEnd <= bbStart || bbStart < kRecBBHeaderSize ||
+        bbEnd > recBBPart->size)
     {
         server.send(500, "text/plain",
-                    "corrupt session file (size is not a whole record count)");
+                    "corrupt session meta (grid range)");
         return;
     }
-    File f = SPIFFS.open(binPath, "r");
-    if (!f)
-    {
-        server.send(500, "text/plain", "session file open failed");
-        return;
-    }
+    // Snap the block-rounded range onto the 18B frame grid: frames live
+    // only at header + k*18, so a partial frame at either edge is never
+    // streamed (the ring-era whole-record guard, grid edition).
+    uint32_t firstOff =
+        kRecBBHeaderSize +
+        ((bbStart - kRecBBHeaderSize + sizeof(RecRingFrame) - 1) /
+         sizeof(RecRingFrame)) * sizeof(RecRingFrame);
+    uint32_t lastOff =
+        kRecBBHeaderSize +
+        ((bbEnd - kRecBBHeaderSize) / sizeof(RecRingFrame)) *
+            sizeof(RecRingFrame);
+    const uint32_t winSpan = endUs - startUs;
+
+    // Handlers run serialized inside webTask's 8192-byte stack (handleClient
+    // completes each response before the next request), so the chunk and bin
+    // batch buffers are function-level statics — 5KB of locals here would
+    // overflow that task mid-download and reboot the board.
+    static uint8_t chunk[4096];
+    static RecRingFrame batch[64];
+
     if (fmt == "bin")
     {
         String name = "attachment; filename=\"sess_" + String(seq) + ".bin\"";
         server.sendHeader("Content-Disposition", name.c_str());
         if (!server.beginChunkedResponse(200, "application/octet-stream"))
-        {
-            f.close();
             return;
-        }
-        uint8_t buf[64 * sizeof(RecRingFrame)];
-        size_t got;
-        while ((got = f.read(buf, sizeof(buf))) > 0)
+        size_t batchLen = 0;
+        bool ok = true;
+        for (uint32_t base = firstOff; base < lastOff && ok;)
         {
-            if (!server.sendChunk((const char *)buf, got))
+            uint32_t remain = lastOff - base;
+            uint32_t want = remain < sizeof(chunk) ? remain : sizeof(chunk);
+            if (!recBBReadFrames(base, chunk, want))
+            {
+                ok = false; // partition read error: stop the stream clean
                 break;
+            }
+            uint32_t frames = want / sizeof(RecRingFrame);
+            for (uint32_t i = 0; i < frames; i++)
+            {
+                RecRingFrame f;
+                memcpy(&f, chunk + i * sizeof(RecRingFrame), sizeof(f));
+                uint8_t bus = f.flags & 0x03;
+                if ((uint32_t)(f.tsUs - startUs) > winSpan ||
+                    bus < kRecV2BusA || bus > kRecV2BusC ||
+                    !(busMask & (1 << (bus - 1))))
+                    continue; // outside the window / not this session's buses
+                batch[batchLen++] = f;
+                if (batchLen == 64)
+                {
+                    if (!server.sendChunk((const char *)batch,
+                                          batchLen * sizeof(RecRingFrame)))
+                    {
+                        ok = false;
+                        break;
+                    }
+                    batchLen = 0;
+                }
+            }
+            base += frames * sizeof(RecRingFrame);
         }
-        f.close();
+        if (ok && batchLen)
+            server.sendChunk((const char *)batch, batchLen * sizeof(RecRingFrame));
         server.endChunkedResponse();
         return;
     }
@@ -8219,51 +8284,65 @@ static void handleSessionDownload()
     String name = "attachment; filename=\"sess_" + String(seq) + ".csv\"";
     server.sendHeader("Content-Disposition", name.c_str());
     if (!server.beginChunkedResponse(200, "text/csv"))
-    {
-        f.close();
         return;
-    }
     static const char kHeader[] =
         "ts_us,bus,dir,id,dlc,b0,b1,b2,b3,b4,b5,b6,b7\n";
     if (!server.sendChunk(kHeader, sizeof(kHeader) - 1))
     {
-        f.close();
+        server.endChunkedResponse();
         return;
     }
-    RecRingFrame record;
     char line[128];
     uint32_t rows = 0;
-    while (f.read(reinterpret_cast<uint8_t *>(&record), sizeof(record)) ==
-           sizeof(record))
+    bool ok = true;
+    for (uint32_t base = firstOff; base < lastOff && ok;)
     {
-        uint8_t bus = record.flags & 0x03;
-        uint8_t dirBits = (record.flags >> 2) & 0x03;
-        char dir = dirBits == 1 ? 'T' : (dirBits == 2 ? 'E' : 'R');
-        int len = snprintf(line, sizeof(line),
-                           "%lu,%u,%c,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
-                           static_cast<unsigned long>(record.tsUs),
-                           static_cast<unsigned>(bus),
-                           dir,
-                           static_cast<unsigned long>(record.id),
-                           static_cast<unsigned>(record.dlc),
-                           static_cast<unsigned>(record.data[0]),
-                           static_cast<unsigned>(record.data[1]),
-                           static_cast<unsigned>(record.data[2]),
-                           static_cast<unsigned>(record.data[3]),
-                           static_cast<unsigned>(record.data[4]),
-                           static_cast<unsigned>(record.data[5]),
-                           static_cast<unsigned>(record.data[6]),
-                           static_cast<unsigned>(record.data[7]));
-        if (len <= 0 || !server.sendChunk(line, static_cast<size_t>(len)))
-            break;
-        if ((++rows & 0xFFU) == 0)
-            vTaskDelay(1);
+        uint32_t remain = lastOff - base;
+        uint32_t want = remain < sizeof(chunk) ? remain : sizeof(chunk);
+        if (!recBBReadFrames(base, chunk, want))
+            break; // partition read error: stop the stream clean
+        uint32_t frames = want / sizeof(RecRingFrame);
+        for (uint32_t i = 0; i < frames; i++)
+        {
+            RecRingFrame f;
+            memcpy(&f, chunk + i * sizeof(RecRingFrame), sizeof(f));
+            uint8_t bus = f.flags & 0x03;
+            if ((uint32_t)(f.tsUs - startUs) > winSpan ||
+                bus < kRecV2BusA || bus > kRecV2BusC ||
+                !(busMask & (1 << (bus - 1))))
+                continue;
+            uint8_t dirBits = (f.flags >> 2) & 0x03;
+            char dir = dirBits == 1 ? 'T' : (dirBits == 2 ? 'E' : 'R');
+            int len = snprintf(line, sizeof(line),
+                               "%lu,%u,%c,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+                               static_cast<unsigned long>(f.tsUs),
+                               static_cast<unsigned>(bus),
+                               dir,
+                               static_cast<unsigned long>(f.id),
+                               static_cast<unsigned>(f.dlc),
+                               static_cast<unsigned>(f.data[0]),
+                               static_cast<unsigned>(f.data[1]),
+                               static_cast<unsigned>(f.data[2]),
+                               static_cast<unsigned>(f.data[3]),
+                               static_cast<unsigned>(f.data[4]),
+                               static_cast<unsigned>(f.data[5]),
+                               static_cast<unsigned>(f.data[6]),
+                               static_cast<unsigned>(f.data[7]));
+            if (len <= 0 || !server.sendChunk(line, static_cast<size_t>(len)))
+            {
+                ok = false;
+                break;
+            }
+            if ((++rows & 0xFFU) == 0)
+                vTaskDelay(1);
+        }
+        base += frames * sizeof(RecRingFrame);
     }
-    f.close();
     server.endChunkedResponse();
 }
 
-// POST /session_delete {seq} — removes meta + bin for one session.
+// POST /session_delete {seq} — clears the session's block protection and
+// removes its meta (the blackbox era has no bin files).
 static void handleSessionDelete()
 {
     uint32_t seq = 0;
@@ -8289,7 +8368,7 @@ static void handleSessionDelete()
         server.send(400, "text/plain", "missing seq");
         return;
     }
-    if (!SPIFFS.exists(recV2BinPath(seq)))
+    if (!SPIFFS.exists(recV2MetaPath(seq)))
     {
         server.send(404, "text/plain", "session not found");
         return;

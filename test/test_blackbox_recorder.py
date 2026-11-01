@@ -210,5 +210,58 @@ class BlackboxLockTests(unittest.TestCase):
         self.assertNotIn("xTaskCreatePinnedToCore(recV2FlushTask", body)
 
 
+class BlackboxDownloadTests(unittest.TestCase):
+    """Task 5: streaming download from the raw partition + status semantics."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.engine = ENGINE.read_text(encoding="utf-8")
+        cls.dash = (ROOT / "include" / "web" / "mcp2515_dashboard.h").read_text(
+            encoding="utf-8")
+
+    @staticmethod
+    def _fn(source: str, signature: str, span: int) -> str:
+        start = source.index(signature)
+        return source[start : start + span]
+
+    def test_download_streams_partition_not_spiffs(self) -> None:
+        body = self._fn(self.dash, "static void handleSessionDownload(", 9000)
+        self.assertIn("recBBReadFrames", body)  # engine batch-read primitive
+        self.assertIn("4096", body)             # 4KB chunk loop
+        # The bin era is over: no SPIFFS bin anywhere in the download path.
+        self.assertNotIn("SPIFFS.open(binPath)", body)
+        self.assertNotIn("SPIFFS.open(recV2BinPath", body)
+        # The meta is the session source of truth.
+        self.assertIn("recV2MetaPath(seq)", body)
+
+    def test_download_filter_anchored_to_meta_window(self) -> None:
+        body = self._fn(self.dash, "static void handleSessionDownload(", 9000)
+        for token in ("start_boot_us", "end_boot_us", "bus_mask", "winSpan"):
+            self.assertIn(token, body)
+        # Grid snap: frames stream only at whole grid offsets.
+        self.assertIn("sizeof(RecRingFrame)", body)
+        # Range sanity against the real partition bounds.
+        self.assertIn("recBBPart->size", body)
+
+    def test_download_holds_no_writer_state(self) -> None:
+        body = self._fn(self.dash, "static void handleSessionDownload(", 9000)
+        self.assertNotIn("recV2Mux", body)  # never blocks the ingest path
+
+    def test_csv_header_unchanged(self) -> None:
+        body = self._fn(self.dash, "static void handleSessionDownload(", 14000)
+        header = '"ts_us,bus,dir,id,dlc,b0,b1,b2,b3,b4,b5,b6,b7\\n"'
+        self.assertIn(header, body)
+
+    def test_status_json_new_semantics(self) -> None:
+        body = self._fn(self.engine, "static String dashRecV2StatusJson(", 3400)
+        self.assertIn('"paused"', body)
+        self.assertNotIn("flushing", body)  # state names are idle/arming only
+        # sessions_space_free = clear protection bits × block size.
+        self.assertIn("recBBProtGet(b)", body)
+        self.assertIn("kRecBBBlockSize", body)
+        # enabled keys on the blackbox engine, not the dead ring.
+        self.assertIn("recBBEnabled ? \"true\" : \"false\"", body)
+
+
 if __name__ == "__main__":
     unittest.main()
