@@ -558,3 +558,184 @@ class DashRecorderV2FinalReviewTests(unittest.TestCase):
             "recAdv.dataset.gated='1'", self.src,
             "the fold is gated once — later polls must not re-close a "
             "details the user just opened")
+
+
+class DashRecorderV2CarCrashReproTests(unittest.TestCase):
+    """Field finding 2026-11-01: in-car lock → flush-phase reboot, 6 orphan
+    bins (one torn mid-batch, 88101 % 18 == 9), board unstable while driving.
+    Prime suspects: (a) brownout under sustained erase-heavy SPIFFS burst,
+    (b) TWDT/panic in the never-bench-tested multi-MB flush regime.
+
+    The bench has no CAN traffic source, so the big-flush regime could never
+    be exercised. rv2_flood injects paced synthetic frames through the real
+    submit path to reproduce the car's flush load on the bench.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.rec2 = REC2.read_text(encoding="utf-8")
+        cls.dash = DASH.read_text(encoding="utf-8")
+
+    def test_flood_injector_exists_and_paces_batches(self) -> None:
+        # Paced injection (batched per 10ms tick), not a tight busy loop:
+        # a tight loop would starve the sender task itself and distort the
+        # repro (and the fps counters would lie).
+        self.assertIn("dashRecV2BenchFlood", self.rec2,
+                      "bench-only flood injector lives in the engine")
+        self.assertIn("vTaskDelay(pdMS_TO_TICKS(10))", self.rec2,
+                      "injection is paced in 10ms batches")
+        self.assertIn("dashRecV2Submit(f,", self.rec2,
+                      "flood rides the REAL submit path (ring + fps + lock)")
+
+    def test_flood_is_serial_dispatched_and_gated(self) -> None:
+        self.assertIn('strncmp(start, "rv2_flood", 9) == 0', self.dash,
+                      "DIAG dispatcher routes rv2_flood")
+        self.assertIn("dashRecV2BenchFlood(", self.dash,
+                      "dispatcher calls the injector")
+        self.assertGreaterEqual(
+            self.dash.count("DASH_RECORDER_V2"), 4,
+            "flood branch stays macro-gated like every other v2 hook")
+
+    def test_flood_spreads_buses_by_mask(self) -> None:
+        # Injection must honor the bus mask so a flush's bus_mask filtering
+        # sees the same frame mix the car produces.
+        self.assertIn("buses[sent % n]", self.rec2,
+                      "frames round-robin across the masked buses")
+
+
+class DashRecorderV2CarFieldFixTests(unittest.TestCase):
+    """Fixes from the 2026-11-01 in-car lock-crash forensics, session 2.
+
+    Bench discrimination twice over: 2000fps x 300s flood + lock + 9.6MB
+    flush survived clean (uptime continuous, no panic/WDT/brownout, HTTP
+    alive throughout, bin streams at 444KB/s) — the car crashes point at
+    supply collapse under the flash-write burst, not at the flush code.
+    These contracts carry the field fixes that follow from that verdict:
+
+    1. sessions size truth   — /sessions size was always 0 (stat() at the
+       VFS root misses the /spiffs mount prefix; seq 22 proved it: 9.6MB
+       bin reported as size 0).
+    2. boot orphan sweep     — five bins (seq 7-12) left orphaned by the
+       in-car crashes leak space forever; meta is the source of truth.
+    3. crash forensics       — NVS ledger of the last 8 reset reasons plus
+       a died-mid-flush flag: the next car run classifies every reboot
+       (BROWNOUT vs TASK_WDT vs PANIC) with no serial attached.
+    4. coredump to flash     — the partition exists (0x1FE0000); enable it
+       so any panic leaves a retrievable backtrace.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.rec2 = REC2.read_text(encoding="utf-8") if REC2.exists() else ""
+        cls.dash = DASH.read_text(encoding="utf-8")
+        cls.shim_cpp = (ROOT / "src" / "espidf_runtime.cpp").read_text(
+            encoding="utf-8")
+        cls.shim_h = (
+            ROOT / "include" / "platform" / "espidf_runtime.h"
+        ).read_text(encoding="utf-8")
+        cls.sdkcfg = (ROOT / "sdkconfig.p4_3can").read_text(encoding="utf-8")
+        cls.parts = (
+            ROOT / "partitions_32mb_ota_8192k_nvs64.csv"
+        ).read_text(encoding="utf-8")
+
+    # --- fix 1: sessions size truth ---------------------------------------
+
+    def test_sessions_size_uses_shim_file_size(self) -> None:
+        # recV2FileSize stat()'d "/sess_N.bin" at the VFS root — ENOENT for
+        # every session. It must delegate to the shim, which knows the mount
+        # prefix, and never bare-stat a SPIFFS-relative path again.
+        self.assertIn("SPIFFS.fileSize(path)", self.rec2,
+                      "recV2FileSize delegates to the shim")
+        self.assertNotIn("stat(path.c_str()", self.rec2,
+                          "no raw stat on SPIFFS-relative paths")
+
+    def test_shim_file_size_prepends_mount_base(self) -> None:
+        # exists() prepends kSpiffsBase before stat; fileSize must do the
+        # same or it inherits the ENOENT bug.
+        self.assertIn("size_t SPIFFSClass::fileSize", self.shim_cpp,
+                      "shim implements fileSize")
+        body = self.shim_cpp.split("size_t SPIFFSClass::fileSize", 1)[1][:400]
+        self.assertIn("kSpiffsBase", body,
+                      "fileSize stat()s under the SPIFFS mount prefix")
+        self.assertIn("st.st_size", body,
+                      "fileSize returns the stat size")
+
+    def test_shim_declares_file_size(self) -> None:
+        self.assertRegex(
+            self.shim_h, r"size_t fileSize\(const String &path\)",
+            "SPIFFSClass declares fileSize next to exists/remove")
+
+    # --- fix 2: boot orphan sweep ------------------------------------------
+
+    def test_boot_sweeps_orphan_bins(self) -> None:
+        # A bin without a meta is a flush that died before its meta write
+        # (all five in-car crashes). Boot-time only: init runs before any
+        # flush can exist, so the sweep can never race a live session.
+        self.assertIn("recV2SweepOrphans", self.rec2,
+                      "engine has an orphan sweep")
+        init_body = self.rec2.split("static void dashRecV2Init()", 1)[1][:1600]
+        self.assertIn("recV2SweepOrphans()", init_body,
+                      "init calls the sweep at boot")
+        sweep_pos = self.rec2.find("Boot-time janitor")
+        self.assertNotEqual(sweep_pos, -1, "sweep has its own definition")
+        sweep_body = self.rec2[sweep_pos:sweep_pos + 1600]
+        self.assertIn("SPIFFS.exists(recV2MetaPath", sweep_body,
+                      "a bin is spared only when its meta exists")
+        self.assertIn(".bin", sweep_body,
+                      "sweep targets bin files only")
+
+    # --- fix 3: crash forensics ledger --------------------------------------
+
+    def test_ledger_records_boot_reset_reason(self) -> None:
+        # esp_reset_reason() at boot says why the PREVIOUS session ended
+        # (BROWNOUT / TASK_WDT / PANIC ...). 8 rotating slots; the reason
+        # survives power cycles, so the next car run needs no serial.
+        self.assertIn("recV2LedgerBoot", self.rec2,
+                      "engine records boot reset reasons")
+        init_body = self.rec2.split("static void dashRecV2Init()", 1)[1][:1600]
+        self.assertIn("recV2LedgerBoot()", init_body,
+                      "init feeds the ledger at every boot")
+        ledger_pos = self.rec2.find("recV2LedgerBoot")
+        ledger_body = self.rec2[ledger_pos:ledger_pos + 1400]
+        self.assertIn("esp_reset_reason()", ledger_body,
+                      "ledger stores the IDF reset reason code")
+        self.assertIn("rv2_resets", ledger_body,
+                      "ledger persists under the rec_v2 NVS namespace")
+
+    def test_flush_marks_died_mid_flush(self) -> None:
+        # The correlator for the car crashes: set at flush start, cleared on
+        # BOTH completion paths (success and write-failure). A boot that
+        # reads flag==1 died mid-flush — combined with the reset reason it
+        # closes the brownout question. (The boot ledger clears the flag too,
+        # after reading it — scope this count to the flush function body.)
+        self.assertEqual(self.rec2.count('putUChar("rv2_flushing", 1)'), 1,
+                         "flush start raises the flag exactly once")
+        flush_start = self.rec2.find("const String binPath = recV2BinPath(seq);")
+        self.assertNotEqual(flush_start, -1, "flush function anchor found")
+        flush_body = self.rec2[flush_start:flush_start + 4200]
+        self.assertEqual(flush_body.count('putUChar("rv2_flushing", 0)'), 2,
+                         "both flush completion paths clear the flag")
+
+    def test_ring_status_carries_resets(self) -> None:
+        # /ring_status is the recorder's own endpoint; the UI and any
+        # browser-based field check read the ledger from there.
+        self.assertIn('"resets"', self.rec2,
+                      "status JSON exposes the reset ledger")
+
+    def test_diag_rv2_resets_registered(self) -> None:
+        self.assertIn('strncmp(start, "rv2_resets", 10) == 0', self.dash,
+                      "DIAG dispatcher routes rv2_resets")
+        self.assertIn("rv2_resets", self.dash,
+                      "DIAG help mentions the command")
+
+    # --- fix 4: coredump to flash -------------------------------------------
+
+    def test_sdkconfig_coredump_to_flash(self) -> None:
+        self.assertIn("CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y", self.sdkcfg,
+                      "coredumps persist to the flash partition")
+        self.assertNotIn("CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y", self.sdkcfg,
+                         "coredump-to-none must be off")
+
+    def test_partition_table_keeps_coredump(self) -> None:
+        self.assertIn("coredump", self.parts,
+                      "the coredump partition row stays in the table")

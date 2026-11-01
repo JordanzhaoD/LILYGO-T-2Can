@@ -6517,6 +6517,8 @@ static void dashSerialPrintHelp()
 #if defined(DASH_RECORDER_V2)
     Serial.println("  rv2_status     recorder v2 ring/lock status JSON (bench)");
     Serial.println("  rv2_lock <pre_s> <post_s> <bus_mask>  arm blackbox lock (bench)");
+    Serial.println("  rv2_flood <fps> <s> <bus_mask>  inject synthetic traffic (crash repro, blocks serial)");
+    Serial.println("  rv2_resets                    print the NVS reset ledger (crash forensics)");
 #endif
     Serial.println();
 }
@@ -6779,6 +6781,23 @@ static void dashSerialRunCommand(char *cmd)
             Serial.println("[rv2_lock] armed");
         else
             Serial.println("[rv2_lock] refused: " + err);
+    }
+    else if (strncmp(start, "rv2_flood", 9) == 0)
+    {
+        // Car-crash repro (2026-11-01): bench has no CAN source, so the
+        // multi-MB flush regime was never exercised before the field run.
+        // Blocks the serial task for the injection duration — bench only.
+        unsigned fps = 2000, secs = 300, mask = 7;
+        sscanf(start + 9, " %u %u %u", &fps, &secs, &mask);
+        Serial.printf("[rv2_flood] injecting %u fps for %us (mask %u)...\n",
+                      fps, secs, mask);
+        dashRecV2BenchFlood(fps, secs, (uint8_t)mask);
+    }
+    else if (strncmp(start, "rv2_resets", 10) == 0)
+    {
+        // Crash forensics (2026-11-01): last 8 boot reset reasons + the
+        // died-mid-flush marker, both NVS-backed and serial-free.
+        dashRecV2DumpResets();
     }
 #endif
     else if (*start)

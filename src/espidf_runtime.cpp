@@ -641,6 +641,16 @@ bool SPIFFSClass::remove(const String &path)
     return std::remove(full.c_str()) == 0;
 }
 
+// Field fix 2026-11-01: recorder v2 stat()'d SPIFFS-relative paths at the
+// VFS root — ENOENT for every session, so /sessions size was always 0
+// (seq 22: 9.6MB bin reported as 0). Same mount-prefix discipline as exists().
+size_t SPIFFSClass::fileSize(const String &path)
+{
+    std::string full = std::string(kSpiffsBase) + path.c_str();
+    struct stat st = {};
+    return stat(full.c_str(), &st) == 0 ? (size_t)st.st_size : 0;
+}
+
 size_t SPIFFSClass::totalBytes()
 {
     size_t total = 0;

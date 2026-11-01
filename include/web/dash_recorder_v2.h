@@ -133,6 +133,35 @@ static uint8_t recV2DirBits(char dir)
 // 20MB ≈ 9.7 min of full-rate three-bus history (1800fps × 600s × 18B ≈
 // 19.4MB); falls back to 10MB, then to disabled (ring == nullptr: submit
 // becomes a no-op and the status API reports the engine as disabled).
+// Crash forensics (field fix 2026-11-01): the in-car reboots left no evidence
+// — reset reasons died with each power cycle and no serial was attached. The
+// ledger keeps the last 8 boots in NVS as {esp_reset_reason, diedMidFlush}
+// pairs; rv2_flushing is raised at flush start and cleared on both completion
+// paths, so a boot that reads it set DIED inside a flush. reason=BROWNOUT +
+// midFlush=1 is the closed case for the in-car lock crashes; reason=TWDT or
+// PANIC would instead point back at firmware.
+static void recV2SweepOrphans(); // defined after the session path builders
+static void recV2LedgerBoot()
+{
+    Preferences p;
+    p.begin("rec_v2", false);
+    uint32_t boots = p.getUInt("rv2_boots", 0) + 1;
+    p.putUInt("rv2_boots", boots);
+    uint8_t midFlush = p.getUChar("rv2_flushing", 0);
+    p.putUChar("rv2_flushing", 0);
+    uint8_t slot[16]; // 8 pairs of {reason, midFlush}, oldest first
+    memset(slot, 0, sizeof(slot));
+    p.getBytes("rv2_resets", slot, sizeof(slot));
+    memmove(slot, slot + 2, sizeof(slot) - 2); // drop the oldest pair
+    slot[sizeof(slot) - 2] = (uint8_t)esp_reset_reason();
+    slot[sizeof(slot) - 1] = midFlush;
+    p.putBytes("rv2_resets", slot, sizeof(slot));
+    p.end();
+    Serial.printf("[REC2] boot #%u reason=%d diedMidFlush=%u\n",
+                  (unsigned)boots, (int)esp_reset_reason(),
+                  (unsigned)midFlush);
+}
+
 static void dashRecV2Init()
 {
     if (recV2Initialized)
@@ -160,6 +189,10 @@ static void dashRecV2Init()
     Serial.printf("[REC2] ring ready: %u frames (%.1f MB)\n",
                   static_cast<unsigned>(ringCapacity),
                   static_cast<double>(bytes) / (1024.0 * 1024.0));
+    // Boot-time only, before any flush can exist: record why we last died,
+    // then reclaim space from flushes that died before their meta write.
+    recV2LedgerBoot();
+    recV2SweepOrphans();
 }
 
 // Hot path: one frame into the ring. Never blocks, never drops the caller's
@@ -274,11 +307,52 @@ static bool recV2RemoveSession(uint32_t seq)
     return SPIFFS.remove(recV2BinPath(seq));
 }
 
-// Bin size via stat() — the espidf File shim has no size().
+// Boot-time janitor (field fix 2026-11-01): a bin without its meta is a flush
+// that died before the meta write — the five in-car crashes left exactly that
+// (seq 7-12 orphans, one torn mid-batch). Meta is the source of truth, so the
+// orphans are invisible to /sessions, undownloadable, and leak their bytes
+// forever. Sweep them at boot (init runs before any flush can exist, so this
+// can never race a live session). Victims are collected first and removed
+// after the directory walk closes.
+static void recV2SweepOrphans()
+{
+    File root = SPIFFS.open("/");
+    if (!root)
+        return;
+    String victims[32];
+    size_t nVictims = 0;
+    for (File entry = root.openNextFile();
+         entry && nVictims < 32; entry = root.openNextFile())
+    {
+        const char *nm = entry.name(); // basename per the File shim
+        while (*nm == '/')
+            nm++;
+        if (strncmp(nm, "sess_", 5) != 0)
+            continue;
+        char *end = nullptr;
+        unsigned long seq = strtoul(nm + 5, &end, 10);
+        if (end == nm + 5 || strncmp(end, ".bin", 4) != 0)
+            continue; // metas and anything else pass through
+        if (SPIFFS.exists(recV2MetaPath((uint32_t)seq)))
+            continue; // live session — keep
+        victims[nVictims++] = recV2BinPath((uint32_t)seq);
+    }
+    root.close();
+    uint32_t removed = 0;
+    for (size_t i = 0; i < nVictims; i++)
+        removed += SPIFFS.remove(victims[i]) ? 1 : 0;
+    if (removed)
+        Serial.printf("[REC2] swept %u orphan bin(s) from dead flushes\n",
+                      (unsigned)removed);
+}
+
+// Bin size via the shim — the espidf File shim has no size(), and a raw
+// stat() on the SPIFFS-relative path hits the VFS root (ENOENT, size always
+// 0 — field bug 2026-11-01, seq 22: 9.6MB bin reported as 0). The shim
+// prepends the /spiffs mount prefix the same way exists() does.
 static size_t recV2FileSize(const String &path)
 {
-    struct stat st;
-    return (stat(path.c_str(), &st) == 0) ? (size_t)st.st_size : 0;
+    return SPIFFS.fileSize(path);
 }
 
 // Sessions list, newest first: one JSON object per on-flash meta.
@@ -454,9 +528,23 @@ static void recV2FlushTask(void *)
     // Retention the scan actually saw (0 µs when the ring is empty).
     uint32_t spanUs = count ? (uint32_t)(newestTs - oldestTs) : 0;
 
+    // Forensics flag (see recV2LedgerBoot): raised for the whole flush so a
+    // boot that finds it set knows the previous session died mid-write.
+    {
+        Preferences p;
+        p.begin("rec_v2", false);
+        p.putUChar("rv2_flushing", 1);
+        p.end();
+    }
     File recFile = SPIFFS.open(binPath, "w");
     if (!recFile)
+    {
         writeFailed = true; // named below, on the single failure path
+        Preferences p;
+        p.begin("rec_v2", false);
+        p.putUChar("rv2_flushing", 0);
+        p.end();
+    }
     else
     {
         RecRingFrame batch[64];
@@ -505,6 +593,14 @@ static void recV2FlushTask(void *)
                 batchLen * sizeof(RecRingFrame))
             writeFailed = true;
         recFile.close();
+        // Common completion path (success or mid-write failure): the bin is
+        // sealed, so the next boot must not read diedMidFlush=1.
+        {
+            Preferences p;
+            p.begin("rec_v2", false);
+            p.putUChar("rv2_flushing", 0);
+            p.end();
+        }
     }
 
     uint32_t overflowNow = ringOverflow;
@@ -676,6 +772,34 @@ static String dashRecV2StatusJson()
     j += String((uint32_t)freeBytes);
     j += R"JSON(,"seq":)JSON";
     j += String(recV2Seq);
+    // Reset ledger, newest first: [reasonCode, diedMidFlush] pairs from NVS.
+    // Written at every boot (recV2LedgerBoot) — survives power cycles, so a
+    // field run with no serial still classifies its reboots afterwards.
+    {
+        uint8_t slot[16];
+        memset(slot, 0, sizeof(slot));
+        Preferences p;
+        p.begin("rec_v2", true);
+        p.getBytes("rv2_resets", slot, sizeof(slot));
+        p.end();
+        j += R"JSON(,"resets":[)JSON";
+        bool wroteAny = false;
+        for (int i = 7; i >= 0; i--)
+        {
+            uint8_t reason = slot[i * 2], mid = slot[i * 2 + 1];
+            if (!reason && !mid)
+                continue; // slot never filled
+            if (wroteAny)
+                j += ",";
+            j += "[";
+            j += String((unsigned)reason);
+            j += ",";
+            j += String((unsigned)mid);
+            j += "]";
+            wroteAny = true;
+        }
+        j += "]";
+    }
     if (recV2LastError.length())
     {
         j += R"JSON(,"last_error":")JSON";
@@ -684,6 +808,49 @@ static String dashRecV2StatusJson()
     }
     j += "}";
     return j;
+}
+
+// Human-readable ledger dump for the DIAG console (rv2_resets).
+static const char *recV2ResetName(uint8_t code)
+{
+    // esp_reset_reason_t values this board can actually produce; unknown
+    // codes fall through to the number itself.
+    switch (code)
+    {
+    case 1: return "POWERON";
+    case 3: return "SW";
+    case 4: return "PANIC";
+    case 5: return "INT_WDT";
+    case 6: return "TASK_WDT";
+    case 7: return "TASK_WDT_OTHER";
+    case 9: return "BROWNOUT";
+    case 10: return "SW_BROWNOUT";
+    case 11: return "SDIO";
+    case 12: return "USB";
+    default: return "?";
+    }
+}
+
+static void dashRecV2DumpResets()
+{
+    uint8_t slot[16];
+    memset(slot, 0, sizeof(slot));
+    Preferences p;
+    p.begin("rec_v2", true);
+    p.getBytes("rv2_resets", slot, sizeof(slot));
+    uint32_t boots = p.getUInt("rv2_boots", 0);
+    p.end();
+    Serial.printf("[REC2] boots=%u, reset ledger newest first:\n",
+                  (unsigned)boots);
+    for (int i = 7; i >= 0; i--)
+    {
+        uint8_t reason = slot[i * 2], mid = slot[i * 2 + 1];
+        if (!reason && !mid)
+            continue;
+        Serial.printf("  boot-%d: reason=%d (%s) diedMidFlush=%u\n",
+                      7 - i, (int)reason, recV2ResetName(reason),
+                      (unsigned)mid);
+    }
 }
 
 // Called from the dashboard loop: sample fps windows and advance the lock
@@ -717,6 +884,68 @@ static void dashRecV2Loop()
             recV2LastError = "flush task create failed";
         }
     }
+}
+
+// --- Bench-only synthetic traffic injector (car-crash repro, 2026-11-01) ---
+// The bench has no CAN source, so the multi-MB flush regime was never
+// exercised before the field run (in-car lock → flush-phase reboot, 6
+// orphan bins, one torn mid-batch). rv2_flood pushes paced synthetic frames
+// through the REAL submit path so a subsequent lock reproduces the car's
+// flush load: ring writes, fps counters, overflow, SPIFFS burst — all real.
+// Paced in 10ms batches (not a tight loop) so the sender task breathes and
+// the fps counters report the truth. Blocks the caller for `seconds`.
+static void dashRecV2BenchFlood(uint32_t fps, uint32_t seconds, uint8_t busMask)
+{
+    if (!ring || fps == 0 || seconds == 0)
+    {
+        Serial.println("[rv2_flood] disabled or no-op args");
+        return;
+    }
+    uint8_t buses[3];
+    uint8_t n = 0;
+    for (uint8_t b = 0; b < 3; b++)
+        if (busMask & (1 << b))
+            buses[n++] = kRecV2BusA + b;
+    if (!n)
+    {
+        Serial.println("[rv2_flood] empty bus mask");
+        return;
+    }
+    const uint32_t kTicksPerSec = 100; // 10ms ticks
+    const uint32_t perTick = fps / kTicksPerSec;
+    const uint32_t frac = fps % kTicksPerSec;
+    uint32_t carry = 0;
+    uint32_t sent = 0;
+    uint32_t id = 0;
+    CanFrame f;
+    f.dlc = 8;
+    for (uint32_t s = 0; s < seconds; s++)
+    {
+        for (uint32_t t = 0; t < kTicksPerSec; t++)
+        {
+            uint32_t burst = perTick;
+            carry += frac;
+            if (carry >= kTicksPerSec)
+            {
+                carry -= kTicksPerSec;
+                burst++;
+            }
+            for (uint32_t i = 0; i < burst; i++)
+            {
+                f.id = 0x100 + (id & 0x3FF);
+                id++;
+                f.data[0] = (uint8_t)(sent >> 24);
+                f.data[1] = (uint8_t)(sent >> 16);
+                f.data[2] = (uint8_t)(sent >> 8);
+                f.data[3] = (uint8_t)sent;
+                dashRecV2Submit(f, buses[sent % n], 'R');
+                sent++;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+    Serial.printf("[rv2_flood] done: %u frames over %us\n",
+                  (unsigned)sent, (unsigned)seconds);
 }
 
 #endif // DASH_RECORDER_V2

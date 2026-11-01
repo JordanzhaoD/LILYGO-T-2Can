@@ -423,6 +423,7 @@ public:
     File open(const String &path, const char *mode = "r");
     bool exists(const String &path);
     bool remove(const String &path);
+    size_t fileSize(const String &path);
     size_t totalBytes();
     size_t usedBytes();
 };
