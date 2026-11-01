@@ -136,6 +136,35 @@ static void recBBProtSet(uint32_t b, bool on)
         recBBProt[b >> 3] &= (uint8_t)~(1u << (b & 7));
 }
 
+// Set/clear protection for every block covering the byte range
+// [startOff, endOff). Block-rounded and wrap-safe: a range that spans the
+// grid end marks the tail blocks and the head blocks.
+static void recBBRangeSet(uint32_t startOff, uint32_t endOff, bool on)
+{
+    if (endOff <= startOff)
+        return;
+    uint32_t b0 = startOff / kRecBBBlockSize;
+    uint32_t b1 = (endOff - 1) / kRecBBBlockSize;
+    if (b1 >= b0)
+    {
+        for (uint32_t b = b0; b <= b1 && b < kRecBBBlockCount; b++)
+            recBBProtSet(b, on);
+    }
+    else
+    {
+        for (uint32_t b = b0; b < kRecBBBlockCount; b++)
+            recBBProtSet(b, on);
+        for (uint32_t b = 0; b <= b1; b++)
+            recBBProtSet(b, on);
+    }
+}
+
+// Protect a locked session's grid range (task 4).
+static void recBBMarkRange(uint32_t startOff, uint32_t endOff)
+{
+    recBBRangeSet(startOff, endOff, true);
+}
+
 // Erased-ahead bitmap: each block is erased exactly once per pass over the
 // grid; bits clear at boot (nothing is pre-erased after a resume).
 static uint8_t recBBErased[kRecBBBlockCount / 8];
@@ -432,6 +461,7 @@ static uint8_t recV2DirBits(char dir)
 // midFlush=1 is the closed case for the in-car lock crashes; reason=TWDT or
 // PANIC would instead point back at firmware.
 static void recV2SweepOrphans(); // defined after the session path builders
+static void recBBRebuildProtection(); // defined after the session scanner
 static void recV2LedgerBoot()
 {
     Preferences p;
@@ -481,6 +511,8 @@ static void dashRecV2Init()
                   static_cast<unsigned>(ringCapacity),
                   static_cast<double>(bytes) / (1024.0 * 1024.0));
     recBBInitPartition(); // raw-partition blackbox skeleton (task 2)
+    if (recBBEnabled)
+        recBBRebuildProtection(); // locked sessions survive reboots (task 4)
     if (recBBEnabled)
     {
         recBBStage[0] = (uint8_t *)heap_caps_malloc(kRecBBBlockSize, MALLOC_CAP_SPIRAM);
@@ -641,10 +673,54 @@ static size_t recV2ScanSessions(uint32_t *seqs, size_t cap)
     return n;
 }
 
+// Rebuild the protection bitmap at boot: every session meta names the grid
+// byte range it locked; blocks outside those ranges stay clear (fair game
+// for the rolling writer).
+static void recBBRebuildProtection()
+{
+    memset(recBBProt, 0, sizeof(recBBProt));
+    uint32_t seqs[32];
+    size_t n = recV2ScanSessions(seqs, 32);
+    for (size_t i = 0; i < n; i++)
+    {
+        File mf = SPIFFS.open(recV2MetaPath(seqs[i]), "r");
+        if (!mf)
+            continue;
+        String body = mf.readString();
+        mf.close();
+        JsonDocument doc;
+        if (deserializeJson(doc, body))
+            continue; // torn meta: its range stays unprotected (swept later)
+        uint32_t s = doc["bb_start_off"] | 0u;
+        uint32_t e = doc["bb_end_off"] | 0u;
+        if (e > s)
+            recBBMarkRange(s, e);
+    }
+    Serial.printf("[REC2] protection rebuilt from %u session meta(s)\n",
+                  (unsigned)n);
+}
+
+// Delete: clear this session's block protection (the meta is the only
+// record of the range), then remove the meta. The blackbox era has no bin
+// files; the legacy bin remove stays as a harmless no-op for old sessions.
 static bool recV2RemoveSession(uint32_t seq)
 {
-    SPIFFS.remove(recV2MetaPath(seq));
-    return SPIFFS.remove(recV2BinPath(seq));
+    File mf = SPIFFS.open(recV2MetaPath(seq), "r");
+    if (mf)
+    {
+        String body = mf.readString();
+        mf.close();
+        JsonDocument doc;
+        if (!deserializeJson(doc, body))
+        {
+            uint32_t s = doc["bb_start_off"] | 0u;
+            uint32_t e = doc["bb_end_off"] | 0u;
+            if (e > s)
+                recBBRangeSet(s, e, false);
+        }
+    }
+    SPIFFS.remove(recV2BinPath(seq));
+    return SPIFFS.remove(recV2MetaPath(seq));
 }
 
 // Boot-time janitor (field fix 2026-11-01): a bin without its meta is a flush
@@ -684,6 +760,165 @@ static void recV2SweepOrphans()
     if (removed)
         Serial.printf("[REC2] swept %u orphan bin(s) from dead flushes\n",
                       (unsigned)removed);
+}
+
+// --- Zero-copy lock finish (task 4, B2) --------------------------------------
+// Arming expired: the window's frames are ALREADY in the blackbox grid (or
+// in staging behind it) — no frame is ever copied. Walk the touched block
+// summaries for the window counts, compute the byte range, protect it, and
+// write the meta. Runs inline in the dashboard loop: µs of RAM walking plus
+// one small meta write; the flush-task era is over.
+static void recBBFinishLock()
+{
+    const uint32_t preMs = recV2PreMsReq;
+    const uint32_t windowUs = (preMs + recV2PostMs) * 1000UL;
+    uint32_t cntA = 0, cntB = 0, cntC = 0, cntTx = 0;
+    uint32_t lastTs = 0, oldestTs = 0;
+    uint32_t frontierBlk = 0, startBlk = 0;
+    uint32_t overflowNow = 0;
+    bool haveFrames = false;
+    portENTER_CRITICAL(&recV2Mux);
+    // Frontier = the block the NEXT frame lands in minus one correction: the
+    // absolute offset of the newest staged frame (writeOff + undrained
+    // buffers), same attribution formula the submit path uses.
+    frontierBlk = (recBBWriteOff + recBBStageLen[0] + recBBStageLen[1]) /
+                  kRecBBBlockSize;
+    if (frontierBlk >= kRecBBBlockCount)
+        frontierBlk = kRecBBBlockCount - 1; // full-grid edge
+    lastTs = recBBSums[frontierBlk].lastTsUs;
+    haveFrames = lastTs != 0;
+    if (haveFrames)
+    {
+        uint32_t b = frontierBlk;
+        startBlk = frontierBlk;
+        oldestTs = lastTs;
+        for (uint32_t guard = 0; guard < kRecBBBlockCount; guard++)
+        {
+            const RecBBBlockSum &s = recBBSums[b];
+            // Unsigned age compare is wrap-safe across the 71.6-min tsUs
+            // rollover; a zeroed slot is a pass boundary (skip gap) — stop.
+            if (b != frontierBlk &&
+                (s.lastTsUs == 0 || (uint32_t)(lastTs - s.lastTsUs) > windowUs))
+                break; // block ends before the window's cut
+            cntA += s.cntA;
+            cntB += s.cntB;
+            cntC += s.cntC;
+            cntTx += s.cntTx;
+            startBlk = b;
+            oldestTs = s.firstTsUs;
+            if (b == 0)
+                b = kRecBBBlockCount - 1;
+            else
+                b--;
+        }
+    }
+    overflowNow = ringOverflow;
+    portEXIT_CRITICAL(&recV2Mux);
+
+    // Common tail for every exit: arming is over, the ledger flag must not
+    // outlive it (a boot reading rv2_flushing=1 died INSIDE an arming).
+    Preferences p;
+    p.begin("rec_v2", false);
+    p.putUChar("rv2_flushing", 0);
+    p.end();
+    recV2State = kRecV2Idle;
+
+    if (!haveFrames)
+    {
+        recV2LastError = "no frames recorded";
+        Serial.println("[REC2] lock finished with no frames - meta skipped");
+        return;
+    }
+
+    // Window reaching past retention: honor what the grid actually holds
+    // (same clamp semantics as the ring era's pre_ms_act).
+    uint32_t spanMs = (uint32_t)(lastTs - oldestTs) / 1000UL;
+    uint32_t preEff = preMs;
+    if (preEff > spanMs)
+        preEff = spanMs;
+    recV2PreMsAct = preEff;
+    const uint32_t tCutUs = (uint32_t)(lastTs - preEff * 1000UL);
+
+    // Block-rounded byte range of the window; protect it before the writer
+    // can ever wrap around onto it.
+    uint32_t bbStart = startBlk * kRecBBBlockSize;
+    uint32_t bbEnd = (frontierBlk + 1) * kRecBBBlockSize;
+    if (bbEnd > kRecBBBlockCount * kRecBBBlockSize)
+        bbEnd = kRecBBBlockCount * kRecBBBlockSize;
+    recBBMarkRange(bbStart, bbEnd);
+    // A protected write pointer right here (partition filled during arming)
+    // is the writer's problem to skip, not the lock's.
+
+    const uint32_t seq = recV2AllocateSeq();
+    String meta = "{";
+    meta += R"JSON("seq":)JSON";
+    meta += String(seq);
+    meta += R"JSON(,"boot_ms":)JSON";
+    meta += String(millis());
+    meta += R"JSON(,"trigger":"manual")JSON";
+    if (dashRecV2HasWall())
+    {
+        meta += R"JSON(,"wall":)JSON";
+        meta += String((uint32_t)time(nullptr));
+    }
+    meta += R"JSON(,"pre_ms_req":)JSON";
+    meta += String(recV2PreMsReq);
+    meta += R"JSON(,"pre_ms_act":)JSON";
+    meta += String(preEff);
+    meta += R"JSON(,"post_ms":)JSON";
+    meta += String(recV2PostMs);
+    meta += R"JSON(,"bus_mask":)JSON";
+    meta += String(recV2BusMask);
+    meta += R"JSON(,"frames":{"a":)JSON";
+    meta += String(cntA);
+    meta += R"JSON(,"b":)JSON";
+    meta += String(cntB);
+    meta += R"JSON(,"c":)JSON";
+    meta += String(cntC);
+    meta += R"JSON(,"tx":)JSON";
+    meta += String(cntTx);
+    meta += R"JSON(},"ring_overflow":)JSON";
+    meta += String(overflowNow);
+    meta += R"JSON(,"ring_overflow_in_window":)JSON";
+    // AND semantics preserved from the ring era's final review: drops since
+    // lock AND the window reaching past what this pass retains.
+    bool overflowInWindow =
+        (overflowNow > recV2OverflowAtLock) && (windowUs > (uint32_t)(lastTs - oldestTs));
+    meta += String(overflowInWindow ? "true" : "false");
+    meta += R"JSON(,"twai_missed_a":)JSON";
+    meta += String(recV2TwaiMissedSnapshot[0]);
+    meta += R"JSON(,"twai_missed_b":)JSON";
+    meta += String(recV2TwaiMissedSnapshot[1]);
+    meta += R"JSON(,"twai_missed_c":)JSON";
+    meta += String(recV2TwaiMissedSnapshot[2]);
+    meta += R"JSON(,"start_boot_us":)JSON";
+    meta += String(tCutUs);
+    meta += R"JSON(,"end_boot_us":)JSON";
+    meta += String(lastTs);
+    meta += R"JSON(,"bb_start_off":)JSON";
+    meta += String(bbStart);
+    meta += R"JSON(,"bb_end_off":)JSON";
+    meta += String(bbEnd);
+    meta += "}";
+    File metaFile = SPIFFS.open(recV2MetaPath(seq), "w");
+    if (metaFile)
+    {
+        metaFile.print(meta);
+        metaFile.close();
+        recV2Seq = seq;
+        recV2LastError = "";
+        Serial.printf("[REC2] session %u locked zero-copy: a=%u b=%u c=%u "
+                      "tx=%u pre=%lums blocks %u..%u\n",
+                      (unsigned)seq, (unsigned)cntA, (unsigned)cntB,
+                      (unsigned)cntC, (unsigned)cntTx,
+                      (unsigned long)preEff, (unsigned)startBlk,
+                      (unsigned)frontierBlk);
+    }
+    else
+    {
+        recV2LastError = "meta write failed";
+        Serial.printf("[REC2] session %u meta write FAILED\n", (unsigned)seq);
+    }
 }
 
 // Bin size via the shim — the espidf File shim has no size(), and a raw
@@ -1064,7 +1299,7 @@ static void dashRecV2SetTwaiMissed(uint32_t a, uint32_t b, uint32_t c)
 static bool dashRecV2LockRequest(uint32_t preMs, uint32_t postMs,
                                  uint8_t busMask, String &err)
 {
-    if (!ring)
+    if (!recBBEnabled)
     {
         err = "recorder v2 disabled";
         return false;
@@ -1079,13 +1314,26 @@ static bool dashRecV2LockRequest(uint32_t preMs, uint32_t postMs,
         err = "recorder busy";
         return false;
     }
+    if (recBBPaused)
+    {
+        err = "no space"; // every block protected or unwritable: grid full
+        return false;
+    }
     recV2PreMsReq = preMs;
-    recV2PreMsAct = 0; // decided at flush time (may shrink)
+    recV2PreMsAct = 0; // decided at finish (may shrink to retention)
     recV2PostMs = postMs;
     recV2BusMask = busMask;
     recV2LockStartMs = millis();
     recV2OverflowAtLock = ringOverflow;
     recBBWptrSave(); // persist the grid pointer the moment a session locks
+    // Forensics flag: raised for the whole arming so a boot that finds it
+    // set knows the previous session died INSIDE that arming window.
+    {
+        Preferences p;
+        p.begin("rec_v2", false);
+        p.putUChar("rv2_flushing", 1);
+        p.end();
+    }
     recV2State = kRecV2Arming;
     return true;
 }
@@ -1211,11 +1459,11 @@ static void dashRecV2DumpResets()
 }
 
 // Called from the dashboard loop: sample fps windows and advance the lock
-// state machine (arming expiry → one-shot flush task, pinned to core 1 like
-// the legacy recorder writer).
+// state machine (arming expiry → zero-copy finish, inline — no task spawn,
+// the flush-task era ended with the blackbox writer).
 static void dashRecV2Loop()
 {
-    if (!ring)
+    if (!recBBEnabled)
         return;
     uint32_t now = millis();
     if ((uint32_t)(now - recV2FpsWindowMs) >= 1000)
@@ -1231,15 +1479,7 @@ static void dashRecV2Loop()
     if (recV2State == kRecV2Arming &&
         (uint32_t)(now - recV2LockStartMs) >= recV2PostMs)
     {
-        recV2State = kRecV2Flushing;
-        recV2Writing = true;
-        if (xTaskCreatePinnedToCore(recV2FlushTask, "rec2_flush", 6144,
-                                    nullptr, 1, nullptr, 1) != pdPASS)
-        {
-            recV2Writing = false;
-            recV2State = kRecV2Idle;
-            recV2LastError = "flush task create failed";
-        }
+        recBBFinishLock(); // → idle (or idle + last_error)
     }
 }
 
@@ -1253,7 +1493,7 @@ static void dashRecV2Loop()
 // the fps counters report the truth. Blocks the caller for `seconds`.
 static void dashRecV2BenchFlood(uint32_t fps, uint32_t seconds, uint8_t busMask)
 {
-    if (!ring || fps == 0 || seconds == 0)
+    if (!recBBEnabled || fps == 0 || seconds == 0)
     {
         Serial.println("[rv2_flood] disabled or no-op args");
         return;

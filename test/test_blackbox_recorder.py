@@ -144,5 +144,71 @@ class BlackboxWriterTests(unittest.TestCase):
         self.assertNotIn("for (uint32_t f = 0", region)  # no per-frame loop
 
 
+class BlackboxLockTests(unittest.TestCase):
+    """Task 4: zero-copy lock, meta sessions, protection bitmap lifecycle."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.engine = ENGINE.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _fn(source: str, signature: str, span: int = 2200) -> str:
+        start = source.index(signature)
+        return source[start : start + span]
+
+    def test_lock_refused_when_full(self) -> None:
+        body = self._fn(self.engine, "static bool dashRecV2LockRequest(")
+        self.assertIn("recBBPaused", body)
+        self.assertIn('err = "no space"', body)
+        # The disabled gate keys on the blackbox engine, not the dead ring.
+        self.assertIn("if (!recBBEnabled)", body)
+        # Kept validations from the ring era.
+        self.assertIn('err = "recorder busy"', body)
+        self.assertIn("bus_mask", body)
+
+    def test_finish_lock_summaries_and_meta(self) -> None:
+        body = self._fn(self.engine, "static void recBBFinishLock()", 5600)
+        keys = ('"seq"', '"boot_ms"', '"trigger"', '"pre_ms_req"',
+                '"pre_ms_act"', '"post_ms"', '"bus_mask"', '"frames"',
+                '"ring_overflow"', '"ring_overflow_in_window"',
+                '"twai_missed_a"', '"twai_missed_b"', '"twai_missed_c"',
+                '"start_boot_us"', '"end_boot_us"', '"bb_start_off"',
+                '"bb_end_off"')
+        for k in keys:
+            self.assertIn(k, body, f"meta records {k}")
+        # Window math walks block summaries, not frames.
+        self.assertIn("recBBSums[", body)
+        self.assertIn("windowUs", body)
+        self.assertIn("recV2AllocateSeq()", body)
+        self.assertIn("recBBMarkRange(bbStart, bbEnd)", body)
+
+    def test_rebuild_marks_meta_ranges_only(self) -> None:
+        # Anchor the DEFINITION (a forward declaration exists earlier).
+        body = self._fn(self.engine, "static void recBBRebuildProtection()\n{", 1600)
+        self.assertIn("recV2ScanSessions", body)
+        self.assertIn('doc["bb_start_off"]', body)
+        self.assertIn('doc["bb_end_off"]', body)
+        # Rebuild starts from a cleared bitmap: bits outside meta ranges stay 0.
+        self.assertIn("memset(recBBProt, 0, sizeof(recBBProt))", body)
+
+    def test_delete_clears_protection(self) -> None:
+        body = self._fn(self.engine, "static bool recV2RemoveSession(", 1800)
+        self.assertIn('doc["bb_start_off"]', body)
+        self.assertIn("recBBRangeSet", body)  # unmark path
+        self.assertIn("SPIFFS.remove(recV2MetaPath(seq))", body)
+
+    def test_ledger_flag_brackets_arming(self) -> None:
+        lock = self._fn(self.engine, "static bool dashRecV2LockRequest(")
+        self.assertIn('putUChar("rv2_flushing", 1)', lock)
+        finish = self._fn(self.engine, "static void recBBFinishLock()", 4600)
+        self.assertIn('putUChar("rv2_flushing", 0)', finish)
+
+    def test_loop_finishes_lock_inline(self) -> None:
+        # Zero-copy: no flush task spawn; the loop calls the finisher inline.
+        body = self._fn(self.engine, "static void dashRecV2Loop()", 1600)
+        self.assertIn("recBBFinishLock()", body)
+        self.assertNotIn("xTaskCreatePinnedToCore(recV2FlushTask", body)
+
+
 if __name__ == "__main__":
     unittest.main()

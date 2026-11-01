@@ -135,38 +135,10 @@ class DashRecorderV2LockContractTests(unittest.TestCase):
         self.assertIn("409", self.dash,
                       "handler answers 409 on the busy path")
 
-    def test_flush_failure_cleans_partial_file(self) -> None:
-        # A half-written session must never masquerade as a complete one:
-        # the write-failure branch itself must scrub the partial file.
-        write_fail = self.rec2.find("write failed")
-        self.assertGreaterEqual(
-            write_fail, 0, "flush names its write-failure branch")
-        branch = self.rec2[write_fail:write_fail + 300]
-        self.assertIn("SPIFFS.remove", branch,
-                      "partial file is removed on the write-failure path")
-        self.assertIn("last_error", self.rec2,
-                      "failure surfaces in status as last_error")
-
-    def test_shrink_keeps_recent(self) -> None:
-        self.assertIn("shrink_reason", self.rec2)
-        self.assertIn("recV2CountWindow", self.rec2,
-                      "pre-scan counts matching frames before copying")
-        self.assertIn("kRecV2SpaceReserve", self.rec2,
-                      "head-room reserve on SPIFFS free space (shared "
-                      "constant; raised 128KB -> 2.5MB by the round-4 "
-                      "space-pressure finding, 2026-11-01)")
-        self.assertIn("pre_ms_req", self.rec2)
-        self.assertIn("pre_ms_act", self.rec2,
-                      "meta distinguishes requested vs actual window")
-
     def test_seq_nvs_monotonic(self) -> None:
         self.assertIn("rv2_seq", self.rec2)
         self.assertIn("putUInt", self.rec2)
         self.assertIn("getUInt", self.rec2)
-
-    def test_wraparound_window_extraction(self) -> None:
-        # The flush window test must be wrap-safe: age = (uint32_t)(now - ts).
-        self.assertRegex(self.rec2, r"\(\s*uint32_t\s*\)\s*\(\s*now[A-Za-z]* - ")
 
     def test_routes_and_loop_wired(self) -> None:
         self.assertIn(
@@ -185,9 +157,13 @@ class DashRecorderV2LockContractTests(unittest.TestCase):
                           f"status JSON exposes {token}")
 
     def test_meta_field_set_complete(self) -> None:
-        for token in ('"seq"', '"boot_ms"', '"trigger"', '"post_ms"',
-                      '"frames"', '"ring_overflow"',
-                      '"ring_overflow_in_window"', '"twai_missed_a"'):
+        # Blackbox-era schema: ring-era keys preserved + grid byte range.
+        for token in ('"seq"', '"boot_ms"', '"trigger"', '"pre_ms_req"',
+                      '"pre_ms_act"', '"post_ms"', '"bus_mask"', '"frames"',
+                      '"ring_overflow"', '"ring_overflow_in_window"',
+                      '"twai_missed_a"', '"twai_missed_b"', '"twai_missed_c"',
+                      '"start_boot_us"', '"end_boot_us"', '"bb_start_off"',
+                      '"bb_end_off"'):
             self.assertIn(token, self.rec2,
                           f"session meta records {token}")
 
@@ -220,7 +196,7 @@ class DashRecorderV2SessionsContractTests(unittest.TestCase):
             "recV2RemoveSession", self.dash,
             "delete handler routes through the both-files remover")
         helper_at = self.rec2.index("recV2RemoveSession")
-        helper = self.rec2[helper_at:helper_at + 220]
+        helper = self.rec2[helper_at:helper_at + 900]
         self.assertGreaterEqual(
             helper.count("SPIFFS.remove"), 2,
             "the remover drops meta AND bin")
@@ -705,18 +681,18 @@ class DashRecorderV2CarFieldFixTests(unittest.TestCase):
                       "ledger persists under the rec_v2 NVS namespace")
 
     def test_flush_marks_died_mid_flush(self) -> None:
-        # The correlator for the car crashes: set at flush start, cleared on
-        # BOTH completion paths (success and write-failure). A boot that
-        # reads flag==1 died mid-flush — combined with the reset reason it
-        # closes the brownout question. (The boot ledger clears the flag too,
-        # after reading it — scope this count to the flush function body.)
-        self.assertEqual(self.rec2.count('putUChar("rv2_flushing", 1)'), 1,
-                         "flush start raises the flag exactly once")
-        flush_start = self.rec2.find("const String binPath = recV2BinPath(seq);")
-        self.assertNotEqual(flush_start, -1, "flush function anchor found")
-        flush_body = self.rec2[flush_start:flush_start + 4200]
-        self.assertEqual(flush_body.count('putUChar("rv2_flushing", 0)'), 2,
-                         "both flush completion paths clear the flag")
+        # Arming-era semantics (blackbox, task 4): raised at lock request
+        # (arming start), cleared inside recBBFinishLock — a boot that reads
+        # flag==1 died inside an arming window. The boot ledger clears the
+        # flag too, after reading it (scope counts to the live functions).
+        lock_at = self.rec2.index("static bool dashRecV2LockRequest(")
+        lock_body = self.rec2[lock_at:lock_at + 1400]
+        self.assertEqual(lock_body.count('putUChar("rv2_flushing", 1)'), 1,
+                         "arming start raises the flag exactly once")
+        finish_at = self.rec2.index("static void recBBFinishLock()")
+        finish_body = self.rec2[finish_at:finish_at + 2200]
+        self.assertEqual(finish_body.count('putUChar("rv2_flushing", 0)'), 1,
+                         "the finish path clears the flag")
 
     def test_ring_status_carries_resets(self) -> None:
         # /ring_status is the recorder's own endpoint; the UI and any
