@@ -139,9 +139,220 @@ class BlackboxWriterTests(unittest.TestCase):
     def test_pacing_and_yield(self) -> None:
         # One esp_partition_write per staging buffer — never per-frame flash
         # calls. The task-2 header stamp is the only other partition write.
-        region = self._fn(self.engine, "static void recBBFlushBuffer(", 3200)
+        region = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
         self.assertEqual(region.count("esp_partition_write(recBBPart"), 1)
         self.assertNotIn("for (uint32_t f = 0", region)  # no per-frame loop
+
+    def test_erase_subchunked_under_int_wdt(self) -> None:
+        # Task-7 bench hygiene (boots #21/#23, 2026-11-01): each erase runs
+        # inside the flash guard, where the OTHER core's ipc task spins with
+        # scheduling frozen for the whole op — a whole-64KB erase (typ 150ms,
+        # max 2000ms) freezes CPU0 that long. (The boot-#21 INT_WDT crash was
+        # initially blamed on this; the coredump decode of crash #2 proved
+        # the true cause was the wrap hang pinned by
+        # test_flush_wraps_at_partition_end.) Every erase goes through the
+        # sub-chunk helper: 4KB sectors with a yield between guard windows.
+        self.assertIn("kRecBBEraseChunk = 4096u", self.engine)
+        helper = self._fn(self.engine, "static bool recBBEraseRangeSafe(", 1100)
+        self.assertIn("kRecBBEraseChunk", helper)
+        self.assertIn("vTaskDelay(pdMS_TO_TICKS(1))", helper,
+                      "a yield between sub-erases lets ticks run")
+        self.assertIn("esp_partition_erase_range", helper)
+        # The flush path never erases directly (whole-block erase forbidden).
+        flush = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        self.assertIn("recBBEraseRangeSafe(", flush)
+        self.assertNotIn("esp_partition_erase_range", flush)
+        # The init fresh-stamp path shares the safe eraser too.
+        init = self._fn(self.engine, "static bool recBBInitPartition()", 2600)
+        self.assertIn("recBBEraseRangeSafe(", init)
+
+    def test_flush_wraps_at_partition_end(self) -> None:
+        # Task-7 crash #2 root cause (boot #23 coredump): the flush clamp
+        # lets recBBWriteOff reach recBBPart->size (0x900000) exactly, so the
+        # summary-close loop's nb = 0x900000/0x10000 = 144 — a value the
+        # mod-144 recBBLiveBlk (0..143) can never equal. The loop spun inside
+        # portENTER_CRITICAL with CPU1's interrupts masked until the 300ms
+        # interrupt watchdog fired, while CPU0 spun on the same mux in
+        # dashRecV2Submit's spinlock_acquire. 6000fps x 120s = 720K frames
+        # > grid capacity 524,286, so the pointer hits the wall on every
+        # such run. The flush must wrap the pointer back to the grid start.
+        self.assertEqual(0x900000 // 0x10000, 144)  # nb without the wrap
+        self.assertEqual((143 + 1) % 144, 0)  # liveBlk cycles mod 144, never 144
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        self.assertIn("recBBWriteOff = off + lenEff;", body)
+        wrap = body[body.index("recBBWriteOff = off + lenEff;"):]
+        self.assertIn("if (recBBWriteOff >= recBBPart->size)", wrap)
+        self.assertIn("recBBWriteOff = kRecBBHeaderSize;", wrap,
+                      "pointer wraps to the grid anchor, never the size")
+
+    def test_written_blocks_lose_erased_bit(self) -> None:
+        # The erased bit means "safe to program without erasing", and it
+        # must retire ONLY when the pointer LEAVES the block. Clearing it
+        # right after a successful write let the SAME buffer's next flush
+        # (the <=16-byte boundary clamp) re-erase the entry block and
+        # destroy the 65520 bytes the first flush had just programmed
+        # (bench round 7: ~16-400B survived per 64KB block). A mid-block
+        # ending KEEPS the bit — the unwritten tail of an erased block is
+        # still programmable — while park/jump/wrap retire every block the
+        # pointer left, so the next pass re-erases before reprogramming.
+        self.assertIn("static void recBBErasedClr(uint32_t b)", self.engine)
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        self.assertIn("while (b0 != nb)", body,
+                      "erase bit retires when the pointer leaves the block")
+
+    def test_flush_writes_whole_frames_only(self) -> None:
+        # The boundary clamp is byte-exact: room in [1..17] wrote a TORN
+        # frame (a partial 18-byte record) and the boundary pad stranded
+        # its tail off-grid (bench round 7: 17-byte runs split by single
+        # FF bytes, tails landing at grid+16). The flush must floor its
+        # span to whole frames; when not even one fits before the
+        # boundary, jump the dead pad and re-anchor (wrap-safe) — the
+        # staged bytes flush from the new anchor on the next pass.
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        self.assertIn("lenEff -= lenEff % sizeof(RecRingFrame);", body)
+        jump = body[body.index("lenEff -= lenEff % sizeof(RecRingFrame);"):]
+        self.assertIn("recBBGridSnap((b0 + 1) % kRecBBBlockCount)", jump,
+                      "no whole frame fits: jump the pad, wrap-safe anchor")
+        self.assertIn("recBBErasedClr(b0)", jump,
+                      "jumping the pad leaves the block: retire its bit")
+
+    def test_flush_returns_when_pointer_sits_on_protected_block(self) -> None:
+        # The protection clamp computed `lenEff = b * 65536 - off` even when
+        # b was the FIRST block — off already sits inside b, so the unsigned
+        # subtraction underflowed to ~4G and the erase loop then OOB-read the
+        # 18-byte bitmaps with block indices up to ~65K. A pointer sitting
+        # ON a protected block must return immediately (the skip pass
+        # repositions); the clamp only applies to later blocks.
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        self.assertRegex(body, r"if \(b == b0\)\s*\{\s*return;")
+        clamp = body[body.index("lenEff = b * kRecBBBlockSize - off"):]
+        self.assertIn("lenEff = b * kRecBBBlockSize - off;", clamp)
+
+    def test_skip_reposition_snaps_to_grid(self) -> None:
+        # The skip pass repositioned to `blk * 65536` — off the frozen grid
+        # (frames live at 32 + k*18 forever; no grid frame starts at a block
+        # boundary since 65536 % 18 == 16), and for blk 0 that is offset 0,
+        # clobbering the 32-byte header. The reposition must snap to the
+        # first grid frame at or inside the target block.
+        self.assertEqual(65536 % 18, 16)  # block starts are never grid points
+        body = self._fn(self.engine, "static void recBBSkipOrPause()", 2200)
+        self.assertNotIn("recBBWriteOff = blk * kRecBBBlockSize;", body)
+        self.assertIn("recBBGridSnap(", body)
+        # The snap formula: header + ceil((blk*64K - header)/18)*18.
+        for blk, want in ((0, 32), (1, 32 + 3640 * 18), (2, 32 + 7280 * 18)):
+            base = 32
+            raw = 0 if blk == 0 else blk * 65536 - base
+            snapped = base + ((raw + 17) // 18) * 18
+            self.assertEqual(snapped, want)
+
+    def test_block0_erase_restamps_header(self) -> None:
+        # The 32B header lives inside erase-block 0; the task-7 bench crash
+        # boot showed "fresh header" after the first wrap — the writer's
+        # block-0 erase had destroyed the magic and the next boot wiped the
+        # whole grid. Erasing block 0 must re-stamp the header immediately,
+        # and both stamp sites (init + flush) share one builder.
+        flush = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        self.assertIn("b == 0", flush)
+        self.assertIn("recBBStampHeader()", flush,
+                      "block-0 erase re-stamps the header it just wiped")
+        init = self._fn(self.engine, "static bool recBBInitPartition()", 2600)
+        self.assertIn("recBBStampHeader()", init,
+                      "init's fresh stamp uses the same builder")
+
+    def test_close_loop_keeps_this_pass_attribution(self) -> None:
+        # Task-7 bench sessions 35/36: a lock armed mid-write captured
+        # pre_ms_act=431ms/1233ms of a 40s/20s request (1-2 blocks). Under
+        # ingest load the attribution frontier (writeOff + undrained staging)
+        # runs 1-2 blocks AHEAD of the writer, so the block being entered
+        # already holds THIS pass's attribution — and the close loop's blind
+        # memset destroyed it, punching a hole the finisher/span walks break
+        # at. The same blind zero empties the frontier after the final drain:
+        # a lock armed after traffic stops finds lastTs==0 and writes NO
+        # session ("no frames recorded", bench 2026-11-01) — the field's
+        # zero-data complaint. The close loop must zero an entered slot only
+        # when its attribution is older than the newest frame by a grace
+        # window (a true pass seam); fresh this-pass attribution survives.
+        self.assertIn("static volatile uint32_t recBBNewestTsUs", self.engine)
+        self.assertIn("kRecBBAheadGraceUs", self.engine)
+        self.assertEqual(60000000, 60000000)  # grace: 60s > any ahead-gap
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        close = body[body.index("while (recBBLiveBlk != nb)"):]
+        self.assertIn("recBBNewestTsUs - recBBSums[recBBLiveBlk].lastTsUs",
+                      close, "the age the guard tests is anchor minus slot")
+        self.assertIn("if (ageUs > kRecBBAheadGraceUs)", close,
+                      "zero only attribution older than the grace")
+        guard_end = close.index("memset(&recBBSums[recBBLiveBlk]")
+        guard_start = close.rindex("if (", 0, guard_end)
+        self.assertLess(guard_start, guard_end,
+                        "the summary memset must sit inside the freshness if")
+
+    def test_submit_tracks_newest_attribution_ts(self) -> None:
+        # The freshness anchor the close loop tests against: every staged
+        # frame's tsUs, updated in the same critical section as the
+        # attribution itself (a stale anchor would zero live summaries).
+        body = self._fn(self.engine, "static void dashRecV2Submit(", 2200)
+        self.assertIn("recBBNewestTsUs = r.tsUs;", body)
+
+    def test_lock_walk_skips_empty_lead_slots(self) -> None:
+        # Bench 2026-11-01 round 5: after traffic stopped, the final writer
+        # geometry can leave the FRONTIER slot itself empty (the fill buffer's
+        # partial never drains — the tick only flushes the non-fill buffer —
+        # and a protection skip shifts landings past their attribution). The
+        # finisher keyed haveFrames on that one slot and refused the whole
+        # lock ("no frames recorded") while full history sat behind it — the
+        # field's zero-data path when the crash stops the traffic first. The
+        # walk must step back over a bounded lead of empty slots to the
+        # newest attributed block before deciding anything.
+        self.assertIn("kRecBBLeadSkip", self.engine)
+        body = self._fn(self.engine, "static void recBBFinishLock(", 2400)
+        self.assertIn("recBBSums[frontierBlk].lastTsUs == 0", body)
+        self.assertRegex(
+            body,
+            r"while \(lead < kRecBBLeadSkip &&\s*"
+            r"recBBSums\[frontierBlk\]\.lastTsUs == 0\)")
+        # The refusal only stands after the lead is exhausted.
+        self.assertIn("haveFrames = lastTs != 0;", body)
+
+    def test_span_walk_skips_empty_lead_slots(self) -> None:
+        # Same frontier geometry, same fix in the span walk: an empty lead
+        # slot must read as "history starts a slot or two back", not zero
+        # retention (idle span_s=0 with 68K frames retained, bench round 5).
+        body = self._fn(self.engine, "static uint32_t dashRecV2SpanUs()", 1600)
+        self.assertIn("recBBSums[frontierBlk].lastTsUs == 0", body)
+        self.assertRegex(
+            body,
+            r"while \(lead < kRecBBLeadSkip &&\s*"
+            r"recBBSums\[frontierBlk\]\.lastTsUs == 0\)")
+
+    def test_flush_never_crosses_block_boundary(self) -> None:
+        # Bench 2026-11-01 forensics: consecutive 65520-byte flushes share a
+        # boundary block (65536 - 65520 = 16 → the entry offset walks back 16
+        # bytes per flush). The next flush's erase-ahead erases its ENTRY
+        # block whole — destroying the previous flush's bytes already there
+        # ([b0*64K, off)) — and the write only rewrites from off. Every flush
+        # eats its predecessor's tail: flash holds ~0.3-1.1KB per 64KB block
+        # (the last run before each boundary), ~98% of written bytes gone.
+        # A flush span must be clamped to the entry block before the erase
+        # loop derives its coverage from it.
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        clamp = "(b0 + 1) * kRecBBBlockSize - off"
+        self.assertIn(clamp, body, "geometry clamp to the entry block")
+        erase_i = body.index("recBBErasedGet")
+        clamp_i = body.index(clamp)
+        self.assertLess(clamp_i, erase_i,
+                        "the clamp must shape lenEff before the erase loop")
+
+    def test_boundary_flush_parks_writeoff_on_grid(self) -> None:
+        # A block-clamped flush ends exactly at (b0+1)*64K — NOT a grid
+        # point (65536 % 18 == 16). Parking there de-anchors the frame grid:
+        # the next buffer's frames land off-grid and every downstream
+        # consumer (decoder, torn-frame resume, session download) loses the
+        # 32+k*18 contract. Park on the next grid anchor instead: a ≤17-byte
+        # dead pad at each block head, frames stay at 32+k*18 forever.
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        writeback = body[body.index("recBBWriteOff = off + lenEff") :]
+        self.assertIn("recBBGridSnap(", writeback,
+                      "boundary parks re-anchor on the grid")
 
 
 class BlackboxLockTests(unittest.TestCase):

@@ -698,7 +698,7 @@ class DashRecorderV2CarFieldFixTests(unittest.TestCase):
         self.assertEqual(lock_body.count('putUChar("rv2_flushing", 1)'), 1,
                          "arming start raises the flag exactly once")
         finish_at = self.rec2.index("static void recBBFinishLock()")
-        finish_body = self.rec2[finish_at:finish_at + 2200]
+        finish_body = self.rec2[finish_at:finish_at + 2900]
         self.assertEqual(finish_body.count('putUChar("rv2_flushing", 0)'), 1,
                          "the finish path clears the flag")
 

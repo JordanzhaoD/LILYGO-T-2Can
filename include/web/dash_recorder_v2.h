@@ -68,6 +68,13 @@ static constexpr char kRecBBMagic[5] = "BBX1";
 static constexpr uint32_t kRecBBHeaderSize = 32u;
 static constexpr uint32_t kRecBBBlockSize = 65536u; // erase unit
 static constexpr uint32_t kRecBBBlockCount = 144u;  // 144 * 64KB = 9MB
+// Sub-chunk granularity for every erase (task-7 field fix): a whole-64KB
+// erase runs 150ms typical / 2000ms datasheet-max with the flash guard
+// masking interrupts on the erasing core — enough to trip the 300ms
+// interrupt watchdog (INT_WDT on CPU1, bench boot #21, 2026-11-01). 4KB
+// sector erases (typ 45ms) keep every guard window a fraction of the WDT
+// budget; the yield between sub-erases lets ticks run.
+static constexpr uint32_t kRecBBEraseChunk = 4096u;
 
 struct RecBBHeader
 {
@@ -86,6 +93,38 @@ static uint32_t recBBWriteOff = 0; // next grid byte to write (writer lands in t
 static uint32_t recBBFrameOff(uint32_t idx)
 {
     return kRecBBHeaderSize + idx * sizeof(RecRingFrame);
+}
+
+// Erase `len` bytes at `off` as 4KB sub-chunks with a yield between guard
+// windows (see kRecBBEraseChunk). Never called with recV2Mux held — the
+// yield sleeps. Returns false on the first failed sub-erase.
+static bool recBBEraseRangeSafe(uint32_t off, uint32_t len)
+{
+    while (len > 0)
+    {
+        uint32_t chunk = len < kRecBBEraseChunk ? len : kRecBBEraseChunk;
+        if (esp_partition_erase_range(recBBPart, off, chunk) != ESP_OK)
+            return false;
+        off += chunk;
+        len -= chunk;
+        if (len > 0)
+            vTaskDelay(pdMS_TO_TICKS(1)); // let ticks/interrupts breathe
+    }
+    return true;
+}
+
+// Stamp the 32B partition header. Called by init's fresh path AND by the
+// writer's block-0 erase: the header lives inside erase-block 0, so every
+// block-0 erase must re-write it or the next boot sees magic mismatch and
+// wipes the whole grid (bench boot #22, 2026-11-01 — all data lost).
+static bool recBBStampHeader()
+{
+    RecBBHeader stamp;
+    memset(&stamp, 0, sizeof(stamp));
+    memcpy(stamp.magic, kRecBBMagic, 4);
+    stamp.version = kRecBBVersion;
+    stamp.headerSize = (uint16_t)kRecBBHeaderSize;
+    return esp_partition_write(recBBPart, 0, &stamp, sizeof(stamp)) == ESP_OK;
 }
 
 // --- Blackbox streaming writer (task 3, B2) ----------------------------------
@@ -108,6 +147,25 @@ struct RecBBBlockSum
 };
 static_assert(sizeof(RecBBBlockSum) == 24, "block summary layout is frozen");
 static RecBBBlockSum recBBSums[kRecBBBlockCount]; // RAM-only; zeroed at boot
+
+// Freshness anchor for the close loop: the tsUs of the newest frame the
+// submit path ever attributed, updated in the same critical section. Under
+// load the attribution frontier runs 1-2 blocks ahead of the writer (both
+// staging buffers undrained), so a block being entered already carries THIS
+// pass's attribution; blind zeroing on entry destroyed it and the lock walk
+// broke at the hole after one block (bench 2026-11-01: pre_ms_act 431ms /
+// 1233ms of 40s / 20s requests) — and after traffic stopped, the final
+// drain left the frontier slot empty so a later lock recorded NOTHING.
+// Summary slots older than the grace window are previous-pass residue
+// (the true pass seam) and still zero out.
+static const uint32_t kRecBBAheadGraceUs = 60000000; // 60s >> any ahead gap
+static volatile uint32_t recBBNewestTsUs = 0;
+// Empty slots the walks may step back over AT THE FRONTIER only: the final
+// writer geometry (fill-buffer partial that the tick never drains; a
+// protection skip shifting landings past their attribution) can leave the
+// frontier slot itself empty while the newest data sits one or two blocks
+// behind. Deeper empties are a pass seam — the walks still stop there.
+static const uint32_t kRecBBLeadSkip = 3;
 
 static uint8_t *recBBStage[2] = {nullptr, nullptr}; // PSRAM, kRecBBBlockSize each
 static volatile uint32_t recBBStageLen[2] = {0, 0};
@@ -175,6 +233,14 @@ static void recBBErasedSet(uint32_t b)
     recBBErased[b >> 3] |= (uint8_t)(1u << (b & 7));
 }
 
+// The bit means "safe to program without erasing"; a block that just
+// received program data must re-erase before its next pass (flash only
+// clears bits — programming dirty flash tears every frame in it).
+static void recBBErasedClr(uint32_t b)
+{
+    recBBErased[b >> 3] &= (uint8_t)~(1u << (b & 7));
+}
+
 // NVS resume pointer: byte offset of the next grid write. Saved every 8
 // closed blocks and at lock; read back at boot in recBBInitPartition.
 static void recBBWptrSave()
@@ -222,13 +288,7 @@ static bool recBBInitPartition()
                  hdr.version != kRecBBVersion;
     if (fresh)
     {
-        RecBBHeader stamp;
-        memset(&stamp, 0, sizeof(stamp));
-        memcpy(stamp.magic, kRecBBMagic, 4);
-        stamp.version = kRecBBVersion;
-        stamp.headerSize = (uint16_t)kRecBBHeaderSize;
-        if (esp_partition_erase_range(recBBPart, 0, kRecBBBlockSize) != ESP_OK ||
-            esp_partition_write(recBBPart, 0, &stamp, sizeof(stamp)) != ESP_OK)
+        if (!recBBEraseRangeSafe(0, kRecBBBlockSize) || !recBBStampHeader())
         {
             recBBEnabled = false;
             Serial.println("[REC2] blackbox header stamp failed - recorder disabled");
@@ -258,6 +318,20 @@ static bool recBBInitPartition()
     return true;
 }
 
+// First grid frame (header + k*18) at or inside block b. Block 0 snaps to
+// the header itself — offset 0 is the 32-byte header, never a frame, and no
+// block boundary is a grid point (65536 % 18 == 16), so skipping never
+// re-anchors the grid: frames live at 32 + k*18 forever.
+static uint32_t recBBGridSnap(uint32_t b)
+{
+    if (b == 0)
+        return kRecBBHeaderSize;
+    uint32_t rel = b * kRecBBBlockSize - kRecBBHeaderSize;
+    return kRecBBHeaderSize +
+           ((rel + sizeof(RecRingFrame) - 1) / sizeof(RecRingFrame)) *
+               sizeof(RecRingFrame);
+}
+
 // Advance/skip the write pointer past protected blocks (wrapping at the
 // partition end); pause when every block is protected. Also the recovery
 // path: a flash-error pause re-runs this and retries on the next tick.
@@ -279,7 +353,7 @@ static void recBBSkipOrPause()
         {
             recBBPaused = false;
             if (blk != startBlk)
-                recBBWriteOff = blk * kRecBBBlockSize;
+                recBBWriteOff = recBBGridSnap(blk);
             return;
         }
         blk++;
@@ -288,11 +362,19 @@ static void recBBSkipOrPause()
 }
 
 // Drain one full staging buffer into the grid: ONE erase pass over the
-// blocks it touches (lazy, tracked by recBBErased) and ONE
-// esp_partition_write for the whole buffer — never per-frame flash calls.
-// The flush is clamped at the first protected block and at the partition
-// end; the remainder stays in staging and lands after the skip pass
-// repositions the pointer.
+// entry block (lazy, tracked by recBBErased) and ONE esp_partition_write
+// per flush — never per-frame flash calls. Every flush is clamped to the
+// entry block's boundary and floored to WHOLE 18-byte frames, so a block
+// is only ever programmed by sequential intra-block writes over one
+// erase; a boundary park (never a grid point) re-anchors via
+// recBBGridSnap, and when not even one frame fits the flush jumps the
+// dead pad the same way. The erase bit retires only when the pointer
+// LEAVES a block — the two round-7 bench destructions were (a) byte-
+// exact boundary clamps whose erase-ahead re-erased the shared boundary
+// block under the previous flush's tail, and (b) clearing the bit after
+// every write, which made the same buffer's follow-up flush erase the
+// entry block over the 65520 bytes it had just programmed. Both left
+// ~16-400B per 64KB block while the summaries counted full buffers.
 static void recBBFlushBuffer(uint8_t di)
 {
     portENTER_CRITICAL(&recV2Mux);
@@ -310,21 +392,57 @@ static void recBBFlushBuffer(uint8_t di)
     {
         if (recBBProtGet(b))
         {
+            if (b == b0)
+            {
+                return; // pointer sits on a protected block: skip pass repositions
+            }
             lenEff = b * kRecBBBlockSize - off; // clamp before the protected block
             break;
         }
     }
     if (lenEff == 0)
-        return; // pointer sits on a protected block: skip pass repositions
+        return; // nothing left after the clamps
+    // Geometry clamp: never cross the entry block's boundary. A protection
+    // clamp (b > b0) is always ≤ this room, so this only bites when no
+    // protected block limits the span — exactly the case that let each
+    // flush erase its predecessor's tail out of the shared boundary block.
+    uint32_t room = (b0 + 1) * kRecBBBlockSize - off;
+    if (lenEff > room)
+        lenEff = room;
+    // Whole frames only: the clamps above are byte-exact, and a 1..17-byte
+    // boundary clamp writes a TORN frame whose tail the boundary pad then
+    // strands off-grid (bench round 7: 17-byte runs split by single FF
+    // bytes). Floor the span to whole frames; when not even one fits
+    // before the boundary, jump the dead pad and re-anchor — the staged
+    // frames flush from the new anchor on the next pass (the writer loop
+    // calls this twice per tick, so the retry is same-tick).
+    lenEff -= lenEff % sizeof(RecRingFrame);
+    if (lenEff == 0)
+    {
+        portENTER_CRITICAL(&recV2Mux);
+        recBBWriteOff = recBBGridSnap((b0 + 1) % kRecBBBlockCount);
+        portEXIT_CRITICAL(&recV2Mux);
+        recBBErasedClr(b0); // the pointer left b0: retire its erase bit
+        return;
+    }
     for (uint32_t b = off / kRecBBBlockSize; b <= (off + lenEff - 1) / kRecBBBlockSize; ++b)
     {
         if (recBBErasedGet(b))
             continue;
-        if (esp_partition_erase_range(recBBPart, b * kRecBBBlockSize,
-                                      kRecBBBlockSize) != ESP_OK)
+        // Sub-chunked 4KB erases with yields (task-7 bench hygiene): each
+        // erase runs inside the flash guard, where the OTHER core's ipc task
+        // spins with scheduling frozen for the whole op — a whole-64KB erase
+        // (typ 150ms, max 2000ms) would freeze CPU0 for that long. 4KB
+        // sectors bound every guard window (boot #21/#23 forensics).
+        if (!recBBEraseRangeSafe(b * kRecBBBlockSize, kRecBBBlockSize))
         {
             recBBPaused = true; // flash error: retry on the next tick
             return;
+        }
+        if (b == 0 && !recBBStampHeader())
+        {
+            recBBPaused = true;
+            return; // header must never be missing past an erase of block 0
         }
         recBBErasedSet(b);
     }
@@ -333,6 +451,12 @@ static void recBBFlushBuffer(uint8_t di)
         recBBPaused = true; // write error: retry on the next tick
         return;
     }
+    // The erase bit does NOT retire here: a mid-block ending leaves the
+    // unwritten tail of the erased block programmable, and clearing now
+    // let the SAME buffer's next flush re-erase the entry block over the
+    // bytes just programmed (bench round 7: ~16-400B survived per 64KB
+    // block). Retirement happens below, only for blocks the pointer
+    // actually left this flush.
     portENTER_CRITICAL(&recV2Mux);
     if (lenEff == len)
     {
@@ -344,15 +468,49 @@ static void recBBFlushBuffer(uint8_t di)
         recBBStageLen[di] = len - lenEff;
     }
     recBBWriteOff = off + lenEff;
+    // Wrap at the wall (task-7 crash #2): the end clamp can park the pointer
+    // at recBBPart->size exactly, and /64K then names block 144 — a value
+    // the mod-144 live pointer can never reach, so the close loop below
+    // would spin inside this critical section until the interrupt watchdog
+    // fires (INT_WDT on CPU1, CPU0 masked in submit's spinlock). Wrap to
+    // the grid anchor; a staged remainder lands there on the next pass.
+    if (recBBWriteOff >= recBBPart->size)
+        recBBWriteOff = kRecBBHeaderSize;
+    else if (recBBWriteOff % kRecBBBlockSize == 0)
+    {
+        // Parked exactly on a block boundary — never a grid point
+        // (65536 % 18 == 16): writing from here de-anchors the frame grid
+        // and every downstream consumer (decoder, session download, torn-
+        // frame resume) loses the 32 + k*18 contract. Re-anchor on the
+        // next grid point; the ≤17-byte dead pad at each block head is the
+        // price of keeping the grid global.
+        recBBWriteOff = recBBGridSnap(recBBWriteOff / kRecBBBlockSize);
+    }
     // Close summaries for blocks the pointer has fully left; open the new
-    // live block with a zeroed slot (skipped blocks zero out too — no
-    // frames of this pass ever land in them).
+    // live block with a zeroed slot — but only if the slot's attribution is
+    // older than the newest frame by the ahead grace. A slot holding THIS
+    // pass's attribution (the frontier ran ahead of the writer; skipped
+    // blocks never hold any) keeps its counts: zeroing it punched a hole
+    // that collapsed mid-write lock windows to 1-2 blocks and left the
+    // post-traffic frontier empty ("no frames recorded").
     uint32_t nb = recBBWriteOff / kRecBBBlockSize;
     while (recBBLiveBlk != nb)
     {
         recBBLiveBlk = (recBBLiveBlk + 1) % kRecBBBlockCount;
         recBBClosedBlocks = recBBClosedBlocks + 1;
-        memset(&recBBSums[recBBLiveBlk], 0, sizeof(recBBSums[recBBLiveBlk]));
+        uint32_t ageUs = recBBNewestTsUs - recBBSums[recBBLiveBlk].lastTsUs;
+        if (ageUs > kRecBBAheadGraceUs)
+            memset(&recBBSums[recBBLiveBlk], 0, sizeof(recBBSums[recBBLiveBlk]));
+    }
+    // Retire erase bits for blocks the pointer LEFT this flush (boundary
+    // park, pad jump, partition wrap): a stale set bit would let the next
+    // pass program a dirty block without erasing. A mid-block ending (nb
+    // == b0) retires nothing — the erased tail stays programmable and the
+    // next flush continues in the same block without re-erasing it.
+    while (b0 != nb)
+    {
+        recBBErasedClr(b0);
+        b0 = (b0 + 1) % kRecBBBlockCount;
     }
     portEXIT_CRITICAL(&recV2Mux);
 }
@@ -577,6 +735,7 @@ static void dashRecV2Submit(const CanFrame &f, uint8_t busTag, char dir)
             s.cntTx = s.cntTx + 1; // T and E both count as our own traffic
         }
     }
+    recBBNewestTsUs = r.tsUs; // freshness anchor for the close loop's zeroing
     recBBStageLen[fi] = recBBStageLen[fi] + sizeof(r);
     if (busTag >= kRecV2BusA && busTag <= kRecV2BusC)
         recV2FpsAccum[busTag - 1] = recV2FpsAccum[busTag - 1] + 1;
@@ -597,6 +756,15 @@ static uint32_t dashRecV2SpanUs()
     if (frontierBlk >= kRecBBBlockCount)
         frontierBlk = kRecBBBlockCount - 1;
     uint32_t oldestTs = 0;
+    // Same frontier-lead rule as the finisher: an empty lead slot is where
+    // the writer's endgame parked, not proof of empty retention.
+    uint32_t lead = 0;
+    while (lead < kRecBBLeadSkip &&
+           recBBSums[frontierBlk].lastTsUs == 0)
+    {
+        frontierBlk = (frontierBlk + kRecBBBlockCount - 1) % kRecBBBlockCount;
+        lead++;
+    }
     uint32_t b = frontierBlk;
     for (uint32_t guard = 0; guard < kRecBBBlockCount; guard++)
     {
@@ -737,6 +905,17 @@ static void recBBFinishLock()
                   kRecBBBlockSize;
     if (frontierBlk >= kRecBBBlockCount)
         frontierBlk = kRecBBBlockCount - 1; // full-grid edge
+    // The frontier slot itself can sit empty after traffic stops (fill-buffer
+    // partial never drains; a protection skip shifts landings) — step back
+    // over the lead before deciding the ring holds nothing (bench round 5:
+    // "no frames recorded" with 68K retained frames behind the hole).
+    uint32_t lead = 0;
+    while (lead < kRecBBLeadSkip &&
+           recBBSums[frontierBlk].lastTsUs == 0)
+    {
+        frontierBlk = (frontierBlk + kRecBBBlockCount - 1) % kRecBBBlockCount;
+        lead++;
+    }
     lastTs = recBBSums[frontierBlk].lastTsUs;
     haveFrames = lastTs != 0;
     if (haveFrames)
