@@ -2032,7 +2032,7 @@ var I18N={
   '下载CSV':'CSV','下载BIN':'BIN','删除会话':'Delete','高级设置':'Advanced',
   '历史环形缓冲':'Ring History','已覆盖':'Coverage','剩余空间':'Free Space',
   '暂无会话':'No sessions yet','锁定后回溯段立即封存，续录 30 秒后自动生成会话文件':'Seals the lookback span at once, records 30 s more, then writes the session file',
-  '锁定中':'Locking','写入中...':'Writing...','至少选择一条总线':'Select at least one bus','锁定失败':'Lock failed',
+  '锁定中':'Locking','写入中...':'Writing...','至少选择一条总线':'Select at least one bus','锁定失败':'Lock failed','上次锁定':'Last lock',
   '开始录制':'Start','停止':'Stop','下载 CSV':'Download CSV',
   '录制帧数限制':'Frame Limit','控制器状态':'Controller Status','调试':'Debug',
   '调试日志':'Debug Log','最近写入':'Last Write Check',' · 丢帧 ':' · drop ',
@@ -3829,12 +3829,13 @@ function downloadRec(){window.location.href='/rec_download'}
 function downloadRecMeta(){window.location.href='/rec_meta'}
 
 // Recorder v2 (P4 blackbox): three-zone capture UI.
-var RV2={pre:60,bus:{a:true,b:true,c:true},timer:null,lastState:'idle'};
+var RV2={pre:60,bus:{a:true,b:true,c:true},timer:null,lastState:'idle',lastErr:''};
 function rv2BusMask(){var m=0;if(RV2.bus.a)m|=1;if(RV2.bus.b)m|=2;if(RV2.bus.c)m|=4;return m}
 function rv2ToggleBus(k){RV2.bus[k]=!RV2.bus[k];rv2PaintBus()}
 function rv2PaintBus(){
   ['a','b','c'].forEach(function(k){var b=$('rv2-bus-'+k);if(b)b.className='btn btn-sm'+(RV2.bus[k]?'':' btn-outline')});
-  var d=$('rv2-lock-note');if(d&&rv2BusMask()===0)d.textContent=T('至少选择一条总线');else if(d)d.textContent=T('锁定后回溯段立即封存，续录 30 秒后自动生成会话文件');
+  var d=$('rv2-lock-note');
+  if(d)d.textContent=RV2.lastErr?(T('上次锁定')+': '+esc(RV2.lastErr)):(rv2BusMask()===0?T('至少选择一条总线'):T('锁定后回溯段立即封存，续录 30 秒后自动生成会话文件'));
 }
 function rv2SetPre(v){
   RV2.pre=v;
@@ -3869,7 +3870,9 @@ async function rv2Poll(){
     // that edge is the moment a flush lands a new session file.
     if(st!=='idle'||RV2.lastState!=='idle')rv2LoadSessions();
     RV2.lastState=st;
+    RV2.lastErr=s.last_error?String(s.last_error):'';
     rv2PaintLock(s);
+    rv2PaintBus();
   }catch(e){}
 }
 function rv2StartPoll(){if(!CAP.recorderV2Available)return;rv2Poll();rv2LoadSessions();if(!RV2.timer)RV2.timer=setInterval(rv2Poll,2000)}

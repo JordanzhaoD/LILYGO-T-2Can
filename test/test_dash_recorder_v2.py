@@ -364,6 +364,26 @@ class DashRecorderV2UiContractTests(unittest.TestCase):
             "ring_status", self.src[poll_at:poll_at + 600],
             "the poll fetches /ring_status (arming countdown needs it)")
 
+    def test_lock_failure_reason_surfaced(self) -> None:
+        # 2026-11-02 bench: a one-tap lock on a silent bus finishes with
+        # last_error="no frames recorded" and NO session — the UI must
+        # show the firmware's reason next to the lock button, or the
+        # button looks dead (Jordan's bench report).
+        poll_at = self.src.index("function rv2Poll")
+        self.assertIn(
+            "s.last_error", self.src[poll_at:poll_at + 1000],
+            "the poll reads last_error from /ring_status")
+        self.assertIn("RV2.lastErr=", self.src[poll_at:poll_at + 1000],
+                      "the poll caches the reason for the note painter")
+        paint_at = self.src.index("function rv2PaintBus")
+        self.assertIn(
+            "RV2.lastErr", self.src[paint_at:paint_at + 700],
+            "the note painter shows the last lock error, escaped")
+        self.assertIn("esc(RV2.lastErr)", self.src[paint_at:paint_at + 700],
+                      "error text is HTML-escaped before display")
+        self.assertIn("'上次锁定':'Last lock'", self.src,
+                      "error label registered in I18N dict")
+
 
 class DashRecorderV2DiagContractTests(unittest.TestCase):
     """Task 6: serial DIAG bench commands (board may be off-LAN)."""
