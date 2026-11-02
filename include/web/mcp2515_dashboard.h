@@ -1141,12 +1141,38 @@ static unsigned long logSeq = 0;
 // so the WebUI /log endpoint surfaces those diagnostics in real time.
 static uint32_t logRingDrainCursor = 0;
 
+// 2026-11-02 field-crash forensics (board 2, 7x ESP_RST_PANIC in-car): the
+// log ring is mutated from multiple RTOS tasks — can_rt (per-frame edges,
+// OTA guard tick logs) and web (dashCheckWifi WIFI/AP logs, HTTP handlers)
+// — with no serialization. Two tasks assigning logBuf[logHead] = {...} can
+// both free the old entry's String heap chunk (double free) -> heap
+// corruption -> random panics plus esp_hosted/lwip faults (more AP/STA
+// drops -> more logs -> feedback loop). Serialize all logBuf access with a
+// FreeRTOS mutex. NOT a spinlock: the critical section allocates/frees.
+// Created by a static initializer that runs before app_main / scheduler
+// start, so there is no lazy-init race and no boot-order dependency.
+static SemaphoreHandle_t dashLogMux = nullptr;
+namespace
+{
+struct DashLogMuxInit
+{
+    DashLogMuxInit() { dashLogMux = xSemaphoreCreateMutex(); }
+};
+static DashLogMuxInit sDashLogMuxInit;
+} // namespace
+
 static void dashLog(const String &s)
 {
+    if (dashLogMux)
+        xSemaphoreTake(dashLogMux, portMAX_DELAY);
     logBuf[logHead] = {String(millis() / 1000) + "s " + s, ++logSeq};
     logHead = (logHead + 1) % LOG_CAP;
     if (logCount < LOG_CAP)
         logCount++;
+    if (dashLogMux)
+        xSemaphoreGive(dashLogMux);
+    // USB println can block on a full CDC buffer; keep it outside the lock
+    // so can_rt (priority 18) never waits on console backpressure.
     Serial.println(s);
 }
 
@@ -1162,6 +1188,8 @@ static void dashDrainLogRing()
     }
     LogRingBuffer::Entry tmp[LogRingBuffer::kCapacity];
     int n = logRing.readSince(logRingDrainCursor, tmp, LogRingBuffer::kCapacity);
+    if (dashLogMux)
+        xSemaphoreTake(dashLogMux, portMAX_DELAY);
     for (int i = 0; i < n; i++)
     {
         // Use the timestamp captured at push time, not now, so messages keep
@@ -1171,6 +1199,8 @@ static void dashDrainLogRing()
         if (logCount < LOG_CAP)
             logCount++;
     }
+    if (dashLogMux)
+        xSemaphoreGive(dashLogMux);
     logRingDrainCursor = h;
 }
 
@@ -4500,6 +4530,8 @@ static void handleLog()
     String j = "{\"seq\":";
     j += logSeq;
     j += ",\"lines\":[";
+    if (dashLogMux)
+        xSemaphoreTake(dashLogMux, portMAX_DELAY);
     int start = (logCount < LOG_CAP) ? 0 : logHead;
     int count = min(logCount, LOG_CAP);
     bool first = true;
@@ -4513,6 +4545,8 @@ static void handleLog()
         first = false;
         j += "\"" + jsonEscape(logBuf[idx].msg) + "\"";
     }
+    if (dashLogMux)
+        xSemaphoreGive(dashLogMux);
     j += "]}";
     server.send(200, "application/json", j);
 }
