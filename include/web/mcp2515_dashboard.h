@@ -44,6 +44,7 @@
 #endif
 #include "web/mcp2515_dashboard_ui.h"
 #include "dash_ota_guard.h"
+#include "dash_heap_guard.h"
 #include "dash_3ee_cadence.h"
 #include "dash_wheel_dnd.h"
 #include "dash_legacy_wheel_045_dnd.h"
@@ -6557,6 +6558,10 @@ static void dashSerialPrintHelp()
     Serial.println("  rv2_replay <0|1>                fast serial drain for host-driven replay");
     Serial.println("  rv2_resets                    print the NVS reset ledger (crash forensics)");
 #endif
+#if defined(DASH_HEAP_GUARD_V2)
+    Serial.println("  heap_guard_status  print tripwire slot/forensic state (bench)");
+    Serial.println("  heap_guard_test <static|heap>  deliberately trip the guard (bench verify)");
+#endif
     Serial.println();
 }
 
@@ -6888,6 +6893,47 @@ static void dashSerialRunCommand(char *cmd)
         // Crash forensics (2026-11-01): last 8 boot reset reasons + the
         // died-mid-flush marker, both NVS-backed and serial-free.
         dashRecV2DumpResets();
+    }
+#endif
+#if defined(DASH_HEAP_GUARD_V2)
+    else if (strncmp(start, "heap_guard_status", 17) == 0)
+    {
+        // Tripwire v2 state (2026-11-02 forensics round 3): slots + the .bss
+        // forensic struct that also lands in every DRAM-captured coredump.
+        Serial.printf("[heap_guard] slots=%u forensic{magic=0x%08x reason=0x%08x expected=0x%08x actual=0x%08x ms=%lu armed=%lu}\n",
+                      dashHgSlotCount, dashHeapGuardForensic.magic,
+                      dashHeapGuardForensic.reason, dashHeapGuardForensic.expected,
+                      dashHeapGuardForensic.actual, (unsigned long)dashHeapGuardForensic.tickMs,
+                      (unsigned long)dashHeapGuardForensic.armed);
+        for (uint8_t i = 0; i < dashHgSlotCount; ++i)
+        {
+            DashHgSlot *s = &dashHgSlots[i];
+            Serial.printf("  slot[%u] %-14s %s members=%u:",
+                          i, s->name ? s->name : "?", s->stable ? "stable" : "set  ",
+                          s->count);
+            for (uint8_t m = 0; m < s->count; ++m)
+                Serial.printf(" {ptr=0x%08x head=0x%08x}", s->mem[m].ptr, s->mem[m].head);
+            Serial.println();
+        }
+    }
+    else if (strncmp(start, "heap_guard_test ", 16) == 0)
+    {
+        // Bench-only E2E verification: prove detect → abort → coredump before
+        // any field trip. static = snapshot-head mismatch through the real
+        // trip path; heap = smash a freed block canary the patrol walk finds.
+        const char *mode = start + 16;
+        if (strncmp(mode, "static", 6) == 0)
+        {
+            Serial.println("[heap_guard] flipping snapshot head; trip expected within one check");
+            dashHeapGuardBenchTripStatic();
+        }
+        else if (strncmp(mode, "heap", 4) == 0)
+        {
+            Serial.println("[heap_guard] corrupting live-block poison tail; patrol trip expected <=250ms");
+            dashHeapGuardBenchTripHeap();
+        }
+        else
+            Serial.println("usage: heap_guard_test static|heap");
     }
 #endif
     else if (*start)
@@ -8609,6 +8655,13 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     dashInitHandlers();
     dashApplyNvsRuntimeSwitches();
     dashSwapHandler(hwMode);
+#if defined(DASH_HEAP_GUARD_V2)
+    // Heap guard tripwire v2 (2026-11-02 forensics round 3): dashHandler is
+    // legitimately switched by dashSwapHandler among handlerPool[0..2] →
+    // closed-set sentinel. Registered here so the pool is already populated.
+    dashHeapGuardRegisterSlot("dashHandler",
+                              reinterpret_cast<void *const *>(&dashHandler), false);
+#endif
     dashApplyRuntimeState();
     dashApplyFilters();
 

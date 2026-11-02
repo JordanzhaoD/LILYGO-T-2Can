@@ -746,6 +746,41 @@ class DashRecorderV2CarFieldFixTests(unittest.TestCase):
         self.assertIn("coredump", self.parts,
                       "the coredump partition row stays in the table")
 
+    # --- heap-guard v2 forensics config (2026-11-02 round 3) -----------------
+
+    def test_defaults_esp32p4_carries_capture_dram(self) -> None:
+        # IDF 6.0.1 espcoredump/Kconfig ships `default F` with F undefined, so
+        # an in-file CONFIG_ESP_COREDUMP_CAPTURE_DRAM=y line in sdkconfig.p4_3can
+        # sits before its enabler during the incremental load, gets visibility 0
+        # and is silently dropped. The target-suffixed defaults file is evaluated
+        # against the full symbol tree, where the value sticks. If this pin
+        # fails, someone moved the flag back into the sdkconfig — it will not
+        # survive a reconfigure there.
+        defaults = (ROOT / "sdkconfig.defaults.esp32p4").read_text(encoding="utf-8")
+        self.assertIn("CONFIG_ESP_COREDUMP_CAPTURE_DRAM=y", defaults,
+                      "CAPTURE_DRAM must live in sdkconfig.defaults.esp32p4")
+
+    def test_panic_reboot_delay_budgets_big_dump_writes(self) -> None:
+        # The panic handler arms the RTC WDT for (delay + 10) seconds. With the
+        # default 0 → 10s budget, a full CAPTURE_DRAM dump (measured 629-648KB,
+        # 4s of erase+write on a good day, worse under flash churn) can be
+        # killed mid-write by CHIP_LP_WDT_RESET — the flash then still holds the
+        # PREVIOUS dump and the new evidence is lost. 10 → 20s budget; the cost
+        # is a 10s slower reboot after every crash, which a forensics build
+        # gladly pays.
+        self.assertIn("CONFIG_ESP_SYSTEM_PANIC_REBOOT_DELAY_SECONDS=10",
+                      self.sdkcfg,
+                      "panic RTC WDT budget must be 20s for big dumps")
+
+    def test_heap_task_tracking_stays_off(self) -> None:
+        # Measured on board 2 (2026-11-02): with task tracking on, the P4 build
+        # deterministically boot-loops — interrupt WDT timeout on CPU1 while
+        # IDLE1 parks in WFI (nesting counts 0/0, no pending IPC; mechanism
+        # unknown, deprioritized). Owner names in dumps are nice-to-have; a
+        # booting board is not. Do not re-enable without re-testing boot.
+        self.assertIn("# CONFIG_HEAP_TASK_TRACKING is not set", self.sdkcfg,
+                      "HEAP_TASK_TRACKING boot-loops this board (see memory)")
+
 
 class DashRecorderV2SpacePressureTests(unittest.TestCase):
     """Round-4 bench finding (2026-11-01): lock during traffic with only

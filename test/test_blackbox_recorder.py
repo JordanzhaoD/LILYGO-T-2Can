@@ -32,18 +32,26 @@ class BlackboxPartitionTests(unittest.TestCase):
         raise AssertionError(f"partition row '{name}' missing")
 
     def test_partition_table_rows(self) -> None:
+        # 2026-11-02 heap-guard v2: coredump 128K@0x1FE0000 → 1M@0x15E0000
+        # (fits CAPTURE_DRAM dumps incl. .bss + INTERNAL heap + task owners +
+        # the recorder-v2 2×64K SPIRAM staging blocks the MALLOC_CAP_8BIT walk
+        # also captures — 640K was arithmetic-on-the-edge: ~600K internal used
+        # blocks + 128K PSRAM staging would trip ESP_COREDUMP_ASSERT and lose
+        # the dump exactly when recording). Borrowed from the oversized spiffs
+        # (legacy v1 recorder residue only); the blackbox geometry is
+        # byte-identical so recorder v2 math (144×64K) never moves.
         self.assertIn("blackbox,      data, 0x40,   0x16E0000,0x900000,", self.csv)
         spiffs = self._row(self.csv, "spiffs")
-        self.assertIn("0x1020000,0x6C0000", spiffs)
+        self.assertIn("0x1020000,0x5C0000", spiffs)
         coredump = self._row(self.csv, "coredump")
-        self.assertIn("0x1FE0000,0x20000", coredump)
-        # Contiguity by integer math: spiffs end == blackbox start, blackbox
-        # end == coredump start. No gaps, no overlap.
+        self.assertIn("0x15E0000,0x100000", coredump)
+        # Contiguity by integer math: spiffs end == coredump start, coredump
+        # end == blackbox start. No gaps, no overlap.
         self.assertEqual(
-            0x1020000 + 0x6C0000, 0x16E0000, "spiffs must end where blackbox starts"
+            0x1020000 + 0x5C0000, 0x15E0000, "spiffs must end where coredump starts"
         )
         self.assertEqual(
-            0x16E0000 + 0x900000, 0x1FE0000, "blackbox must end where coredump starts"
+            0x15E0000 + 0x100000, 0x16E0000, "coredump must end where blackbox starts"
         )
         # And the table itself parses with those exact numbers.
         blackbox = self._row(self.csv, "blackbox")

@@ -1,0 +1,13 @@
+# P4-3CAN-only Kconfig defaults (applied on top of sdkconfig.defaults for
+# IDF_TARGET=esp32p4; every other env ignores this file).
+#
+# Heap guard tripwire v2 (2026-11-02 field-crash forensics round 3):
+# CONFIG_ESP_COREDUMP_CAPTURE_DRAM must live HERE, not in sdkconfig.p4_3can.
+# espcoredump/Kconfig ships `config ESP_COREDUMP_ENABLE / default F` with F
+# undefined (IDF 6.0.1 bug), so during the incremental sdkconfig load the
+# dependent CAPTURE_DRAM line sits before its enabler, visibility is 0 and
+# kconfiglib SILENTLY drops the assignment (verified standalone). The
+# defaults files are re-evaluated against the full symbol tree, where the
+# value sticks. Round-trips back into sdkconfig.p4_3can as "not set" are
+# expected and harmless — this file re-applies it every configure.
+CONFIG_ESP_COREDUMP_CAPTURE_DRAM=y

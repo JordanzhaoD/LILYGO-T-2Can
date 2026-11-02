@@ -880,6 +880,26 @@ static void app_main_setup()
 #ifdef DRIVER_P4_3CAN
     t2canSetupCan3();
 #endif
+#if defined(DASH_HEAP_GUARD_V2)
+    // Heap guard tripwire v2 (2026-11-02 forensics round 3): sentinel the
+    // exact dispatch pointers that derailed can_rt in all three field
+    // crashes, then start the 250ms internal-DRAM heap patrol on core 1
+    // (can_rt lives on core 0). Late-init adoption is built into the core
+    // (dashHgEvalStable/Rearm), so registration order vs. creation is safe.
+    dashHeapGuardRegisterSlot("appDriver",
+                              reinterpret_cast<void *const *>(&appDriver), true);
+    dashHeapGuardRegisterSlot("appHandler",
+                              reinterpret_cast<void *const *>(&appHandler), true);
+    dashHeapGuardRegisterSlot("appActiveHandler",
+                              reinterpret_cast<void *const *>(&appActiveHandler), false);
+    dashHeapGuardRegisterSlot("appDriverSecondary",
+                              reinterpret_cast<void *const *>(&appDriverSecondary), true);
+#ifdef DRIVER_P4_3CAN
+    dashHeapGuardRegisterSlot("appDriverTertiary",
+                              reinterpret_cast<void *const *>(&appDriverTertiary), true);
+#endif
+    dashHeapGuardStart();
+#endif
 }
 
 static bool app_main_loop()
@@ -923,6 +943,12 @@ static void app_can_task(void *)
     appCanTaskDedicated = true;
     for (;;)
     {
+#if defined(DASH_HEAP_GUARD_V2)
+        // Sentinel pass every loop (~50 cycles): a corrupted driver/handler
+        // pointer or vtable word trips abort() within one iteration instead
+        // of derailing into the garbage instruction stream (crash #2/#3).
+        dashHeapGuardCheckStatics();
+#endif
         bool processed = appLoop<TWAIDriver>();
         // beta12 OTA guard path B: stream-stall downgrade. The guard clears
         // itself after 10 min of zero 0x318 while the flag was set (the
