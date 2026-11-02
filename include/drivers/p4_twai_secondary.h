@@ -16,6 +16,7 @@
 
 #include "../can_frame_types.h"
 #include "can_driver.h"
+#include "can_bench_inject.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcpp"
 #include <driver/twai.h>
@@ -83,6 +84,14 @@ public:
 
     bool read(CanFrame &frame) override
     {
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+        // Field-crash replay (2026-11-02): same hook as the primary driver,
+        // but on this class's lane — controller 1 = secondary (bus 2),
+        // controller 2 = tertiary/CanC (bus 3). Both real drain paths
+        // (t2canDrainSecondary / t2canDrainCan3) run on can_rt.
+        if (canBenchInjectPop(controllerId_ == kSecondaryControllerId ? 1 : 2, frame))
+            return true;
+#endif
         for (uint8_t attempt = 0; attempt < kReadDrainBudget; attempt++)
         {
             lock();

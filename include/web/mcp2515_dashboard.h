@@ -6553,6 +6553,8 @@ static void dashSerialPrintHelp()
     Serial.println("  rv2_status     recorder v2 ring/lock status JSON (bench)");
     Serial.println("  rv2_lock <pre_s> <post_s> <bus_mask>  arm blackbox lock (bench)");
     Serial.println("  rv2_flood <fps> <s> <bus_mask>  inject synthetic traffic (crash repro, blocks serial)");
+    Serial.println("  rv2_frame <bus> <id-hex> <dlc> <b..>  inject one frame through the REAL path (replay)");
+    Serial.println("  rv2_replay <0|1>                fast serial drain for host-driven replay");
     Serial.println("  rv2_resets                    print the NVS reset ledger (crash forensics)");
 #endif
     Serial.println();
@@ -6770,6 +6772,10 @@ static void dashSerialStartTaskStats()
 static void dashSerialTaskStatsTick() {}
 #endif
 
+// Host-driven replay mode (rv2_replay): raise the per-poll serial drain
+// budget so the replay script is not throttled to ~60 fps (24 chars/10ms).
+static bool dashSerialFastDrain = false;
+
 static void dashSerialRunCommand(char *cmd)
 {
     char *start = cmd;
@@ -6833,6 +6839,50 @@ static void dashSerialRunCommand(char *cmd)
                       fps, secs, mask);
         dashRecV2BenchFlood(fps, secs, (uint8_t)mask);
     }
+    else if (strncmp(start, "rv2_frame", 9) == 0)
+    {
+        // Field-crash replay (2026-11-02): inject ONE frame (bus 1|2|3, hex
+        // id, dlc, hex data bytes) into the REAL can_rt path for that bus —
+        // bus 1 = appLoop dispatch (handler/plugins/postProcess), bus 2 =
+        // t2canDrainSecondary, bus 3 = t2canDrainCan3. Unlike rv2_flood this
+        // runs the field code for real. Host replay script streams captured-
+        // session frames; silent on success so the serial line is not the
+        // pacing bottleneck.
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+        unsigned bus = 1, id = 0, dlc = 0;
+        unsigned b[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        int n = sscanf(start + 9, " %u %x %u %x %x %x %x %x %x %x %x",
+                       &bus, &id, &dlc, &b[0], &b[1], &b[2], &b[3], &b[4], &b[5], &b[6], &b[7]);
+        if (n >= 3 && bus >= 1 && bus <= 3 && dlc <= 8)
+        {
+            CanFrame f;
+            f.id = id;
+            f.dlc = dlc;
+            for (unsigned i = 0; i < dlc; i++)
+                f.data[i] = (uint8_t)b[i];
+            if (!canBenchInjectPush((int)bus - 1, f))
+                Serial.println("[rv2_frame] ring full");
+        }
+        else
+            Serial.println("[rv2_frame] usage: rv2_frame <bus 1|2|3> <id-hex> <dlc> [b0..b7 hex]");
+#else
+        Serial.println("[rv2_frame] p4 only");
+#endif
+    }
+    else if (strncmp(start, "rv2_replay", 10) == 0)
+    {
+        // Toggle fast serial drain for host-driven replay (default 24
+        // chars per poll caps replay at ~60 fps; fast mode sustains ~2500).
+        unsigned on = 1;
+        sscanf(start + 10, " %u", &on);
+        dashSerialFastDrain = on != 0;
+        Serial.printf("[rv2_replay] fast drain %s\n", dashSerialFastDrain ? "ON" : "OFF");
+    }
+    else if (strncmp(start, "rv2_q", 5) == 0)
+    {
+        Serial.printf("[rv2_q] inject depths b1=%d b2=%d b3=%d\n",
+                      canBenchInjectDepth(0), canBenchInjectDepth(1), canBenchInjectDepth(2));
+    }
     else if (strncmp(start, "rv2_resets", 10) == 0)
     {
         // Crash forensics (2026-11-01): last 8 boot reset reasons + the
@@ -6858,7 +6908,7 @@ static void dashSerialDiagnosticsPoll()
 
     dashSerialTaskStatsTick();
 
-    int budget = 24;
+    int budget = dashSerialFastDrain ? 1024 : 24;
     while (budget-- > 0 && Serial.available() > 0)
     {
         int ch = Serial.read();

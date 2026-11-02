@@ -2,6 +2,7 @@
 
 #include "../can_frame_types.h"
 #include "can_driver.h"
+#include "can_bench_inject.h"
 #include "../dash_twai_diag.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcpp"
@@ -86,6 +87,13 @@ public:
 
     bool read(CanFrame &frame) override
     {
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+        // Field-crash replay (2026-11-02): frames pushed by the serial DIAG
+        // rv2_frame command flow through the real dispatch chain on can_rt.
+        // Empty-ring fast path is one call that returns false immediately.
+        if (canBenchInjectPop(0, frame))
+            return true;
+#endif
         for (uint8_t attempt = 0; attempt < kReadDrainBudget; attempt++)
         {
             lock();
