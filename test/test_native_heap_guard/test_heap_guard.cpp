@@ -195,6 +195,110 @@ void test_deref_only_when_armed_and_matching()
     TEST_ASSERT_FALSE(dashHgDerefAllowed(&s, 0));             // armed, null
 }
 
+// ── TCB sentinels v3 (2026-11-03, round 4/5 forensics) ────────────────────
+// The can_rt TCB was found 0xA5-filled inside web's stack block: the
+// corruption lands on task control blocks themselves. The v3 core pins:
+//   name-head packing (NUL-padded so adjacent TCB bytes never enter the
+//   baseline), recycled-handle adoption via xTaskNumber, and the three
+//   trip shapes (name / stack base / top-of-stack out of bounds).
+
+void test_tcb_pack_name_pads_past_nul()
+{
+    // "web" and "web" + garbage-after-NUL must pack identically: bytes
+    // past the terminator are neighboring TCB fields, never baseline'd.
+    uint32_t a1 = 0, b1 = 0, a2 = 0, b2 = 0;
+    char padded[8] = {'w', 'e', 'b', 'X', 'Y', 'Z', 'Q', 'R'};
+    dashHgPackName8("web", &a1, &b1);
+    padded[3] = '\0';
+    dashHgPackName8(padded, &a2, &b2);
+    TEST_ASSERT_EQUAL_UINT32(a1, a2);
+    TEST_ASSERT_EQUAL_UINT32(b1, b2);
+    TEST_ASSERT_EQUAL_UINT32(0, b1); // bytes 4..7 all zero
+    TEST_ASSERT_EQUAL_UINT32(('w') | ('e' << 8) | ('b' << 16), a1);
+}
+
+void test_tcb_pack_name_distinguishes_idle_cores()
+{
+    // IDLE0 vs IDLE1 differ at byte 4: 8-byte packing catches what a
+    // 4-byte head cannot.
+    uint32_t a0 = 0, b0 = 0, a1 = 0, b1 = 0;
+    dashHgPackName8("IDLE0", &a0, &b0);
+    dashHgPackName8("IDLE1", &a1, &b1);
+    TEST_ASSERT_EQUAL_UINT32(a0, a1);
+    TEST_ASSERT_TRUE(b0 != b1);
+    TEST_ASSERT_EQUAL_UINT32('0', b0);
+    TEST_ASSERT_EQUAL_UINT32('1', b1);
+}
+
+namespace
+{
+DashHgTcbBase tcbBaseline(const char *name, uint32_t number, uint32_t stackBase)
+{
+    DashHgTcbBase b = {};
+    b.handle = 0x4ff7a09cu;
+    b.taskNumber = number;
+    b.stackBase = stackBase;
+    dashHgPackName8(name, &b.nameA, &b.nameB);
+    return b;
+}
+const uint32_t kDramEnd = 0x4ffc0000u;
+} // namespace
+
+void test_tcb_matching_observation_is_ok()
+{
+    DashHgTcbBase b = tcbBaseline("can_rt", 7, 0x4ff79000u);
+    uint32_t nameA = 0, nameB = 0;
+    dashHgPackName8("can_rt", &nameA, &nameB);
+    // pxTopOfStack somewhere inside [base, dramEnd): stacks grow down
+    TEST_ASSERT_EQUAL(kDashHgTcbOk, dashHgTcbEval(&b, 7, nameA, nameB,
+                                                  0x4ff79000u, 0x4ff7a080u, kDramEnd));
+    // top equal to base is legal (deepest possible growth)
+    TEST_ASSERT_EQUAL(kDashHgTcbOk, dashHgTcbEval(&b, 7, nameA, nameB,
+                                                  0x4ff79000u, 0x4ff79000u, kDramEnd));
+}
+
+void test_tcb_recycled_handle_adopts()
+{
+    // Same address, new xTaskNumber: a fresh task, not corruption.
+    DashHgTcbBase b = tcbBaseline("gw_dns", 12, 0x4ff50000u);
+    uint32_t nameA = 0, nameB = 0;
+    dashHgPackName8("recycle", &nameA, &nameB);
+    TEST_ASSERT_EQUAL(kDashHgTcbAdopt, dashHgTcbEval(&b, 13, nameA, nameB,
+                                                     0x4ff50000u, 0x4ff50100u, kDramEnd));
+}
+
+void test_tcb_name_rewrite_trips()
+{
+    // The round-5 corpse shape: TCB name bytes overwritten (0xA5 fill).
+    DashHgTcbBase b = tcbBaseline("can_rt", 7, 0x4ff79000u);
+    uint32_t nameA = 0, nameB = 0;
+    dashHgPackName8("\xa5\xa5\xa5\xa5\xa5_rt", &nameA, &nameB);
+    TEST_ASSERT_EQUAL(kDashHgTcbTripName, dashHgTcbEval(&b, 7, nameA, nameB,
+                                                        0x4ff79000u, 0x4ff7a080u, kDramEnd));
+}
+
+void test_tcb_stack_base_rewrite_trips()
+{
+    DashHgTcbBase b = tcbBaseline("can_rt", 7, 0x4ff79000u);
+    uint32_t nameA = 0, nameB = 0;
+    dashHgPackName8("can_rt", &nameA, &nameB);
+    TEST_ASSERT_EQUAL(kDashHgTcbTripStackBase, dashHgTcbEval(&b, 7, nameA, nameB,
+                                                             0x4ff88000u, 0x4ff7a080u, kDramEnd));
+}
+
+void test_tcb_top_of_stack_out_of_bounds_trips()
+{
+    DashHgTcbBase b = tcbBaseline("can_rt", 7, 0x4ff79000u);
+    uint32_t nameA = 0, nameB = 0;
+    dashHgPackName8("can_rt", &nameA, &nameB);
+    // 0xA5-filled TCB: pxTopOfStack reads 0xa5a5a5a5 — below base and outside DRAM
+    TEST_ASSERT_EQUAL(kDashHgTcbTripTop, dashHgTcbEval(&b, 7, nameA, nameB,
+                                                       0x4ff79000u, 0xa5a5a5a5u, kDramEnd));
+    // above the DRAM top is equally poisoned
+    TEST_ASSERT_EQUAL(kDashHgTcbTripTop, dashHgTcbEval(&b, 7, nameA, nameB,
+                                                       0x4ff79000u, 0x50000000u, kDramEnd));
+}
+
 int runUnityTests()
 {
     UNITY_BEGIN();
@@ -215,6 +319,13 @@ int runUnityTests()
     RUN_TEST(test_stable_zero_head_adoption_rebaselines);
     RUN_TEST(test_set_zero_head_adoption_rebaselines);
     RUN_TEST(test_deref_only_when_armed_and_matching);
+    RUN_TEST(test_tcb_pack_name_pads_past_nul);
+    RUN_TEST(test_tcb_pack_name_distinguishes_idle_cores);
+    RUN_TEST(test_tcb_matching_observation_is_ok);
+    RUN_TEST(test_tcb_recycled_handle_adopts);
+    RUN_TEST(test_tcb_name_rewrite_trips);
+    RUN_TEST(test_tcb_stack_base_rewrite_trips);
+    RUN_TEST(test_tcb_top_of_stack_out_of_bounds_trips);
     return UNITY_END();
 }
 

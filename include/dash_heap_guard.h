@@ -1,27 +1,30 @@
 #pragma once
-// dash_heap_guard.h — 堆腐巡逻绊网 v2（2026-11-02 实车崩溃取证第 3 轮）
+// dash_heap_guard.h — 堆腐巡逻绊网 v2 + TCB 哨兵 v3
 //
-// 三次实车 coredump 考古定案：mcause=1 / mepc=0 / mtval=0 = CPU 跳零；
-// can_rt 在 appLoop 的驱动/处理器 vtable 间接调用点被脱轨（t0=0x4fc1a588、
-// t1=0xf 跨两个构建完全一致）。HEAP_POISONING_COMPREHENSIVE canary 在自由
-// 时从未触发 → 腐坏类 = freelist/边界标签或活块内容，canary 检查看不见。
-// 本绊网三件套（台上证据链闭环，不依赖车内控制台）：
-//   1) 静态指针哨兵：稳定槽（appDriver/appHandler/secondary/tertiary 创建
-//      后永不变）+ 闭集槽（appActiveHandler/dashHandler 合法切换于
-//      handlerPool[0..2] 三成员闭集）——指针/对象头字(vtable) 与开机快照
-//      比对，can_rt 每圈查（~50 周期），巡逻任务 250ms 兜底；
+// v2（2026-11-02 实车崩溃取证第 3 轮）：三次实车 coredump 考古定案：
+// mcause=1 / mepc=0 / mtval=0 = CPU 跳零；can_rt 在 appLoop 的驱动/处理器
+// vtable 间接调用点被脱轨（t0=0x4fc1a588、t1=0xf 跨两个构建完全一致）。
+// HEAP_POISONING_COMPREHENSIVE canary 在自由时从未触发 → 腐坏类 =
+// freelist/边界标签或活块内容，canary 检查看不见。三件套：
+//   1) 静态指针哨兵（稳定槽 + 闭集槽）——指针/对象头字(vtable) 与开机
+//      快照比对，can_rt 每圈查，巡逻任务 250ms 兜底；
 //   2) 堆巡逻任务：heap_caps_check_integrity(MALLOC_CAP_INTERNAL) 每 250ms
-//      走内部 DRAM 堆结构，结构性腐坏当场 abort（HEAP_TASK_TRACKING 使
-//      coredump 里每块带主人任务名，离线指认凶手）；
-//   3) 取证结构体 dashHeapGuardForensic 落 .bss：CAPTURE_DRAM 的 coredump
-//      直接可见绊网原因/期望/实际值，腐坏瞬间 abort → coredump 全景定格。
+//      走内部 DRAM 堆结构，结构性腐坏当场 abort；
+//   3) 取证结构体落 .bss：CAPTURE_DRAM 的 coredump 直接可见绊网
+//      原因/期望/实际值，腐坏瞬间 abort → coredump 全景定格。
 //
-// 槽位语义（决策核纯函数，原生测试钉死）：
-//   稳定槽：未武装+空=OK；未武装+合法段指针=收养(迟到初始化)；武装后
-//           指针变零/变值/头字变值 = 绊。
-//   闭集槽：空=OK；已知成员头字变值=绊；未知指针（满 3 成员后或越段）=绊。
-//   解引用纪律：仅当「已武装 且 cur==快照 且 在段内」或「收养时段内新指针」
-//           才读对象头字——野指针永远先绊后读，哨兵自身不引发 load fault。
+// v3（2026-11-03 第 4/5 轮定案）：六哨兵 + 堆巡逻在实车零触发——腐坏落在
+// 哨兵间隙。第 5 轮铁证 = TCB 尸体：can_rt 的任务控制块躺在 web 任务
+// 8KB 栈块内部、全 0xA5（FreeRTOS 新栈填充字节）。活结论是寄存器/上下文
+// 保存区级污染；v3 直接看守每个活任务的 TCB 本体：
+//   - 名字头 8 字节（pcTaskName 指进 TCB 内部——读它就是读 TCB）；
+//   - pxStackBase（等值）；
+//   - pxTopOfStack（TCB+0，内核保证的首成员）必须在 [pxStackBase, 内部
+//     DRAM 顶) 内——栈向下长，低于基址或出段即被毒化的上下文指针。
+// 任务句柄会被回收：xTaskNumber（每次创建唯一递增）区分「同址新任务」
+// 与「活 TCB 被改写」——号变=重新收养；同号而名字/栈字段变=绊。
+// 绊前二次确认（重枚举仍在场且仍失配才 abort）：删任务竞态（gw_dns
+// 自删）只该退役基线，不该假绊。
 #include <stdint.h>
 
 #define DASH_HG_MAX_MEMBERS 3u // handlerPool[0..2] 闭集上限
@@ -140,6 +143,66 @@ inline int dashHgEvalSet(DashHgSlot *s, uint32_t cur, uint32_t curHead)
     return kDashHgRearm;
 }
 
+// ── TCB 哨兵决策核（v3, 2026-11-03）──────────────────────────────────
+// 纯函数：输入基线快照与当前观测，输出判决。原生测试钉死语义。
+
+enum DashHgTcbVerdict
+{
+    kDashHgTcbOk = 0,
+    kDashHgTcbAdopt = 1,         // 句柄未知或号变（回收再利用）：换基线
+    kDashHgTcbTripName = 3,      // 同号而名字头 8 字节被改写
+    kDashHgTcbTripStackBase = 4, // 同号而 pxStackBase 被改写
+    kDashHgTcbTripTop = 5,       // pxTopOfStack 越出 [pxStackBase, dramEnd)
+};
+
+struct DashHgTcbBase
+{
+    uint32_t handle;
+    uint32_t taskNumber; // xTaskNumber：每次任务创建唯一递增
+    uint32_t nameA;      // 名字头 4 字节（小端打包）
+    uint32_t nameB;      // 名字 5-8 字节
+    uint32_t stackBase;  // pxStackBase 快照
+};
+
+// 打包名字头 8 字节；NUL 后补零——TCB 名字缓冲区尾部的相邻字段字节
+// 不进快照（否则 volatile 邻居会造成假绊）。
+inline void dashHgPackName8(const char *name, uint32_t *a, uint32_t *b)
+{
+    uint32_t va = 0, vb = 0;
+    const char *p = name;
+    for (int i = 0; i < 8; ++i)
+    {
+        uint32_t byte = 0;
+        if (p && p[i] == '\0')
+            p = nullptr; // 之后全补零
+        if (p)
+            byte = (uint32_t)(uint8_t)p[i];
+        if (i < 4)
+            va |= byte << (8 * i);
+        else
+            vb |= byte << (8 * (i - 4));
+    }
+    *a = va;
+    *b = vb;
+}
+
+// dramEnd = 内部 DRAM 段顶（P4: 0x4ffc0000，与 dashHgRangeOk 同段）。
+inline int dashHgTcbEval(const DashHgTcbBase *base, uint32_t curNumber,
+                         uint32_t curNameA, uint32_t curNameB,
+                         uint32_t curStackBase, uint32_t curTopOfStack,
+                         uint32_t dramEnd)
+{
+    if (curNumber != base->taskNumber)
+        return kDashHgTcbAdopt; // 同址新任务（句柄回收）：重新收养
+    if (curNameA != base->nameA || curNameB != base->nameB)
+        return kDashHgTcbTripName;
+    if (curStackBase != base->stackBase)
+        return kDashHgTcbTripStackBase;
+    if (curTopOfStack < curStackBase || curTopOfStack >= dramEnd)
+        return kDashHgTcbTripTop;
+    return kDashHgTcbOk;
+}
+
 // 绊网仅编入 P4 构建（T2CAN 黄金基线零行为差异）：p4_3can build_flags
 // 定义 DASH_HEAP_GUARD_V2。纯决策核无条件编译（原生测试钉死语义）。
 #if defined(ESP_PLATFORM) && !defined(NATIVE_BUILD) && defined(DASH_HEAP_GUARD_V2)
@@ -150,16 +213,21 @@ inline int dashHgEvalSet(DashHgSlot *s, uint32_t cur, uint32_t curHead)
 
 // 取证结构体：.bss 落位，CAPTURE_DRAM coredump 直接捞到。绊网瞬间填好
 // 再 abort() —— 不依赖任何控制台输出（车内无监听者）。
+// v3 起魔数 "HGD2"（0x32444748）：离线判读器按魔数区分结构版本，尾部
+// 新增 tcb 三字仅供 TCB 绊网路径填写。
 struct DashHgForensic
 {
-    volatile uint32_t magic;   // 0x31444748 = "HGD1"
+    volatile uint32_t magic;   // 0x32444748 = "HGD2"
     volatile uint32_t reason;  // verdict | (slotIdx<<8) | (memberIdx<<12)
     volatile uint32_t expected;// 快照值（按 verdict：指针或头字）
     volatile uint32_t actual;  // 当前值
     volatile uint32_t tickMs;  // esp_timer 得到的绊网时刻
     volatile uint32_t armed;   // 已武装槽位数（健康侧写）
+    volatile uint32_t tcbNameA;     // v3：绊网任务名字头（当前观测值）
+    volatile uint32_t tcbNameB;
+    volatile uint32_t tcbTaskNumber;
 };
-static DashHgForensic dashHeapGuardForensic = {0x31444748u, 0, 0, 0, 0, 0};
+static DashHgForensic dashHeapGuardForensic = {0x32444748u, 0, 0, 0, 0, 0, 0, 0, 0};
 
 #define DASH_HG_MAX_SLOTS 8u
 static DashHgSlot dashHgSlots[DASH_HG_MAX_SLOTS];
@@ -232,6 +300,139 @@ inline void dashHeapGuardCheckStatics()
     }
 }
 
+// ── TCB 哨兵（v3, ESP 侧）───────────────────────────────────────────
+// 每 250ms 枚举全任务（uxTaskGetSystemState：sdkconfig 须开
+// USE_TRACE_FACILITY）。基线 = 句柄 → {xTaskNumber, 名字头8, pxStackBase}。
+// 判决见 dashHgTcbEval。绊前二次确认：重枚举仍在场且仍失配才 abort——
+// 删任务竞态（gw_dns 自删后快照悬空）只退役基线，不假绊。真腐坏
+// （0xA5 尸体）在两次枚举间不会消失，确认即绊。
+#define DASH_HG_MAX_TASKS 24u
+static DashHgTcbBase dashHgTcbBaseline[DASH_HG_MAX_TASKS];
+static uint8_t dashHgTcbBaselineCount = 0;
+static TaskStatus_t dashHgTcbStats[DASH_HG_MAX_TASKS]; // .bss：巡逻栈放不下
+
+inline int dashHgTcbIndexOf(uint32_t handle)
+{
+    for (uint8_t i = 0; i < dashHgTcbBaselineCount; ++i)
+        if (dashHgTcbBaseline[i].handle == handle)
+            return i;
+    return -1;
+}
+
+inline void dashHgTcbRetire(uint8_t idx)
+{
+    // swap-with-last，保持数组紧凑
+    dashHgTcbBaseline[idx] = dashHgTcbBaseline[dashHgTcbBaselineCount - 1];
+    dashHgTcbBaselineCount = dashHgTcbBaselineCount - 1;
+}
+
+inline void dashHgTcbAdopt(uint32_t handle, uint32_t number,
+                           uint32_t nameA, uint32_t nameB, uint32_t stackBase)
+{
+    if (dashHgTcbBaselineCount >= DASH_HG_MAX_TASKS)
+        return; // 满员：跳过收养（不绊——任务数超上限不是腐坏证据）
+    DashHgTcbBase &b = dashHgTcbBaseline[dashHgTcbBaselineCount];
+    b.handle = handle;
+    b.taskNumber = number;
+    b.nameA = nameA;
+    b.nameB = nameB;
+    b.stackBase = stackBase;
+    dashHgTcbBaselineCount = dashHgTcbBaselineCount + 1;
+}
+
+inline void dashHgTcbTrip(int verdict, uint8_t idx, uint32_t expected, uint32_t actual)
+{
+    dashHeapGuardForensic.reason = verdict | ((uint32_t)idx << 8);
+    dashHeapGuardForensic.expected = expected;
+    dashHeapGuardForensic.actual = actual;
+    dashHeapGuardForensic.tickMs = (uint32_t)(esp_timer_get_time() / 1000);
+    dashHeapGuardForensic.armed = dashHgSlotCount;
+    dashHeapGuardForensic.tcbNameA = dashHgTcbBaseline[idx].nameA;
+    dashHeapGuardForensic.tcbNameB = dashHgTcbBaseline[idx].nameB;
+    dashHeapGuardForensic.tcbTaskNumber = dashHgTcbBaseline[idx].taskNumber;
+    Serial.printf("[heap_guard] TCB TRIP idx=%u verdict=%u expected=0x%08x actual=0x%08x\n",
+                  idx, verdict, expected, actual);
+    abort(); // → panic → coredump（CAPTURE_DRAM 带走全景）
+}
+
+// 单次枚举内做一轮「观测 + 判决」；confirm=true 时仅在二次确认枚举里
+// 允许真正绊网（首轮发现失配先返回 true 让调用方重枚举确认）。
+inline bool dashHgTcbScan(bool confirm)
+{
+    UBaseType_t n = uxTaskGetSystemState(dashHgTcbStats, DASH_HG_MAX_TASKS, nullptr);
+    if (n == 0)
+        return false;
+    if (n > DASH_HG_MAX_TASKS)
+        n = DASH_HG_MAX_TASKS;
+
+    bool suspicious = false;
+    for (UBaseType_t i = 0; i < n; ++i)
+    {
+        TaskStatus_t &st = dashHgTcbStats[i];
+        uint32_t handle = (uint32_t)(uintptr_t)st.xHandle;
+        uint32_t nameA = 0, nameB = 0;
+        dashHgPackName8(st.pcTaskName, &nameA, &nameB);
+        uint32_t stackBase = (uint32_t)(uintptr_t)st.pxStackBase;
+        // TCB+0 = pxTopOfStack（内核保证首成员）：直接读控制块首字
+        uint32_t top = handle ? *(volatile uint32_t *)(uintptr_t)handle : 0;
+        int idx = dashHgTcbIndexOf(handle);
+        if (idx < 0)
+        {
+            dashHgTcbAdopt(handle, st.xTaskNumber, nameA, nameB, stackBase);
+            continue;
+        }
+        int v = dashHgTcbEval(&dashHgTcbBaseline[idx], st.xTaskNumber,
+                              nameA, nameB, stackBase, top, 0x4ffc0000u);
+        if (v == kDashHgTcbAdopt)
+        {
+            // 句柄回收再利用：整槽换新基线
+            DashHgTcbBase &b = dashHgTcbBaseline[idx];
+            b.taskNumber = st.xTaskNumber;
+            b.nameA = nameA;
+            b.nameB = nameB;
+            b.stackBase = stackBase;
+            continue;
+        }
+        if (v == kDashHgTcbOk)
+            continue;
+        if (!confirm)
+        {
+            suspicious = true; // 首轮发现：留给二次确认
+            continue;
+        }
+        // 二次确认仍在场且仍失配 → 真绊
+        if (v == kDashHgTcbTripName)
+            dashHgTcbTrip(v, (uint8_t)idx, dashHgTcbBaseline[idx].nameA, nameA);
+        else if (v == kDashHgTcbTripStackBase)
+            dashHgTcbTrip(v, (uint8_t)idx, dashHgTcbBaseline[idx].stackBase, stackBase);
+        else
+            dashHgTcbTrip(v, (uint8_t)idx, dashHgTcbBaseline[idx].stackBase, top);
+    }
+
+    // 退役：本轮枚举里消失的基线条目（任务已删；句柄回收由收养路径兜）
+    for (uint8_t i = dashHgTcbBaselineCount; i > 0; --i)
+    {
+        uint8_t idx = i - 1;
+        uint32_t h = dashHgTcbBaseline[idx].handle;
+        bool seen = false;
+        for (UBaseType_t j = 0; j < n; ++j)
+            if ((uint32_t)(uintptr_t)dashHgTcbStats[j].xHandle == h)
+            {
+                seen = true;
+                break;
+            }
+        if (!seen)
+            dashHgTcbRetire(idx);
+    }
+    return suspicious;
+}
+
+inline void dashHeapGuardCheckTcbs()
+{
+    if (dashHgTcbScan(false))
+        dashHgTcbScan(true); // 首轮有失配：重枚举确认后才允许 abort
+}
+
 static void dashHeapGuardPatrolTask(void *)
 {
     for (;;)
@@ -242,6 +443,7 @@ static void dashHeapGuardPatrolTask(void *)
         if (!heap_caps_check_integrity(MALLOC_CAP_INTERNAL, true))
             dashHgTrip(kDashHgTripHeapWalk, 0xff, 0xff, 0, 0);
         dashHeapGuardCheckStatics();
+        dashHeapGuardCheckTcbs();
     }
 }
 
@@ -285,5 +487,19 @@ inline void dashHeapGuardBenchTripHeap()
         return;
     for (int i = 200; i < 216; ++i)
         benchBlock[i] ^= 0xa5; // poison tail (+ possibly next header) → 250ms 内绊
+}
+
+inline void dashHeapGuardBenchTripTcb()
+{
+    // v3 bench hook: flip the FIRST armed TCB baseline's name head — the
+    // live TCB is untouched; the eval mismatch walks the exact same
+    // detect → confirm → trip path a real TCB rewrite takes (forensics
+    // carry the baseline name + task number for the coredump reader).
+    if (dashHgTcbBaselineCount == 0)
+    {
+        Serial.println("[heap_guard] tcb baseline not armed yet; retry after first patrol tick");
+        return;
+    }
+    dashHgTcbBaseline[0].nameA ^= 0xa5a5a5a5u;
 }
 #endif // ESP_PLATFORM

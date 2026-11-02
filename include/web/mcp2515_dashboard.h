@@ -5366,6 +5366,11 @@ static String dashFrameDataHex(const CanFrame &frame)
 
 // ── WIFI STA ────────────────────────────────────────────────────
 
+// AP-started flag (fix C, 2026-11-03): set when softAP reports success,
+// consumed by the DHCP data-plane heal below. Stays true for the whole
+// boot — the AP never intentionally stops.
+static bool dashApStartedLocal = false;
+
 static bool dashStartAccessPoint(bool withSta)
 {
     WiFi.persistent(false);
@@ -5389,7 +5394,10 @@ static bool dashStartAccessPoint(bool withSta)
     if (!ok)
         dashLog("[WIFI] AP start failed");
     else
+    {
+        dashApStartedLocal = true;
         dashGatewayOnApStarted(WiFi.apNetif());
+    }
     return ok;
 }
 
@@ -5415,6 +5423,116 @@ static void dashGatewayNaptSelfHeal()
         return; // bit intact
     ESP_LOGW("wifiap", "napt bit lost (AP bounce?), re-applying");
     dashGatewayOnApStarted(WiFi.apNetif());
+#endif
+}
+
+// ── AP DHCP data-plane health (fix C, 2026-11-03) ─────────────────
+// In-car crash-reboot signature: the AP object comes back up, clients
+// associate, but DHCP replies never reach the air (bench 2026-10-31
+// half-sync) so clients sit on 169.254.x.x until a manual power cycle.
+// The fault lives on the C6/hosted data plane, which no local flag
+// describes — but its symptom is observable: a client joined the AP and
+// still holds no DHCP lease 45s later. Heal in two stages: (1) restart
+// the DHCP server (softAPConfig re-run + gateway re-apply), (2) full
+// hosted hot reset, P4 only, once per boot — if the bridge dies again
+// after a clean re-handshake the heap tripwire and coredump own the
+// case, not a reset loop. Once any lease exists this boot, the watch
+// retires: mid-flight data-plane death is the crash family, not the
+// reboot family.
+static bool dashApEverHadLease = false;
+static unsigned long dashApNoLeaseSinceMs = 0;
+static uint8_t dashApHealStage = 0; // 0=watch 1=dhcps restarted 2=hot reset spent
+static unsigned long dashApHealNextAt = 0;
+static const unsigned long kDashApDhcpSickMs = 45000;
+
+// One-shot confirmation probe, fired only when the 45s no-lease window
+// elapses. esp_netif_dhcps_get_clients_by_mac() is a lookup-by-MAC (MACs
+// in, IPs out), not a lease-table dump, so the probe first asks the C6
+// for the currently associated stations — the only RPC in this monitor,
+// and it only fires 45s into a no-lease watch, by which point a healthy
+// boot has long since finished DHCP. Tri-state result.
+static int dashApLeaseProbe() // 2 = a client holds a lease, 1 = no stations, 0 = sick
+{
+    wifi_sta_list_t sta = {};
+    if (esp_wifi_ap_get_sta_list(&sta) != ESP_OK)
+        return 1; // can't ask: treat as "nothing to observe", re-arm
+    if (sta.num == 0)
+        return 1;
+    esp_netif_pair_mac_ip_t pairs[8] = {};
+    int n = sta.num < 8 ? sta.num : 8;
+    for (int i = 0; i < n; i++)
+        memcpy(pairs[i].mac, sta.sta[i].mac, 6);
+    if (esp_netif_dhcps_get_clients_by_mac(WiFi.apNetif(), n, pairs) != ESP_OK)
+        return 1; // DHCP server not answering (stopped?): not proof of sick
+    for (int i = 0; i < n; i++)
+        if (pairs[i].ip.addr != 0)
+            return 2; // some associated client holds an IP: plane is good
+    return 0;         // stations associated, none hold an IP: data plane dead
+}
+
+static void dashGatewayApDataPlaneHeal()
+{
+#if defined(DRIVER_P4_3CAN)
+    if (!dashApStartedLocal || dashApHealStage >= 2 || dashApEverHadLease)
+        return;
+    if (WiFi.apStaConnectEvents() == 0)
+        return; // nobody has even tried to join: nothing to heal yet
+
+    unsigned long now = millis();
+    if (now < dashApHealNextAt)
+        return;
+    dashApHealNextAt = now + 2000;
+
+    if (dashApNoLeaseSinceMs == 0)
+    {
+        dashApNoLeaseSinceMs = now;
+        return;
+    }
+    if (now - dashApNoLeaseSinceMs < kDashApDhcpSickMs)
+        return;
+
+    int probe = dashApLeaseProbe();
+    if (probe == 2)
+    {
+        dashApEverHadLease = true;
+        dashApNoLeaseSinceMs = 0;
+        return;
+    }
+    if (probe == 1)
+    {
+        dashApNoLeaseSinceMs = 0; // no stations present right now: re-arm
+        return;
+    }
+
+    if (dashApHealStage == 0)
+    {
+        dashApHealStage = 1;
+        dashApNoLeaseSinceMs = now; // re-arm the window for stage 2
+        dashLog("[WIFI] AP DHCP plane sick (stations associated, zero leases " +
+                String(kDashApDhcpSickMs / 1000) + "s); restarting DHCP server");
+        IPAddress apIp(100, 100, 1, 1);
+        IPAddress apMask(255, 255, 255, 0);
+        WiFi.softAPConfig(apIp, apIp, apMask); // dhcps_stop -> set -> start
+        dashGatewayOnApStarted(WiFi.apNetif());
+        return;
+    }
+
+    dashApHealStage = 2;
+    dashApNoLeaseSinceMs = now;
+    dashLog("[WIFI] AP DHCP still dead after server restart; hot-resetting the hosted link");
+    bool resetOk = espWifiResetHostedLink();
+    dashStartAccessPoint(true);
+    if (resetOk)
+    {
+        dashLog("[WIFI] hosted hot reset ok; AP restarted, STA reconnect queued");
+        staRetryAt = millis() + 5000;
+        staConnectAttemptActive = false;
+    }
+    else
+    {
+        dashLog("[WIFI] hosted hot reset failed; AP restarted on the old transport");
+    }
+    // stage 2 spent: no further automatic action this boot.
 #endif
 }
 
@@ -5631,6 +5749,10 @@ static void dashCheckWifi()
     // connect) that silently drops the lwip napt bit; the guard re-applies
     // the gateway config within one poll interval after the AP returns.
     dashGatewayNaptSelfHeal();
+    // Fix C (2026-11-03): AP DHCP data-plane watch — clients associated but
+    // no lease ever granted (half-sync signature) escalates dhcps restart ->
+    // hosted hot reset. P4 only, no-op elsewhere.
+    dashGatewayApDataPlaneHeal();
 
     int wifiStatus = WiFi.status();
     bool connected = wifiStatus == WL_CONNECTED;
@@ -6209,7 +6331,7 @@ static void handleSystemStatus()
 
     wifi_ap_record_t apInfo;
     int rssi = 0;
-    bool hasRssi = espWifiStaApInfoSafe(&apInfo);
+    bool hasRssi = espWifiStaInfoCached(&apInfo);
     if (hasRssi)
         rssi = apInfo.rssi;
 
@@ -6560,7 +6682,7 @@ static void dashSerialPrintHelp()
 #endif
 #if defined(DASH_HEAP_GUARD_V2)
     Serial.println("  heap_guard_status  print tripwire slot/forensic state (bench)");
-    Serial.println("  heap_guard_test <static|heap>  deliberately trip the guard (bench verify)");
+    Serial.println("  heap_guard_test <static|heap|tcb>  deliberately trip the guard (bench verify)");
 #endif
     Serial.println();
 }
@@ -6593,7 +6715,7 @@ static void dashSerialPrintSystemStatus()
     }
 
     wifi_ap_record_t apInfo;
-    bool hasRssi = espWifiStaApInfoSafe(&apInfo);
+    bool hasRssi = espWifiStaInfoCached(&apInfo);
 
     Serial.println();
     Serial.println("[system_status]");
@@ -6920,7 +7042,8 @@ static void dashSerialRunCommand(char *cmd)
     {
         // Bench-only E2E verification: prove detect → abort → coredump before
         // any field trip. static = snapshot-head mismatch through the real
-        // trip path; heap = smash a freed block canary the patrol walk finds.
+        // trip path; heap = smash a freed block canary the patrol walk finds;
+        // tcb = rewrite a TCB baseline name (v3 sentinel, confirm-then-trip).
         const char *mode = start + 16;
         if (strncmp(mode, "static", 6) == 0)
         {
@@ -6932,8 +7055,13 @@ static void dashSerialRunCommand(char *cmd)
             Serial.println("[heap_guard] corrupting live-block poison tail; patrol trip expected <=250ms");
             dashHeapGuardBenchTripHeap();
         }
+        else if (strncmp(mode, "tcb", 3) == 0)
+        {
+            Serial.println("[heap_guard] flipping TCB baseline name; confirm-then-trip expected <=500ms");
+            dashHeapGuardBenchTripTcb();
+        }
         else
-            Serial.println("usage: heap_guard_test static|heap");
+            Serial.println("usage: heap_guard_test static|heap|tcb");
     }
 #endif
     else if (*start)
@@ -7779,6 +7907,14 @@ static const char *getFirmwareArtifact()
     return "firmware-lilygo-t2can-dual.bin";
 #elif defined(DRIVER_ESP32_EXT_MCP2515)
     return "firmware-esp32-ext-mcp2515.bin";
+#elif defined(DRIVER_P4_3CAN)
+    // Fix D (2026-11-03): the P4 fell into the esp32 #else and the
+    // firmware-esp32.bin asset genuinely exists on the T2CAN release —
+    // the OTA page would have offered a wrong-architecture binary as an
+    // update. The Atlas P4 line ships via evidence builds + manual WebUI
+    // upload (no GitHub release assets yet); until a release carries this
+    // name, the check honestly reports "no matching artifact".
+    return "firmware-atlas-p4-3can.bin";
 #else
     return "firmware-esp32.bin";
 #endif

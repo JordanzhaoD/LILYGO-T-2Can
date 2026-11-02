@@ -436,6 +436,18 @@ extern SPIFFSClass SPIFFS;
 // through this helper; returns true only when *ap was filled.
 bool espWifiStaApInfoSafe(wifi_ap_record_t *ap);
 
+// Display-path variant (fix A, 2026-11-03): RSSI/SSID/JSON renderers use
+// this; on P4 it serves a ≤10s-stale cached record so browser-refresh
+// cadence cannot hammer the hosted bus. Control paths that need a fresh
+// read must call espWifiStaApInfoSafe() instead.
+bool espWifiStaInfoCached(wifi_ap_record_t *ap);
+
+// Fix C escalation (2026-11-03): tear down and re-bring-up the esp_hosted
+// transport (hardware-resets the C6). Returns true when the fresh handshake
+// succeeded. P4 only; always false elsewhere. Caller re-starts the AP and
+// lets the STA retry machine reconnect.
+bool espWifiResetHostedLink();
+
 class WiFiClass
 {
 public:

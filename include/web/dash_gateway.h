@@ -917,6 +917,10 @@ static void dashGatewayDnsTask(void *)
     if (gatewayUpstreamSock < 0)
     {
         ESP_LOGW(kDashGatewayTag, "DNS upstream socket failed");
+        // Fix D (2026-11-03): clear the handle BEFORE self-deleting. Leaving
+        // it stale made dashGatewayStartDns() early-return forever (task
+        // permanently dead) while the status JSON kept reporting it alive.
+        gatewayDnsTaskHandle = nullptr;
         vTaskDelete(nullptr);
         return;
     }
@@ -1315,7 +1319,17 @@ static void dashGatewayStartDns()
     }
     gatewayDnsBindOk = true;
     ESP_LOGI(kDashGatewayTag, "DNS socket bound to UDP 53 (fd=%d)", gatewayDnsSock);
-    xTaskCreatePinnedToCore(dashGatewayDnsTask, "gw_dns", 6144, nullptr, 1, &gatewayDnsTaskHandle, 1);
+    // Fix D (2026-11-03): a failed create used to leave the bound socket
+    // dangling and the guard unusable; unwind cleanly so the next AP start
+    // can retry.
+    if (xTaskCreatePinnedToCore(dashGatewayDnsTask, "gw_dns", 6144, nullptr, 1, &gatewayDnsTaskHandle, 1) != pdPASS)
+    {
+        ESP_LOGW(kDashGatewayTag, "gw_dns task create failed");
+        gatewayDnsTaskHandle = nullptr;
+        close(gatewayDnsSock);
+        gatewayDnsSock = -1;
+        gatewayDnsBindOk = false;
+    }
 }
 
 static bool gatewayApDnsConfigured = false; // guard: only configure DHCP/DNS once
@@ -1442,7 +1456,7 @@ static String dashGatewayStatusJson()
     String customDnsStr = dashGatewayIpToString(gatewayCustomUpstreamDns, "");
 
     wifi_ap_record_t staInfo = {};
-    bool hasStaInfo = espWifiStaApInfoSafe(&staInfo);
+    bool hasStaInfo = espWifiStaInfoCached(&staInfo);
     wifi_config_t apConfig = {};
     uint8_t apChannel = 0;
     if (esp_wifi_get_config(WIFI_IF_AP, &apConfig) == ESP_OK)

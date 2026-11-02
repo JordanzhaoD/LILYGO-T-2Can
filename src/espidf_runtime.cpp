@@ -672,6 +672,70 @@ size_t SPIFFSClass::usedBytes()
     return esp_spiffs_info(nullptr, &total, &used) == ESP_OK ? used : 0;
 }
 
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+// Fix C (2026-11-03): a single failed handshake used to leave the stack
+// sick for the whole boot — AP came up, clients associated, but the DHCP
+// data plane never passed a byte (bench 2026-10-31 half-sync). Retry the
+// full bring-up a bounded number of times instead: connect_to_slave()
+// hardware-resets the C6 (GPIO54) and runs the handshake retry loop, and
+// deinit unwinds the half-open stack between attempts. Requires the
+// 2.13.1+ component: 2.12.x seeds heap corruption on every deinit because
+// the RPC threads outlive what they wait on.
+static int espHostedBringUp(int attempts)
+{
+    int lastErr = ESP_FAIL;
+    for (int attempt = 1; attempt <= attempts; attempt++)
+    {
+        struct esp_hosted_sdio_config hostedConf = INIT_DEFAULT_HOST_SDIO_CONFIG();
+        hostedConf.pin_clk.pin = 18;
+        hostedConf.pin_cmd.pin = 19;
+        hostedConf.pin_d0.pin = 14;
+        hostedConf.pin_d1.pin = 15;
+        hostedConf.pin_d2.pin = 16;
+        hostedConf.pin_d3.pin = 17;
+        hostedConf.pin_reset.pin = 54;
+        int err = esp_hosted_sdio_set_config(&hostedConf);
+        if (err == ESP_OK)
+            err = esp_hosted_init();
+        if (err == ESP_OK)
+        {
+            err = esp_hosted_connect_to_slave();
+            if (err == ESP_OK)
+            {
+                Serial.printf("[WIFI] esp_hosted bring-up ok (attempt %d/%d)\n", attempt, attempts);
+                return ESP_OK;
+            }
+            esp_hosted_deinit(); // unwind the half-open stack before retry/give-up
+        }
+        lastErr = err;
+        Serial.printf("[WIFI] esp_hosted bring-up attempt %d/%d err=%d\n", attempt, attempts, err);
+        if (attempt < attempts)
+            delay(500);
+    }
+    return lastErr;
+}
+
+// Fix C escalation (2026-11-03): the dashboard's AP data-plane monitor calls
+// this only after measuring a dead DHCP plane (clients associate but no lease
+// ever completes) and a failed dhcps-restart — i.e. the C6 is half-synced
+// mid-flight, not at boot. deinit + full bring-up hardware-resets the C6 and
+// re-handshakes. The caller must re-start the AP and let the STA retry state
+// machine reconnect afterwards; this only repairs the bridge.
+bool espWifiResetHostedLink()
+{
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    Serial.printf("[WIFI] esp_hosted hot reset: deinit + bring-up\n");
+    wifiStaAssociated = false;
+    wifiStaStatus = WL_DISCONNECTED;
+    esp_hosted_deinit();
+    delay(100);
+    return espHostedBringUp(2) == ESP_OK;
+#else
+    return false;
+#endif
+}
+#endif
+
 void WiFiClass::ensure()
 {
     if (initialized_)
@@ -686,26 +750,10 @@ void WiFiClass::ensure()
     // (GPIO54) and runs the handshake retry loop. init() alone leaves the
     // C6 half-synced (bench 2026-10-31: AP flapped, DHCP replies never
     // reached the air — large transfers are exactly what the handshake
-    // fixes). On failure: deinit and carry on with wifi off; the hosted
-    // internals use ESP_ERROR_CHECK in places, but our failure paths must
-    // not panic-reboot the dashboard.
-    struct esp_hosted_sdio_config hostedConf = INIT_DEFAULT_HOST_SDIO_CONFIG();
-    hostedConf.pin_clk.pin = 18;
-    hostedConf.pin_cmd.pin = 19;
-    hostedConf.pin_d0.pin = 14;
-    hostedConf.pin_d1.pin = 15;
-    hostedConf.pin_d2.pin = 16;
-    hostedConf.pin_d3.pin = 17;
-    hostedConf.pin_reset.pin = 54;
-    int hostedErr = esp_hosted_sdio_set_config(&hostedConf);
-    if (hostedErr == ESP_OK)
-        hostedErr = esp_hosted_init();
-    if (hostedErr == ESP_OK)
-    {
-        hostedErr = esp_hosted_connect_to_slave();
-        if (hostedErr != ESP_OK)
-            esp_hosted_deinit();
-    }
+    // fixes). Fix C: three bounded attempts, then carry on with wifi off;
+    // the hosted internals use ESP_ERROR_CHECK in places, but our failure
+    // paths must not panic-reboot the dashboard.
+    int hostedErr = espHostedBringUp(3);
     Serial.printf("[WIFI] esp_hosted bring-up err=%d\n", hostedErr);
 #endif
     esp_netif_init();
@@ -837,9 +885,18 @@ void WiFiClass::begin(const char *ssid, const char *pass)
         esp_wifi_set_mode(target);
         esp_wifi_start();
     }
+#if defined(DRIVER_P4_3CAN)
+    // Fix A: this retry path runs from dashCheckWifi's state machine — same
+    // poll-family context as status(). The event flag answers "associated?"
+    // locally; esp_wifi_disconnect() carries no response payload to memcpy,
+    // so it cannot hit the round-5 assert shape.
+    if (wifiStaAssociated)
+        esp_wifi_disconnect();
+#else
     wifi_ap_record_t ap = {};
     if (espWifiStaApInfoSafe(&ap))
         esp_wifi_disconnect();
+#endif
     wifi_config_t cfg = {};
     std::snprintf(reinterpret_cast<char *>(cfg.sta.ssid), sizeof(cfg.sta.ssid), "%s", ssid ? ssid : "");
     std::snprintf(reinterpret_cast<char *>(cfg.sta.password), sizeof(cfg.sta.password), "%s", pass ? pass : "");
@@ -872,8 +929,72 @@ bool espWifiStaApInfoSafe(wifi_ap_record_t *ap)
     return esp_wifi_sta_get_ap_info(ap) == ESP_OK;
 }
 
+// Display-path ap-info (fix A, 2026-11-03): RSSI/SSID renderers and the
+// gateway/network JSON bodies run at browser-refresh cadence, so on P4 they
+// take a lazy 10s cache — at most one hosted bus crossing per window instead
+// of one per render. Staleness is fine for display values; control decisions
+// (AP channel sync) must keep using espWifiStaApInfoSafe() for a fresh read.
+// A torn concurrent copy can at worst mix two adjacent samples' display
+// fields, which is benign here. T2CAN passthrough keeps behavior identical.
+bool espWifiStaInfoCached(wifi_ap_record_t *ap)
+{
+#if defined(DRIVER_P4_3CAN)
+    static wifi_ap_record_t cached = {};
+    static bool cachedValid = false;
+    static unsigned long cachedMs = 0;
+    if (!wifiStaAssociated)
+    {
+        cachedValid = false;
+        return false;
+    }
+    unsigned long now = millis();
+    if (cachedValid && now - cachedMs < 10000)
+    {
+        *ap = cached;
+        return true;
+    }
+    if (espWifiStaApInfoSafe(&cached)) // helper: association-gated RPC site
+    {
+        cachedValid = true;
+        cachedMs = now;
+        *ap = cached;
+        return true;
+    }
+    cachedValid = false;
+    return false;
+#else
+    return espWifiStaApInfoSafe(ap);
+#endif
+}
+
 wl_status_t WiFiClass::status()
 {
+#if defined(DRIVER_P4_3CAN)
+    // P4 zero-RPC status (fix A, 2026-11-03): round 5 proved the
+    // get_ap_info RPC is itself the hazard — at a C6 edge state it
+    // returns SUCCESS with a NULL payload and esp_wifi_sta_get_ap_info
+    // walks that into hosted_memcpy's assert. dashCheckWifi polls this
+    // every 250ms-1s, so the poller must never cross the hosted bridge.
+    // The association flag is event-maintained (STA_CONNECTED/DISCONNECTED
+    // arrive over the still-alive control plane even in half-sync states)
+    // and the netif IP table is local lwip state — together they answer
+    // "connected?" without a single bus transaction. Known trade-off: a
+    // fully dead bridge delivers no events either, so a torn-but-flagged
+    // STA reads connected until reboot — that case is a crash scenario
+    // owned by the heap tripwire and the AP data-plane health monitor,
+    // not by a polling RPC.
+    if (wifiStaAssociated)
+    {
+        esp_netif_ip_info_t ip = {};
+        if (staNetif_ && esp_netif_get_ip_info(staNetif_, &ip) == ESP_OK && ip.ip.addr != 0)
+        {
+            wifiStaStatus = WL_CONNECTED;
+            return WL_CONNECTED;
+        }
+        return wifiStaStatus == WL_CONNECTED ? WL_IDLE_STATUS : wifiStaStatus;
+    }
+    return wifiStaStatus;
+#else
     wifi_ap_record_t ap = {};
     if (espWifiStaApInfoSafe(&ap))
     {
@@ -886,6 +1007,7 @@ wl_status_t WiFiClass::status()
         return wifiStaStatus == WL_CONNECTED ? WL_IDLE_STATUS : wifiStaStatus;
     }
     return wifiStaStatus;
+#endif
 }
 
 uint8_t WiFiClass::lastDisconnectReason() const
@@ -981,7 +1103,7 @@ String WiFiClass::SSID(int index)
 String WiFiClass::SSID()
 {
     wifi_ap_record_t ap = {};
-    if (!espWifiStaApInfoSafe(&ap))
+    if (!espWifiStaInfoCached(&ap))
         return "";
     return reinterpret_cast<const char *>(ap.ssid);
 }
