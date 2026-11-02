@@ -1,0 +1,19 @@
+=== gdb forensic decode (2026-11-02T19:07:14Z) ===
+#0  panic_abort (details=details@entry=0x4ff7c21c "abort() was called at PC 0x40004521 on core 1") at /Users/ziwind/.platformio/packages/framework-espidf/components/esp_system/panic.c:473
+473	    asm("unimp");   // should be an invalid operation on RISC-V targets
+[Current thread is 1 (process 1341596324)]
+$1 = {magic = 0x32444748, reason = 0x3, expected = 0xd5c4c0cd, actual = 0x70616568, tickMs = 0xc1c8b, armed = 0x6, tcbNameA = 0xd5c4c0cd, tcbNameB = 0x72746170, tcbTaskNumber = 0x13}
+No symbol "pcTaskName" in current context.
+
+=== serial trip transcript ===
+  heap_guard_status  print tripwire slot/forensic state (bench)
+  heap_guard_test <static|heap|tcb>  deliberately trip the guard (bench verify)
+[heap_guard] slots=6 forensic{magic=0x32444748 reason=0x00000000 expected=0x00000000 actual=0x00000000 ms=0 armed=0}
+<<<marker:heap_guard_status>>>
+[heap_guard] flipping TCB baseline name; confirm-then-trip expected <=500ms
+[heap_guard] TCB TRIP idx=0 verdict=3 expected=0xd5c4c0cd actual=0x70616568
+abort() was called at PC 0x40004521 on core 1
+I (10531) esp_core_dump_flash: Save core dump to flash...
+I (4103) esp_core_dump_flash: Core dump has been saved to flash.
+Rebooting in 10 seconds...
+Rebooting...
