@@ -1,0 +1,92 @@
+[19:12:18.889] [rfoRb{RowCzBwRbbkRbCR{âRfoRGwRbfkR{f{BfgOfKGwBwofcBsãÆWFïcFscÆ{CgçFkzBkRBcj^FëNNgBBcZÊcZÂsbÆcsûgÂKSfÊkSbNWSbNWSFBÏWïkBwCokwcswgÂKcwNckBkêÖÇBgwkgkRkJkBwGWgNcwÂgVSvkWWgwCkckwBgksGkccgOGkgksGkkksGkcksÇBgkWrjSCoCSÂcïkSKcKsk[ÊokÂWFgSnoWwßßÎ_SNoFïöÎcsÎFsûkÃ[host] >>> exp_b
+[19:12:27.923] [exp_b] BENCH-ONLY NO_ACK self-flood: 800 fps/lane, 300s, mask 3 (original modes restored afterwards)
+[19:12:36.964] [exp_b] t=10s tx=17/25/0 fail=7983/7975/0
+[19:12:47.011] [exp_b] t=20s tx=17/25/0 fail=15983/15975/0
+[19:12:48.016] E (207094) system_api: 0 mac type is incorrect (not found)
+[19:12:49.017] E (208078) system_api: 0 mac type is incorrect (not found)
+[19:12:50.022] E (209099) system_api: 0 mac type is incorrect (not found)
+[19:12:51.025] E (210077) system_api: 0 mac type is incorrect (not found)
+[19:12:52.028] E (211081) system_api: 0 mac type is incorrect (not found)
+[19:12:53.030] E (212094) system_api: 0 mac type is incorrect (not found)
+[19:12:54.036] E (213077) system_api: 0 mac type is incorrect (not found)
+[19:12:55.036] E (214092) system_api: 0 mac type is incorrect (not found)
+[19:12:56.040] E (215099) system_api: 0 mac type is incorrect (not found)
+[19:12:57.043] E (216116) system_api: 0 mac type is incorrect (not found)
+[exp_b] t=30s tx=17/25/0 fail=23983/23975/0
+[19:12:58.044] E (217173) system_api: 0 mac type is incorrect (not found)
+[19:12:59.046] E (218078) system_api: 0 mac type is incorrect (not found)
+[19:13:00.049] E (219078) system_api: 0 mac type is incorrect (not found)
+[19:13:01.052] E (220096) system_api: 0 mac type is incorrect (not found)
+[19:13:02.058] E (221094) system_api: 0 mac type is incorrect (not found)
+[19:13:03.063] E (222105) system_api: 0 mac type is incorrect (not found)
+[19:13:04.063] E (223099) system_api: 0 mac type is incorrect (not found)
+[19:13:05.068] E (224079) system_api: 0 mac type is incorrect (not found)
+[19:13:06.073] E (225079) system_api: 0 mac type is incorrect (not found)
+E (225365) system_api: 0 mac type is incorrect (not found)
+[19:13:07.074] E (226096) system_api: 0 mac type is incorrect (not found)
+[exp_b] t=40s tx=17/25/0 fail=31983/31975/0
+[19:13:08.075] E (227137) system_api: 0 mac type is incorrect (not found)
+[19:13:09.077] E (228079) system_api: 0 mac type is incorrect (not found)
+[19:13:10.078] E (229078) system_api: 0 mac type is incorrect (not found)
+[19:13:11.083] E (230080) system_api: 0 mac type is incorrect (not found)
+[19:13:12.088] E (231100) system_api: 0 mac type is incorrect (not found)
+[19:13:13.089] E (232086) system_api: 0 mac type is incorrect (not found)
+[19:13:14.094] E (233094) system_api: 0 mac type is incorrect (not found)
+[19:13:15.097] E (234099) system_api: 0 mac type is incorrect (not found)
+[19:13:16.102] E (235094) system_api: 0 mac type is incorrect (not found)
+[19:13:17.108] E (236102) system_api: 0 mac type is incorrect (not found)
+[19:13:18.113] [exp_b] t=50s tx=17/25/0 fail=39983/39975/0
+E (237085) system_api: 0 mac type is incorrect (not found)
+[19:13:19.118] E (238136) system_api: 0 mac type is incorrect (not found)
+[19:13:20.123] E (239194) system_api: 0 mac type is incorrect (not found)
+[19:13:21.127] E (240089) system_api: 0 mac type is incorrect (not found)
+[19:13:22.132] E (241095) system_api: 0 mac type is incorrect (not found)
+[19:13:23.134] E (242098) system_api: 0 mac type is incorrect (not found)
+[19:13:24.135] E (243100) system_api: 0 mac type is incorrect (not found)
+[19:13:25.140] E (244083) system_api: 0 mac type is incorrect (not found)
+[19:13:26.144] E (245093) system_api: 0 mac type is incorrect (not found)
+[19:13:27.150] E (246099) system_api: 0 mac type is incorrect (not found)
+[19:13:28.152] [exp_b] t=60s tx=17/25/0 fail=47983/47975/0
+E (247096) system_api: 0 mac type is incorrect (not found)
+[19:13:29.157] E (248115) system_api: 0 mac type is incorrect (not found)
+[19:13:30.162] E (249169) system_api: 0 mac type is incorrect (not found)
+[19:13:31.167] E (250093) system_api: 0 mac type is incorrect (not found)
+[19:13:32.168] E (251097) system_api: 0 mac type is incorrect (not found)
+[19:13:33.170] E (252092) system_api: 0 mac type is incorrect (not found)
+[19:13:34.175] E (253097) system_api: 0 mac type is incorrect (not found)
+[19:13:35.178] E (254099) system_api: 0 mac type is incorrect (not found)
+[19:13:36.183] E (255106) system_api: 0 mac type is incorrect (not found)
+[19:13:37.188] E (256078) system_api: 0 mac type is incorrect (not found)
+[19:13:38.193] [exp_b] t=70s tx=17/25/0 fail=55983/55975/0
+E (257080) system_api: 0 mac type is incorrect (not found)
+[19:13:39.198] E (258093) system_api: 0 mac type is incorrect (not found)
+[19:13:40.204] E (259118) system_api: 0 mac type is incorrect (not found)
+[19:13:41.207] E (260158) system_api: 0 mac type is incorrect (not found)
+[19:13:42.213] E (261093) system_api: 0 mac type is incorrect (not found)
+[19:13:43.218] E (262094) system_api: 0 mac type is incorrect (not found)
+[19:13:44.221] E (263094) system_api: 0 mac type is incorrect (not found)
+[19:13:45.225] E (264114) system_api: 0 mac type is incorrect (not found)
+[19:13:48.230] [exp_b] t=80s tx=17/25/0 fail=63983/63975/0
+[19:13:58.271] [exp_b] t=90s tx=17/25/0 fail=71983/71975/0
+[19:14:07.295] [exp_b] t=100s tx=17/25/0 fail=79983/79975/0
+[19:14:17.326] [exp_b] t=110s tx=17/25/0 fail=87983/87975/0
+[19:14:27.363] [exp_b] t=120s tx=17/25/0 fail=95983/95975/0
+[19:14:37.408] [exp_b] t=130s tx=17/25/0 fail=103983/103975/0
+[19:14:47.454] [exp_b] t=140s tx=17/25/0 fail=111983/111975/0
+[19:14:57.498] [exp_b] t=150s tx=17/25/0 fail=119983/119975/0
+[19:15:07.538] [exp_b] t=160s tx=17/25/0 fail=127983/127975/0
+[19:15:17.582] [exp_b] t=170s tx=17/25/0 fail=135983/135975/0
+[19:15:27.620] [exp_b] t=180s tx=17/25/0 fail=143983/143975/0
+[19:15:37.655] [exp_b] t=190s tx=17/25/0 fail=151983/151975/0
+[19:15:47.695] [exp_b] t=200s tx=17/25/0 fail=159983/159975/0
+[19:15:57.732] [exp_b] t=210s tx=17/25/0 fail=167983/167975/0
+[19:16:07.766] [exp_b] t=220s tx=17/25/0 fail=175983/175975/0
+[19:16:17.804] [exp_b] t=230s tx=17/25/0 fail=183983/183975/0
+[19:16:27.847] [exp_b] t=240s tx=17/25/0 fail=191983/191975/0
+[19:16:37.894] [exp_b] t=250s tx=17/25/0 fail=199983/199975/0
+[19:16:47.941] [exp_b] t=260s tx=17/25/0 fail=207983/207975/0
+[19:16:57.983] [exp_b] t=270s tx=17/25/0 fail=215983/215975/0
+[19:17:08.018] [exp_b] t=280s tx=17/25/0 fail=223983/223975/0
+[19:17:18.058] [exp_b] t=290s tx=17/25/0 fail=231983/231975/0
+[19:17:28.098] [exp_b] t=300s tx=17/25/0 fail=239983/239975/0
+[exp_b] done: switchOk=1 tx=17/25/0 fail=239983/239975/0 elapsed=300406ms
