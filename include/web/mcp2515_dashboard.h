@@ -2477,6 +2477,10 @@ bool t2canGetServiceMode(void);
 uint32_t t2canCan3RxCount(void);
 uint8_t t2canCan3TxErrCount(void);
 uint8_t t2canCan3Eflg(void);
+// Stability baseline (route A, 2026-11-03): boot-time CAN controller mask —
+// 1=CanA (forced on), +2=CanB, +4=CanC. NVS ns "t2can", key "busmask".
+uint8_t t2canBusEnableGet(void);
+bool t2canBusEnableSet(uint8_t mask);
 #endif
 
 static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxValue, uint8_t &out)
@@ -6682,6 +6686,7 @@ static void dashSerialPrintHelp()
 #endif
 #if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
     Serial.println("  exp_b [fps] [s] [mask]        NO_ACK self-flood through the real ISR (crash repro, bench only)");
+    Serial.println("  bus_enable [1|3|5|7]          which CAN controllers boot (1=CanA default, 3|5 add CanB/CanC; reboot to apply)");
 #endif
 #if defined(DASH_HEAP_GUARD_V2)
     Serial.println("  heap_guard_status  print tripwire slot/forensic state (bench)");
@@ -7038,6 +7043,31 @@ static void dashSerialRunCommand(char *cmd)
         // the driver). Blocks serial for the duration; restores the
         // original modes afterwards. BENCH ONLY.
         appBenchBlastCommand(start + 5);
+    }
+    else if (strncmp(start, "bus_enable", 10) == 0)
+    {
+        // Stability baseline (route A, 2026-11-03): get/set which CAN
+        // controllers are constructed at boot. Applied on the NEXT reboot —
+        // v0.1 never tears down a live controller. 1=CanA (forced),
+        // 3=+CanB, 5=+CanC, 7=all three.
+        const char *arg = start + 10;
+        while (*arg == ' ')
+            arg++;
+        if (*arg == '\0')
+        {
+            Serial.printf("bus_enable=0x%x (bit1=CanB bit2=CanC, CanA always on)\n",
+                          t2canBusEnableGet());
+        }
+        else
+        {
+            long value = strtol(arg, nullptr, 0);
+            if (value <= 0 || value > 7)
+                Serial.println("bus_enable: value must be 1..7 (bit0=CanA is forced on)");
+            else if (t2canBusEnableSet((uint8_t)value))
+                Serial.printf("bus_enable=0x%x stored; reboot to apply\n", t2canBusEnableGet());
+            else
+                Serial.println("bus_enable: NVS write failed");
+        }
     }
 #endif
 #if defined(DASH_HEAP_GUARD_V2)

@@ -30,14 +30,17 @@ firmware, not an experiment.
 
 ## Design
 
-- NVS key `p4busmask` (u8), bits: 0=CanA (forced on), 1=CanB, 2=CanC.
-  Default when absent = 0x01 (baseline).
+- NVS namespace "t2can", key `busmask` (u8), bits: 0=CanA (forced on), 1=CanB,
+  2=CanC. Default when absent = 0x01 (baseline).
 - `t2canSetupSecondary()` / `t2canSetupCan3()` skip construction when their bit
   is clear; existing null-guards in the drains, TX helper, and health tick make
   the rest of the system no-op safely. Heap-guard slots adopted as null at boot
   stay null → stable, no trip.
-- main.cpp exports `t2canBusMaskGet()/t2canBusMaskSet()/T2CAN_BUS_MASK_DEFAULT`;
-  DIAG gains `bus_mask [1|3|5|7]` (get / set + "reboot to apply").
+- main.cpp exports `t2canBusEnableGet()/t2canBusEnableSet()/
+  T2CAN_BUS_ENABLE_DEFAULT`; DIAG gains `bus_enable [1|3|5|7]` (get / set +
+  "reboot to apply"). Named `bus_enable` — not `bus_mask` — because the
+  recorder v2 DIAG args (`rv2_lock/rv2_flood <bus_mask>`) already use
+  "bus_mask" for recording-lane selection, a different concept.
 - Recorder v2 keeps running; CanB/CanC lanes simply record zero frames while
   disabled.
 
@@ -52,8 +55,11 @@ firmware, not an experiment.
 
 ## Verification
 
-- Native tests for mask decode/persist logic; pytest contract suite must stay
-  green (dashboard logic untouched); gates: pytest → pio_3can build, serial.
+- Contract suite `test/test_bus_enable_contract.py` pins the mask semantics,
+  boot gating, T2CAN_DUAL invariance, null-guards, and DIAG behavior (the
+  logic lives in main.cpp, which native builds never compile — realized as
+  source-contract tests, not native ones); full pytest suite stays green;
+  gates: pytest → pio_3can + lilygo_t2can_dual builds, serial.
 - On-board: boot log states disabled buses explicitly.
 - Field success = ≥30 min drive, zero crash, resets ledger clean, CanA features
   and recording usable. Then level-up: 0x05 (CanC) → 0x07 (full), one car run

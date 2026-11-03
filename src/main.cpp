@@ -8,6 +8,7 @@
 #include "platform/espidf_runtime.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <nvs.h>
 #else
 #include <Arduino.h>
 #endif
@@ -148,6 +149,45 @@ static bool t2canTxSecondaryCounted(const CanFrame &f)
     return ok;
 }
 
+#ifdef DRIVER_P4_3CAN
+// Stability baseline bus_enable mask (route A, 2026-11-03): CanA is forced
+// on; CanB/CanC are opt-in per boot so a disabled lane never installs its
+// TWAI ISR. NVS namespace "t2can", key "busmask", default 0x01 = CanA only.
+// Applied at boot only (no runtime hot-plug). DIAG: bus_enable [1|3|5|7].
+// See docs/superpowers/specs/2026-11-03-p4-stability-baseline-design.md.
+static const uint8_t T2CAN_BUS_ENABLE_DEFAULT = 0x01;
+
+static uint8_t t2canBusEnableNormalize(uint8_t mask)
+{
+    // bit0 (CanA) can never be cleared — the primary driving bus stays up.
+    return (uint8_t)(mask | 0x01);
+}
+
+uint8_t t2canBusEnableGet(void)
+{
+    uint8_t stored = T2CAN_BUS_ENABLE_DEFAULT;
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READONLY, &handle) == ESP_OK)
+    {
+        // A missing key keeps the default; normalize also repairs junk.
+        nvs_get_u8(handle, "busmask", &stored);
+        nvs_close(handle);
+    }
+    return t2canBusEnableNormalize(stored);
+}
+
+bool t2canBusEnableSet(uint8_t mask)
+{
+    mask = t2canBusEnableNormalize(mask);
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READWRITE, &handle) != ESP_OK)
+        return false;
+    bool ok = nvs_set_u8(handle, "busmask", mask) == ESP_OK &&
+              nvs_commit(handle) == ESP_OK;
+    nvs_close(handle);
+    return ok;
+}
+#endif
 static void t2canSetupSecondary()
 {
 #if defined(DRIVER_T2CAN_DUAL) && !defined(DRIVER_P4_3CAN)
@@ -872,14 +912,31 @@ static void app_main_setup()
 #endif
 #endif
 #if defined(DRIVER_T2CAN_DUAL) || defined(DRIVER_P4_3CAN)
+#ifdef DRIVER_P4_3CAN
+    // Stability baseline (bus_enable, route A 2026-11-03): CanA is always
+    // constructed; CanB/CanC only when their mask bit is set, so a disabled
+    // lane never installs its TWAI ISR — the interrupt regime equals the
+    // field-proven T2CAN 1-bus setup. All later consumers null-guard, and
+    // the heap-guard slot stays null-from-boot = stable.
+    const uint8_t appBusEnable = t2canBusEnableGet();
+    Serial.printf("[BUS] bus_enable=0x%x (bit1=CanB bit2=CanC)\n", appBusEnable);
+    if (appBusEnable & 0x02)
+        t2canSetupSecondary();
+    else
+        Serial.println("[BUS] CAN B (TWAI1) disabled by bus_enable");
+#else
     t2canSetupSecondary();
+#endif
     // Wire the secondary-bus TX callback so the dashboard counts injected
     // frames sent on the secondary (Party CAN) bus.
     if (appDriverSecondary && dashDriver)
         appDriverSecondary->onSendFrame = dashDriver->onSendFrame;
 #endif
 #ifdef DRIVER_P4_3CAN
-    t2canSetupCan3();
+    if (appBusEnable & 0x04)
+        t2canSetupCan3();
+    else
+        Serial.println("[BUS] CAN C (TWAI2) disabled by bus_enable");
 #endif
 #if defined(DASH_HEAP_GUARD_V2)
     // Heap guard tripwire v2 (2026-11-02 forensics round 3): sentinel the
