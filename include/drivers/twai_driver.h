@@ -306,6 +306,52 @@ private:
         driverOK_ = false;
     }
 
+public:
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+    // Experiment B (crash forensics round 7, 2026-11-03): the field crash
+    // family is register-file zeroing under TWAI interrupt pressure; the
+    // bench never reproduces because its buses are silent (rv2_* inject
+    // above the driver, ISR never fires). benchSetMode reinstalls the
+    // controller in TWAI_MODE_NO_ACK (self-test) and benchSendSelf
+    // transmits with the self-reception flag, so each frame loops back
+    // through the REAL ISR -> rx queue -> can_rt path. exp_b only; the
+    // caller restores the original mode afterwards.
+    bool benchSetMode(twai_mode_t m)
+    {
+        lock();
+        stopAndUninstallLocked();
+        twai_mode_t keep = g_config_.mode;
+        g_config_.mode = m;
+        bool ok = installAndStartLocked();
+        if (!ok)
+        {
+            g_config_.mode = keep;
+            installAndStartLocked(); // best-effort restore
+        }
+        unlock();
+        return ok;
+    }
+
+    bool benchSendSelf(const CanFrame &f)
+    {
+        lock();
+        if (!driverOK_)
+        {
+            unlock();
+            return false;
+        }
+        twai_message_t msg = {};
+        msg.identifier = f.id;
+        msg.data_length_code = (f.dlc <= 8) ? f.dlc : 8;
+        memcpy(msg.data, f.data, msg.data_length_code);
+        msg.flags = TWAI_MSG_FLAG_SELF;
+        esp_err_t err = twai_transmit(&msg, 0);
+        unlock();
+        return err == ESP_OK;
+    }
+#endif
+
+private:
     DashTwaiDiag diag_;
     gpio_num_t txPin_;
     gpio_num_t rxPin_;

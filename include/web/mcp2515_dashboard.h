@@ -6680,6 +6680,9 @@ static void dashSerialPrintHelp()
     Serial.println("  rv2_replay <0|1>                fast serial drain for host-driven replay");
     Serial.println("  rv2_resets                    print the NVS reset ledger (crash forensics)");
 #endif
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+    Serial.println("  exp_b [fps] [s] [mask]        NO_ACK self-flood through the real ISR (crash repro, bench only)");
+#endif
 #if defined(DASH_HEAP_GUARD_V2)
     Serial.println("  heap_guard_status  print tripwire slot/forensic state (bench)");
     Serial.println("  heap_guard_test <static|heap|tcb>  deliberately trip the guard (bench verify)");
@@ -6903,6 +6906,13 @@ static void dashSerialTaskStatsTick() {}
 // budget so the replay script is not throttled to ~60 fps (24 chars/10ms).
 static bool dashSerialFastDrain = false;
 
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+// Experiment B (crash forensics round 7): bench NO_ACK self-reception
+// flood through the REAL TWAI ISR path. Defined in main.cpp where the
+// three drivers live; blocks the serial task for the whole duration.
+bool appBenchBlastCommand(const char *args);
+#endif
+
 static void dashSerialRunCommand(char *cmd)
 {
     char *start = cmd;
@@ -7015,6 +7025,19 @@ static void dashSerialRunCommand(char *cmd)
         // Crash forensics (2026-11-01): last 8 boot reset reasons + the
         // died-mid-flush marker, both NVS-backed and serial-free.
         dashRecV2DumpResets();
+    }
+#endif
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+    else if (strncmp(start, "exp_b", 5) == 0)
+    {
+        // Experiment B (crash forensics round 7, 2026-11-03): the decisive
+        // test. Reinstalls the selected controllers in NO_ACK mode and
+        // floods self-reception frames through the REAL TWAI ISR -> rx
+        // queue -> can_rt chain — the exact path family the field crashes
+        // live on and the bench has never exercised (rv2_* inject above
+        // the driver). Blocks serial for the duration; restores the
+        // original modes afterwards. BENCH ONLY.
+        appBenchBlastCommand(start + 5);
     }
 #endif
 #if defined(DASH_HEAP_GUARD_V2)

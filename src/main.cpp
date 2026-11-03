@@ -48,6 +48,7 @@
 #endif
 #ifdef DRIVER_P4_3CAN
 #include "drivers/p4_twai_secondary.h"
+#include "drivers/can_bench_blast.h"
 #endif
 
 #ifdef DRIVER_MCP2515
@@ -936,6 +937,63 @@ static bool app_main_loop()
 #endif
 #ifndef APP_CAN_TASK_CORE
 #define APP_CAN_TASK_CORE 0
+#endif
+
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+// Experiment B (crash forensics round 7, 2026-11-03): bench NO_ACK
+// self-reception flood — the DECISIVE test for the in-car 12-22s
+// register-zeroing crash family. Either it reproduces on the bench
+// (software/silicon confirmed + an infinite offline repro loop) or the
+// bench stays green (car-specific: harness/coupling). Blocks the serial
+// task like rv2_flood. BENCH ONLY — on a live vehicle this transmits
+// onto every selected bus.
+bool appBenchBlastCommand(const char *args)
+{
+    unsigned fps = 800, secs = 300, mask = 3; // B1: buses 1+2, 800 fps/lane
+    if (args)
+        sscanf(args, " %u %u %u", &fps, &secs, &mask);
+    if (mask == 0 || mask > 7)
+    {
+        Serial.println("[exp_b] mask must be 1..7 (1=bus1 2=bus2 4=bus3)");
+        return false;
+    }
+    TWAIDriver *d0 = nullptr;
+    if (mask & 1)
+    {
+        d0 = static_cast<TWAIDriver *>(appDriver.get());
+        if (!d0)
+        {
+            Serial.println("[exp_b] bus 1 driver missing");
+            return false;
+        }
+    }
+    P4TwaiSecondaryDriver *d1 = (mask & 2) ? appDriverSecondary.get() : nullptr;
+    P4TwaiSecondaryDriver *d2 = (mask & 4) ? appDriverTertiary.get() : nullptr;
+    if ((mask & 2) && !d1)
+    {
+        Serial.println("[exp_b] bus 2 driver missing");
+        return false;
+    }
+    if ((mask & 4) && !d2)
+    {
+        Serial.println("[exp_b] bus 3 driver missing");
+        return false;
+    }
+    Serial.printf("[exp_b] BENCH-ONLY NO_ACK self-flood: %u fps/lane, %us, mask %u "
+                  "(original modes restored afterwards)\n",
+                  fps, secs, mask);
+    CanBenchBlastStats st = canBenchBlastRun(
+        d0, TWAI_MODE_NORMAL, d1, TWAI_MODE_NORMAL, d2, TWAI_MODE_LISTEN_ONLY,
+        (uint8_t)mask, fps, secs);
+    Serial.printf("[exp_b] done: switchOk=%d tx=%u/%u/%u fail=%u/%u/%u elapsed=%ums\n",
+                  st.modeSwitchOk ? 1 : 0, (unsigned)st.tx[0], (unsigned)st.tx[1],
+                  (unsigned)st.tx[2], (unsigned)st.fail[0], (unsigned)st.fail[1],
+                  (unsigned)st.fail[2], (unsigned)st.elapsedMs);
+    if (!st.modeSwitchOk)
+        Serial.println("[exp_b] WARNING: mode switch failed — verify bus modes "
+                       "(can_status) before further bench work");
+    return st.modeSwitchOk;
+}
 #endif
 
 static void app_can_task(void *)

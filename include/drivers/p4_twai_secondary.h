@@ -250,6 +250,49 @@ private:
         driverOK_ = false;
     }
 
+public:
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+    // Experiment B (crash forensics round 7, 2026-11-03): NO_ACK
+    // self-reception flood — same purpose as TWAIDriver::benchSetMode,
+    // through the _v2 handle API this class mandates (see init(): the
+    // legacy no-handle calls always hit controller 0). exp_b only; the
+    // caller restores the original mode afterwards.
+    bool benchSetMode(twai_mode_t m)
+    {
+        lock();
+        stopAndUninstallLocked();
+        twai_mode_t keep = g_config_.mode;
+        g_config_.mode = m;
+        bool ok = installAndStartLocked();
+        if (!ok)
+        {
+            g_config_.mode = keep;
+            installAndStartLocked(); // best-effort restore
+        }
+        unlock();
+        return ok;
+    }
+
+    bool benchSendSelf(const CanFrame &f)
+    {
+        lock();
+        if (!driverOK_ || !handle_)
+        {
+            unlock();
+            return false;
+        }
+        twai_message_t msg = {};
+        msg.identifier = f.id;
+        msg.data_length_code = (f.dlc <= 8) ? f.dlc : 8;
+        memcpy(msg.data, f.data, msg.data_length_code);
+        msg.flags = TWAI_MSG_FLAG_SELF;
+        esp_err_t err = twai_transmit_v2(handle_, &msg, 0);
+        unlock();
+        return err == ESP_OK;
+    }
+#endif
+
+private:
     gpio_num_t txPin_;
     gpio_num_t rxPin_;
     // beta08: CAN C reuses this class as a listen-only third instance
