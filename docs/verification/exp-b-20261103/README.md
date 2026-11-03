@@ -16,13 +16,27 @@ on the bench (NO_ACK + `TWAI_MSG_FLAG_SELF` self-reception flood, 800 fps/lane, 
 | `core.elf` | ELF-wrapped coredump (12-byte flash header stripped) |
 | `idle_watch1.txt` | 35-min passive watch after reboot (empty — zero output, zero trips) |
 
-## Blast verdict (B1): INVALID as an ISR-pressure test
+## Blast verdict (B1): INVALID as an ISR-pressure test — and why no firmware can fix it alone
 
-Both runs: `tx=17 frozen, fail≈240k, rx=0`. With no transceiver/bus attached the RX pin floats,
-every transmission hits bit errors after the first 17 queue fills, nothing loops back → the real
-ISR→rx-queue→can_rt chain was **never exercised**. To actually drive the ISR path on a bench
-board without a bus, use `TWAI_MODE_LOOP_BACK` (controller-internal loopback; needs a firmware
-variant — not built yet).
+Both runs: `tx=17 frozen, fail≈240k, rx=0`. **Register-level post-mortem (IDF 6.0.2 headers):**
+
+- `TWAI_MSG_FLAG_SELF` maps to the SJA1000 **self-reception-request command** — transmit onto
+  the bus AND receive the own frame back (`esp_twai.c:747` `.config.loopback = message->self` →
+  `twai_hal_v1.c:391` → `twai_ll_set_cmd_self_rx_request`). It still **drives the physical bus**.
+- `TWAI_MODE_NO_ACK` maps to `mode.self_test_mode` (`twai.c:565`) — suppresses only the
+  *missing-acknowledge* error, **not bit errors**.
+- The ESP32 TWAI IP has **no loop-back mode register bit at all** — classic ESP32/S3
+  (`twai_struct.h`: rm/lom/stm/afm, "MOD.4 Sleep Mode not supported") and P4/C6/H2
+  (`hw_ver3/twai_struct.h` bits 0..3 = reset/listen_only/self_test/acceptance_filter).
+  `TWAI_MODE_LOOP_BACK` **does not exist in any IDF**; the new-API `flags.enable_loopback` is
+  just "SRR on every frame" (`esp_twai_onchip.c:179`). The MCP2515 (T2CAN's secondary) does
+  have a true internal loopback — the ESP32 native controller does not.
+- So with a floating bus: recessive bits read garbage → bit/stuff errors → infinite
+  retransmit → TX buffer never frees → tx queue fills at 17 → every later `twai_transmit`
+  fails (240k), no frame ever completes → rx=0, the ISR chain never flows.
+
+Conclusion: **there is no bus-less path to the real ISR chain on this silicon.** Any valid
+bench ISR-pressure test needs a physical differential bus, however small.
 
 ## Trip #1 — what the TCB tripwire caught
 
@@ -105,17 +119,22 @@ documented timing-window precedents) and (b) **native-TWAI ISR stream count unde
 TWAI involvement) leans toward (a): P4 corrupting context-adjacent state under *ordinary*
 interrupt pressure.
 
-This directly shapes the experiment ladder — LOOP_BACK blasts answer both:
+This directly shapes the experiment ladder — with one physical jumper the EXISTING beta11
+firmware runs it unchanged (no variant needed; `exp_b` already does NO_ACK + self-reception):
 
-- **L1 = 1 lane LOOP_BACK @800 fps**: T2CAN-equivalent native-TWAI load on P4 silicon. If this
-  trips/corrupts, P4 chokes at loads the S3 shrugs off for months → silicon case, escalate to
-  Espressif.
-- **L2 = 3 lanes LOOP_BACK @800 fps/lane (2400 total ≈ sess_64)**: car-equivalent aggregate. If
-  only L2 fails, it's an interrupt-pressure threshold, still P4-specific.
-
-Usage: `exp_b [fps] [secs] [mask] [na|lb]` — `na` = B1 NO_ACK (needs a physical bus, kept for
-completeness), `lb` = LOOP_BACK (controller-internal, no bus needed, plain TX without the
-self-reception flag — every frame flows TWAI ISR → rx queue → can_rt).
+- **Harness**: jumper CanA H/L ↔ CanB H/L with two dupont wires (a real differential bus, two
+  transceivers; optionally CanC joined for 3-lane). The receiving lane left in NORMAL mode even
+  ACKs, making lane-0 TX bit-identical to a real bus.
+- **L1 = `exp_b 800 300 1`** (jumper A↔B): lane 0 self-receives its 800 fps through the real
+  bus — T2CAN-equivalent native-TWAI ISR load on P4 silicon. If this trips/corrupts, P4 chokes
+  at loads the S3 shrugs off for months → silicon case, escalate to Espressif.
+- **L2 = `exp_b 800 300 7`** (jumper A↔B↔C): three transmitters arbitration-sharing one wire;
+  every controller's RX ISR sees the ~2400 fps aggregate (≈ sess_64, i.e. harsher per
+  controller than the car's ~800). If only L2 fails, it's an interrupt-pressure threshold,
+  still P4-specific.
+- Alternative harness: one 120 Ω resistor across H/L per blasted bus (official single-node
+  self-test shape) — works too, but the jumper exercises real differential receive on a second
+  controller as well.
 
 ## Pulling the next coredump (recipe)
 
