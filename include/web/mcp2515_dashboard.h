@@ -1132,10 +1132,14 @@ static void mcpDashSniffCan3(const CanFrame &f)
     // Auto-shift sensors on the PT bus: steering angle 0x00E and the
     // obstacle pair 0x23E/0x20E (blocker-only posture; 0x22E sdiRear is
     // CanB-only and accepted absent per Jordan's 2026-11-05 decision).
+    // 0x228 is the SBW compose SOURCE snapshot (own echoes suppressed
+    // inside dashAsOnSbw0228).
     if (tagged.id == 0x00E && tagged.dlc >= 2)
         dashAsOnAngle00E(tagged.data, millis());
     else if ((tagged.id == 0x23E || tagged.id == 0x20E) && tagged.dlc >= 1)
         dashAsOnObstacle(tagged.id, tagged.data, millis());
+    else if (tagged.id == 0x228 && tagged.dlc >= 4)
+        dashAsOnSbw0228(tagged.data, millis());
 #endif
 }
 
@@ -2505,6 +2509,15 @@ uint8_t t2canCan3Eflg(void);
 // 1=CanA (forced on), +2=CanB, +4=CanC. NVS ns "t2can", key "busmask".
 uint8_t t2canBusEnableGet(void);
 bool t2canBusEnableSet(uint8_t mask);
+// Autoshift permit (2026-11-05): NVS-backed master/arm intent (u8, default
+// 0) + the can_rt-owned bus-mode flip request. The submit itself lives in
+// t2canAutoshiftTick (main.cpp); DIAG only mutates permit state and sets
+// the dirty flag.
+uint8_t t2canAutoshiftMasterGet(void);
+bool t2canAutoshiftMasterSet(uint8_t v);
+uint8_t t2canAutoshiftArmedGet(void);
+bool t2canAutoshiftArmedSet(uint8_t v);
+void t2canAutoshiftModeDirty(void);
 #endif
 
 static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxValue, uint8_t &out)
@@ -6686,6 +6699,83 @@ static void handleTaskStats()
 }
 #endif
 
+#if defined(DRIVER_P4_3CAN)
+// Autoshift runtime status (DIAG + Task 7 Web): one JSON line reading the
+// engine globals — permit state, latest verdict/block, in-flight pending,
+// session counts and 0x228 source health.
+static String mcpDashAutoshiftStatusJson()
+{
+    const uint32_t now = millis();
+    const char *state = "off";
+    if (dashAsPermit.master)
+        state = dashAsPermit.armed
+                    ? "armed"
+                    : (dashAsPermit.armPendingSinceMs != 0 ? "arm_pending"
+                                                           : "master_on");
+    String s = "{\"state\":\"";
+    s += state;
+    s += "\",\"verdict\":";
+    s += String((unsigned)dashAsRuntime.lastVerdict);
+    s += ",\"lastBlock\":";
+    s += String((unsigned)dashAsRuntime.lastBlock);
+    s += ",\"pending\":";
+    s += String((unsigned)dashAsGateState.pendingTargetDi);
+    s += ",\"retries\":";
+    s += String((unsigned)dashAsGateState.retries);
+    s += ",\"gearNow\":";
+    s += String((unsigned)dashAsSensor.gearNow);
+    s += ",\"sourceAgeMs\":";
+    s += dashAsSbwSource.seen
+             ? String((unsigned)(now - dashAsSbwSource.ms))
+             : String("-1");
+    s += ",\"counts\":{\"trig\":";
+    s += String((unsigned)dashAsStats.triggered);
+    s += ",\"submitted\":";
+    s += String((unsigned)dashAsStats.submitted);
+    s += ",\"blocked\":";
+    s += String((unsigned)dashAsStats.blocked);
+    s += ",\"confirmed\":";
+    s += String((unsigned)dashAsStats.confirmed);
+    s += ",\"retried\":";
+    s += String((unsigned)dashAsStats.retried);
+    s += ",\"abandoned\":";
+    s += String((unsigned)dashAsStats.abandoned);
+    s += ",\"txOk\":";
+    s += String((unsigned)dashAsStats.txOk);
+    s += ",\"txFail\":";
+    s += String((unsigned)dashAsStats.txFail);
+    s += "}}";
+    return s;
+}
+
+// Compose a gear-request 0x228 from the freshest snapshot and PRINT it —
+// the bench verification of the composer against hand-computed vectors.
+// NEVER transmits: this function has no send path on purpose.
+static void mcpDashAutoshiftTestFrame(const char *arg)
+{
+    uint8_t gear = kAsGearD;
+    if (arg && *arg)
+    {
+        long g = strtol(arg, nullptr, 0);
+        if (g >= 0 && g < kAsGearCount)
+            gear = (uint8_t)g;
+    }
+    uint8_t out[4] = {0, 0, 0, 0};
+    const uint32_t now = millis();
+    const uint32_t age = dashAsSbwSource.seen ? now - dashAsSbwSource.ms
+                                              : 0xFFFFFFFFu;
+    if (!dashAsSbwCompose(dashAsSbwSource.data, age, gear, out))
+    {
+        Serial.println("[as_test] compose refused (source stale/absent or gear invalid)");
+        return;
+    }
+    Serial.printf("[as_test] gear=%u src_age=%lums frame=%02X %02X %02X %02X (never transmitted)\n",
+                  (unsigned)gear,
+                  dashAsSbwSource.seen ? (unsigned long)age : 0UL,
+                  out[0], out[1], out[2], out[3]);
+}
+#endif
+
 #ifdef ESP_PLATFORM
 static void dashSerialPrintHelp()
 {
@@ -6711,6 +6801,11 @@ static void dashSerialPrintHelp()
 #if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
     Serial.println("  exp_b [fps] [s] [mask]        NO_ACK self-flood through the real ISR (crash repro, bench only)");
     Serial.println("  bus_enable [1|3|5|7]          which CAN controllers boot (1=CanA default, 3|5 add CanB/CanC; reboot to apply)");
+    Serial.println("  autoshift_status              autoshift permit/gate/status JSON");
+    Serial.println("  autoshift_master [0|1]        feature master (persisted; 0 disarms)");
+    Serial.println("  autoshift_arm                 two-step arm: call twice within 5s to enable TX");
+    Serial.println("  autoshift_disarm              disarm (CanC returns to listen-only)");
+    Serial.println("  autoshift_test [gear]         compose 0x228 from the live snapshot and print (never TX)");
 #endif
 #if defined(DASH_HEAP_GUARD_V2)
     Serial.println("  heap_guard_status  print tripwire slot/forensic state (bench)");
@@ -7093,6 +7188,80 @@ static void dashSerialRunCommand(char *cmd)
             else
                 Serial.println("bus_enable: NVS write failed");
         }
+    }
+#endif
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+    else if (strncmp(start, "autoshift_status", 16) == 0)
+    {
+        Serial.println("[as] " + mcpDashAutoshiftStatusJson());
+    }
+    else if (strncmp(start, "autoshift_master", 16) == 0)
+    {
+        // Feature master, NVS-persisted. Turning it off cascades a disarm
+        // (dashAsSetMaster) — TX can never outlive the master switch.
+        const char *arg = start + 16;
+        while (*arg == ' ')
+            arg++;
+        if (*arg == '\0')
+        {
+            Serial.printf("autoshift_master=%u\n", t2canAutoshiftMasterGet());
+        }
+        else
+        {
+            long value = strtol(arg, nullptr, 0);
+            if (value != 0 && value != 1)
+                Serial.println("usage: autoshift_master 0|1");
+            else
+            {
+                dashAsSetMaster(value != 0);
+                if (!t2canAutoshiftMasterSet((uint8_t)(value != 0)))
+                    Serial.println("[as] NVS write failed");
+                t2canAutoshiftModeDirty();
+                Serial.printf("autoshift_master=%u (armed=%u)\n",
+                              t2canAutoshiftMasterGet(),
+                              dashAsPermit.armed ? 1u : 0u);
+            }
+        }
+    }
+    else if (strncmp(start, "autoshift_arm", 13) == 0)
+    {
+        // Two-step house pattern: the first call only OPENS a 5s confirm
+        // window; a second call inside it enables. No single serial
+        // command ever enables TX.
+        const DashAsArmResult r = dashAsArmRequest(millis());
+        switch (r)
+        {
+        case kAsArmDeniedMaster:
+            Serial.println("[as] arm denied: master off (autoshift_master 1 first)");
+            break;
+        case kAsArmOpened:
+            Serial.println("[as] confirm window open — call autoshift_arm again within 5s");
+            break;
+        case kAsArmEnabled:
+            if (!t2canAutoshiftArmedSet(1))
+                Serial.println("[as] NVS write FAILED — armed this boot only");
+            t2canAutoshiftModeDirty();
+            Serial.println("[as] ARMED — CanC leaves listen-only; shift requests may transmit");
+            break;
+        case kAsArmAlreadyArmed:
+            Serial.println("[as] already armed");
+            break;
+        case kAsArmExpired:
+            Serial.println("[as] window expired — call autoshift_arm twice again");
+            break;
+        }
+    }
+    else if (strncmp(start, "autoshift_disarm", 16) == 0)
+    {
+        dashAsDisarm();
+        t2canAutoshiftArmedSet(0);
+        t2canAutoshiftModeDirty();
+        Serial.println("[as] disarmed — CanC returns to listen-only");
+    }
+    else if (strncmp(start, "autoshift_test", 14) == 0)
+    {
+        // Bench composer verification — compose and print, never TX.
+        mcpDashAutoshiftTestFrame(start + 14);
     }
 #endif
 #if defined(DASH_HEAP_GUARD_V2)

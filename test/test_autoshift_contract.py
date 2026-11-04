@@ -106,6 +106,7 @@ class AutoshiftContractTests(unittest.TestCase):
             self.assertIn(token, source)
 
     DASH_HEADER = ROOT / "include" / "web" / "mcp2515_dashboard.h"
+    MAIN_SRC = ROOT / "src" / "main.cpp"
 
     def test_dashboard_includes_autoshift_header_behind_p4_guard(self):
         source = self.DASH_HEADER.read_text()
@@ -147,6 +148,161 @@ class AutoshiftContractTests(unittest.TestCase):
         self.assertIn("dashAsOnObstacle(", body)
         self.assertIn("0x23E", body)
         self.assertIn("0x20E", body)
+
+    # ---- Task 6: permit gate, authorized submit, DIAG, NVS ----
+
+    def test_native_main_covers_permit_and_snapshot(self):
+        source = NATIVE_MAIN.read_text()
+        for token in ("kAsArmDeniedMaster", "kAsArmOpened", "kAsArmEnabled",
+                      "kAsArmAlreadyArmed", "kAsArmExpired", "dashAsOnSbw0228",
+                      "dashAsSbwSource", "dashAsLastSbwTxMs",
+                      "kAsAbandonRetryExhausted", "dashAsRuntime"):
+            self.assertIn(token, source)
+
+    def test_permit_constants_are_pinned(self):
+        source = HEADER.read_text()
+        self.assertIn("kAsArmWindowMs = 5000", source)
+        self.assertIn("kAsOwnEchoWindowMs = 30", source)
+
+    def test_tick_submits_only_inside_permit_and_submit_verdict(self):
+        """t2canAutoshiftTick is the ONLY submit site: the send call must
+        sit after BOTH the master/armed guard and the AS_SUBMIT verdict
+        (source-pin, order-pinned, single occurrence)."""
+        import re
+
+        source = self.MAIN_SRC.read_text()
+        match = re.search(r"static void t2canAutoshiftTick\(.*?\n\}",
+                          source, re.DOTALL)
+        self.assertIsNotNone(match, "t2canAutoshiftTick body not found")
+        body = match.group(0)
+        guard = body.find("dashAsPermit.master")
+        verdict = body.find("AS_SUBMIT")
+        send = body.find("t2canAutoshiftSendCan3(")
+        for name, pos in (("master/armed guard", guard),
+                          ("AS_SUBMIT check", verdict),
+                          ("send call", send)):
+            self.assertGreater(pos, -1, f"{name} missing from tick body")
+        self.assertLess(guard, send, "send must sit inside the permit guard")
+        self.assertLess(verdict, send, "send must follow the AS_SUBMIT verdict")
+        self.assertEqual(body.count("t2canAutoshiftSendCan3("), 1,
+                         "the tick must have exactly one submit site")
+
+    def test_autoshift_test_command_composes_without_transmit(self):
+        import re
+
+        source = self.DASH_HEADER.read_text()
+        match = re.search(r"static void mcpDashAutoshiftTestFrame\(.*?\n\}",
+                          source, re.DOTALL)
+        self.assertIsNotNone(match, "mcpDashAutoshiftTestFrame not found")
+        body = match.group(0)
+        self.assertIn("dashAsSbwCompose(", body)
+        for banned in ("->send(", "t2canAutoshiftSendCan3",
+                       "t2canSendSecondary"):
+            self.assertNotIn(banned, body,
+                             f"autoshift_test must never transmit: {banned}")
+
+    def test_diag_registers_autoshift_commands(self):
+        import re
+
+        source = self.DASH_HEADER.read_text()
+        match = re.search(
+            r"static void dashSerialRunCommand\(char \*cmd\).*?\n\}",
+            source, re.DOTALL)
+        self.assertIsNotNone(match, "dashSerialRunCommand body not found")
+        body = match.group(0)
+        self.assertIn("#if defined(DRIVER_P4_3CAN)", body)
+        for token in ('"autoshift_status"', '"autoshift_arm"',
+                      '"autoshift_disarm"', '"autoshift_master"',
+                      '"autoshift_test"'):
+            self.assertIn(token, body)
+
+    def test_help_lists_autoshift_commands(self):
+        import re
+
+        source = self.DASH_HEADER.read_text()
+        match = re.search(r"static void dashSerialPrintHelp\(.*?\n\}",
+                          source, re.DOTALL)
+        self.assertIsNotNone(match, "help body not found")
+        body = match.group(0)
+        self.assertIn("autoshift_status", body)
+        self.assertIn("autoshift_master", body)
+
+    def test_nvs_persists_autoshift_permit_keys(self):
+        import re
+
+        source = self.MAIN_SRC.read_text()
+        for fn in ("t2canAutoshiftMasterGet", "t2canAutoshiftArmedGet"):
+            match = re.search(r"uint8_t %s\(void\).*?\n\}" % fn,
+                              source, re.DOTALL)
+            self.assertIsNotNone(match, f"{fn} not found")
+            body = match.group(0)
+            self.assertIn("= 0", body, "NVS default must be 0 (off)")
+            self.assertIn("nvs_get_u8", body)
+        self.assertIn('nvs_set_u8(handle, "autoshift_master"', source)
+        self.assertIn('nvs_set_u8(handle, "autoshift_armed"', source)
+
+    def test_tick_is_scheduled_in_can_task_loop(self):
+        source = self.MAIN_SRC.read_text()
+        self.assertIn("t2canAutoshiftTick();", source)
+
+    def test_canc_drain_snapshots_sbw_0228(self):
+        import re
+
+        source = self.DASH_HEADER.read_text()
+        match = re.search(
+            r"static void mcpDashSniffCan3\(const CanFrame &f\).*?\n\}",
+            source, re.DOTALL)
+        self.assertIsNotNone(match)
+        body = match.group(0)
+        self.assertIn("0x228", body)
+        self.assertIn("dashAsOnSbw0228(", body)
+
+    def test_arm_mode_flip_is_can_task_owned(self):
+        """Arming must move TWAI2 out of listen-only, but only from can_rt
+        (the task that owns the driver): DIAG/boot set a dirty flag; the
+        flip reconstructs the driver TWAI_MODE_NORMAL <-> LISTEN_ONLY and
+        re-binds the RX consumer."""
+        import re
+
+        source = self.MAIN_SRC.read_text()
+        match = re.search(r"static void t2canAutoshiftApplyBusMode\(.*?\n\}",
+                          source, re.DOTALL)
+        self.assertIsNotNone(match, "t2canAutoshiftApplyBusMode not found")
+        body = match.group(0)
+        self.assertIn("TWAI_MODE_NORMAL", body)
+        self.assertIn("TWAI_MODE_LISTEN_ONLY", body)
+        self.assertIn("setRxConsumer", body)
+        self.assertIn("t2canAutoshiftModeDirty", source)
+
+    def test_status_json_carries_runtime_fields(self):
+        import re
+
+        source = self.DASH_HEADER.read_text()
+        match = re.search(r"static String mcpDashAutoshiftStatusJson\(.*?\n\}",
+                          source, re.DOTALL)
+        self.assertIsNotNone(match, "mcpDashAutoshiftStatusJson not found")
+        body = match.group(0)
+        for token in ("sourceAgeMs", "lastBlock", "verdict", "pending"):
+            self.assertIn(token, body)
+
+    def test_dashboard_conditionals_balance(self):
+        """The dashboard header's #if/#endif tree must balance to zero.
+        Pinned after the Task-6 DIAG insertion silently consumed
+        bus_enable's closing #endif (regex-pinned tokens stayed green
+        while the preprocessor would have failed at EOF)."""
+        import re
+
+        depth = 0
+        for i, line in enumerate(
+                self.DASH_HEADER.read_text().splitlines(), 1):
+            s = line.strip()
+            if re.match(r"#\s*(if|ifdef|ifndef)\b", s):
+                depth += 1
+            elif re.match(r"#\s*endif\b", s):
+                depth -= 1
+                self.assertGreaterEqual(depth, 0,
+                                        f"#endif underflow at line {i}")
+        self.assertEqual(depth, 0, "unclosed #if remains at EOF")
 
     def test_guard_is_total_without_define(self):
         """Without DRIVER_P4_3CAN the header must expose NOTHING: a TU

@@ -417,6 +417,93 @@ int main()
         CHECK(!dashAsObstacleFreshAndClear(3210));
     }
 
+    // ================= Task 6: permit + 0x228 snapshot =================
+    {
+        ProfileGuard g;
+        dashAsPermit = DashAsPermit{};
+        // master off: arm denied outright
+        CHECK(dashAsArmRequest(1000) == kAsArmDeniedMaster);
+        dashAsSetMaster(true);
+        CHECK(dashAsPermit.master);
+        // two-step arm: open the window, then confirm inside it
+        CHECK(dashAsArmRequest(2000) == kAsArmOpened);
+        CHECK(!dashAsPermit.armed);
+        CHECK(dashAsArmRequest(2000 + kAsArmWindowMs) == kAsArmEnabled);
+        CHECK(dashAsPermit.armed);
+        CHECK(dashAsArmRequest(3000) == kAsArmAlreadyArmed);
+        // disarm clears armed AND any in-flight request
+        CHECK(dashAsSubmit(4, 3000));
+        dashAsDisarm();
+        CHECK(!dashAsPermit.armed);
+        CHECK(dashAsGateState.pendingTargetDi == 0);
+        // window expiry clears the pending arm; next call re-opens
+        dashAsPermit = DashAsPermit{};
+        dashAsSetMaster(true);
+        CHECK(dashAsArmRequest(1000) == kAsArmOpened);
+        CHECK(dashAsArmRequest(1000 + kAsArmWindowMs + 1) == kAsArmExpired);
+        CHECK(dashAsPermit.armPendingSinceMs == 0);
+        CHECK(dashAsArmRequest(2000) == kAsArmOpened);
+        CHECK(dashAsArmRequest(2100) == kAsArmEnabled);
+        // master-off cascade disarms
+        dashAsSetMaster(false);
+        CHECK(!dashAsPermit.master);
+        CHECK(!dashAsPermit.armed);
+    }
+    // --- 0x228 source snapshot feeds the composer ---
+    {
+        ProfileGuard g;
+        const uint8_t idle[4] = {0x40, 0xC0, 0x30, 0x00};
+        CHECK(!dashAsSbwSource.seen);
+        dashAsOnSbw0228(idle, 1000);
+        CHECK(dashAsSbwSource.seen);
+        CHECK(dashAsSbwSource.data[0] == 0x40);
+        uint8_t out[4];
+        // age is the parameter, not "now": fed at t=1000, ask at t=1100
+        CHECK(dashAsSbwCompose(dashAsSbwSource.data, 100, kAsGearD, out));
+        CHECK(((out[2] >> 4) & 0x0F) == 0x04);
+        CHECK(out[3] == dashAsCrc8J1850(out, 3));
+        CHECK(!dashAsSbwCompose(dashAsSbwSource.data,
+                                1100 + dashAsProfile.sbwSrcFreshMs + 1,
+                                kAsGearD, out));
+        CHECK(!dashAsSbwCompose(dashAsSbwSource.data, 1100, 0xFE, out));
+        // echo suppression: our own TX echo never refreshes the snapshot
+        const uint8_t other[4] = {0x50, 0xC0, 0x30, 0x00};
+        dashAsLastSbwTxMs = 1000;
+        dashAsOnSbw0228(other, 1010);  // 10ms after our TX — suppressed
+        CHECK(dashAsSbwSource.data[0] == 0x40);
+        dashAsOnSbw0228(other, 1030);  // exactly the window edge — suppressed
+        CHECK(dashAsSbwSource.data[0] == 0x40);
+        dashAsOnSbw0228(other, 1031);  // past the window — accepted
+        CHECK(dashAsSbwSource.data[0] == 0x50);
+        CHECK(dashAsSbwSource.ms == 1031);
+        dashAsLastSbwTxMs = 0;
+    }
+
+    // --- runtime bookkeeping rides the confirm path ---
+    {
+        ProfileGuard g;
+        dashAsGateReset();
+        dashAsStats = DashAsStats{};
+        dashAsRuntime = DashAsRuntime{};
+        CHECK(dashAsSubmit(2, 5000));                               // request R
+        CHECK(dashAsConfirmGear(2, 5100) == AS_CONFIRM_COMPLETE);
+        CHECK(dashAsStats.confirmed == 1);
+        CHECK(dashAsRuntime.lastShiftMs == 5100);
+        CHECK(dashAsRuntime.shiftCount == 1);
+        CHECK(dashAsSubmit(4, 6000));                               // request D
+        CHECK(dashAsConfirmGear(1, 7001) == AS_CONFIRM_RETRY);      // expiry 1
+        CHECK(dashAsStats.retried == 1);
+        CHECK(dashAsSubmit(4, 8000));
+        CHECK(dashAsConfirmGear(1, 9001) == AS_CONFIRM_ABANDONED);  // expiry 2
+        CHECK(dashAsStats.abandoned == 1);
+        CHECK(dashAsLastAbandonReason() == kAsAbandonRetryExhausted);
+        // gear -> DI mapping for the submit path (P button requests P)
+        CHECK(dashAsGearToDi(kAsGearP) == 1 && dashAsGearToDi(kAsGearPBtn) == 1);
+        CHECK(dashAsGearToDi(kAsGearR) == 2 && dashAsGearToDi(kAsGearN) == 3);
+        CHECK(dashAsGearToDi(kAsGearD) == 4);
+        CHECK(dashAsGearToDi(kAsGearCount) == 0xFF);
+    }
+
     if (g_fail == 0) {
         std::printf("native autoshift: ALL PASS\n");
     }

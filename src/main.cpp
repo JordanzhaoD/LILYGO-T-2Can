@@ -50,6 +50,7 @@
 #ifdef DRIVER_P4_3CAN
 #include "drivers/p4_twai_secondary.h"
 #include "drivers/can_bench_blast.h"
+#include "dash_autoshift.h"
 #endif
 
 #ifdef DRIVER_MCP2515
@@ -187,6 +188,55 @@ bool t2canBusEnableSet(uint8_t mask)
     nvs_close(handle);
     return ok;
 }
+
+// Autoshift permit persistence (2026-11-05): master/arm intent survives
+// reboots like the bus mask — same namespace, u8 keys, default 0 (off).
+// Arming is two-step at runtime; NVS only remembers the settled state.
+uint8_t t2canAutoshiftMasterGet(void)
+{
+    uint8_t stored = 0;
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READONLY, &handle) == ESP_OK)
+    {
+        nvs_get_u8(handle, "autoshift_master", &stored);
+        nvs_close(handle);
+    }
+    return stored;
+}
+
+bool t2canAutoshiftMasterSet(uint8_t v)
+{
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READWRITE, &handle) != ESP_OK)
+        return false;
+    bool ok = nvs_set_u8(handle, "autoshift_master", v) == ESP_OK &&
+              nvs_commit(handle) == ESP_OK;
+    nvs_close(handle);
+    return ok;
+}
+
+uint8_t t2canAutoshiftArmedGet(void)
+{
+    uint8_t stored = 0;
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READONLY, &handle) == ESP_OK)
+    {
+        nvs_get_u8(handle, "autoshift_armed", &stored);
+        nvs_close(handle);
+    }
+    return stored;
+}
+
+bool t2canAutoshiftArmedSet(uint8_t v)
+{
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READWRITE, &handle) != ESP_OK)
+        return false;
+    bool ok = nvs_set_u8(handle, "autoshift_armed", v) == ESP_OK &&
+              nvs_commit(handle) == ESP_OK;
+    nvs_close(handle);
+    return ok;
+}
 #endif
 static void t2canSetupSecondary()
 {
@@ -275,6 +325,118 @@ uint32_t t2canCan3RxCount(void) { return t2canCan3Rx; }
 uint8_t t2canCan3TxErrCount(void) { return t2canCan3TxErr; }
 uint8_t t2canCan3Eflg(void) { return t2canCan3EflgV; }
 uint32_t t2canCan3RxMissedCount(void) { return t2canCan3Missed; }
+
+// ---- Auto gear shift v1 (2026-11-05): permit-gated SBW submit on CanC ----
+// The verdict chain, two-step permit semantics and the 0x228 composer live
+// in dash_autoshift.h. This tick is the ONLY submit site in the firmware
+// (DIAG autoshift_test composes but never sends), and the only place
+// TWAI2 ever leaves listen-only: listen-only is a construction flag of
+// the node core, so the armed flip is a controlled reconstruction — and
+// it runs on can_rt only (this task owns appDriverTertiary and drains it
+// above), while DIAG/boot merely set t2canAsModeDirty.
+static volatile bool t2canAsModeDirty = false;
+static bool t2canAsCan3TxMode = false;  // TWAI2 currently in NORMAL mode?
+
+void t2canAutoshiftModeDirty(void) { t2canAsModeDirty = true; }
+
+static void t2canAutoshiftApplyBusMode()
+{
+    const bool wantTx = dashAsPermit.master && dashAsPermit.armed;
+    if (!appDriverTertiary || wantTx == t2canAsCan3TxMode)
+        return;
+    appDriverTertiary.reset();  // can_rt-owned: no concurrent drain
+    appDriverTertiary = std::make_unique<P4TwaiSecondaryDriver>(
+        GPIO_NUM_26, GPIO_NUM_27, 2,
+        wantTx ? TWAI_MODE_NORMAL : TWAI_MODE_LISTEN_ONLY);
+    if (!appDriverTertiary->init())
+    {
+        Serial.printf("[AS] CanC re-init failed (err=0x%x) — lane down, gates fail closed\n",
+                      static_cast<int>(appDriverTertiary->lastError()));
+        appDriverTertiary.reset();
+        return;
+    }
+    appDriverTertiary->setReceiveAllMode();
+    if (dashDriver)
+        appDriverTertiary->onSendFrame = dashDriver->onSendFrame;
+    appDriverTertiary->setRxConsumer(xTaskGetCurrentTaskHandle());
+    t2canAsCan3TxMode = wantTx;
+    Serial.printf("[AS] CanC now %s\n",
+                  wantTx ? "NORMAL (autoshift armed)" : "LISTEN_ONLY");
+}
+
+static bool t2canAutoshiftSendCan3(const uint8_t d[4])
+{
+    if (!appDriverTertiary || !t2canAsCan3TxMode)
+        return false;  // never TX unless armed through the bus-mode flip
+    CanFrame f;
+    f.id = 0x228;
+    f.dlc = 4;
+    for (int i = 0; i < 4; ++i)
+        f.data[i] = d[i];
+    f.bus = CAN_BUS_PT;
+    return appDriverTertiary->send(f);
+}
+
+static void t2canAutoshiftTick()
+{
+    if (t2canAsModeDirty)
+    {
+        t2canAsModeDirty = false;
+        t2canAutoshiftApplyBusMode();
+    }
+    if (!dashAsPermit.master || !dashAsPermit.armed)
+        return;
+    const uint32_t nowMs = (uint32_t)millis();
+    const DashAsTrigger trig = dashAsPollTrigger(nowMs);
+    if (trig.type == kAsTrigNone)
+        return;
+    ++dashAsStats.triggered;
+
+    DashAsInputs in = {};
+    in.master = dashAsPermit.master;
+    in.torque2Fresh = dashAsTorque2Fresh(nowMs);
+    in.speedKph = dashAsSensor.speedKph;
+    in.brakeApplied = dashAsSensor.brake == 1;  // 0xFF sentinel = blocked
+    in.gearNow = dashAsSensor.gearNow;
+    in.gearTarget = trig.gear;
+    in.obstacleFreshAndClear = dashAsObstacleFreshAndClear(nowMs);
+    in.lastShiftMs = dashAsRuntime.lastShiftMs;
+    in.nowCount = dashAsRuntime.shiftCount;
+
+    const DashAsVerdict v = dashAsGateEval(nowMs, in);
+    dashAsRuntime.lastVerdict = v;
+    if (v != AS_SUBMIT)
+    {
+        dashAsRuntime.lastBlock = v;
+        ++dashAsStats.blocked;
+        return;
+    }
+
+    uint8_t out[4];
+    const uint32_t srcAgeMs = dashAsSbwSource.seen
+                                  ? nowMs - dashAsSbwSource.ms
+                                  : 0xFFFFFFFFu;
+    if (!dashAsSbwCompose(dashAsSbwSource.data, srcAgeMs, trig.gear, out))
+    {
+        ++dashAsStats.blocked;  // stale/absent 0x228 source — no injection
+        return;
+    }
+    const uint8_t targetDi = dashAsGearToDi(trig.gear);
+    if (!dashAsSubmit(targetDi, nowMs))
+    {
+        ++dashAsStats.blocked;
+        return;
+    }
+    if (!t2canAutoshiftSendCan3(out))
+    {
+        dashAsGateReset();  // the frame never hit the bus — nothing pending
+        ++dashAsStats.txFail;
+        return;
+    }
+    dashAsLastSbwTxMs = nowMs;  // open the own-echo suppression window
+    ++dashAsStats.txOk;
+    ++dashAsStats.submitted;
+}
 #endif
 
 // Transmit direct secondary-bus commands. Handler-driven Legacy NAG and smart
@@ -937,6 +1099,16 @@ static void app_main_setup()
         t2canSetupCan3();
     else
         Serial.println("[BUS] CAN C (TWAI2) disabled by bus_enable");
+    // Autoshift permit restore (2026-11-05): persisted master/arm intent
+    // loads here; the armed bus-mode flip defers to the first can_rt tick
+    // so TWAI2 never reconstructs off the boot task.
+    dashAsPermit.master = t2canAutoshiftMasterGet() != 0;
+    dashAsPermit.armed = t2canAutoshiftArmedGet() != 0;
+    if (dashAsPermit.master && dashAsPermit.armed)
+    {
+        t2canAsModeDirty = true;
+        Serial.println("[AS] permit restored: master=1 armed=1 (bus mode applies on can_rt)");
+    }
 #endif
 #if defined(DASH_HEAP_GUARD_V2)
     // Heap guard tripwire v2 (2026-11-02 forensics round 3): sentinel the
@@ -1083,6 +1255,7 @@ static void app_can_task(void *)
         t2canDrainSecondary();
 #ifdef DRIVER_P4_3CAN
         t2canDrainCan3();
+        t2canAutoshiftTick();
 #endif
         t2canServiceModeTick();
         t2canBus2HealthTick();

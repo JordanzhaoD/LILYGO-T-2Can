@@ -228,6 +228,31 @@ struct DashAsGateState
 
 inline DashAsGateState dashAsGateState = {};
 
+// Session runtime + stats (Task 6): what the DIAG status JSON and the Web
+// status read. lastShiftMs/shiftCount are the caller-maintained gate inputs
+// (cooldown anchor / session count), updated by the confirm path itself.
+struct DashAsStats
+{
+    uint32_t triggered = 0;
+    uint32_t submitted = 0;
+    uint32_t blocked = 0;
+    uint32_t confirmed = 0;
+    uint32_t retried = 0;
+    uint32_t abandoned = 0;
+    uint32_t txOk = 0;
+    uint32_t txFail = 0;
+};
+inline DashAsStats dashAsStats = {};
+
+struct DashAsRuntime
+{
+    uint32_t lastShiftMs = 0;   // cooldown anchor: last COMPLETE (0 = none)
+    uint32_t shiftCount = 0;    // confirmed shifts this session
+    DashAsVerdict lastVerdict = AS_SUBMIT;  // latest gate evaluation
+    DashAsVerdict lastBlock = AS_SUBMIT;    // latest non-submit verdict
+};
+inline DashAsRuntime dashAsRuntime = {};
+
 inline void dashAsGateReset()
 {
     dashAsGateState = DashAsGateState{};
@@ -306,6 +331,9 @@ inline DashAsConfirm dashAsConfirmGear(uint8_t gearNow, uint32_t nowMs)
         s.pendingDeadlineMs = 0;
         s.retries = 0;
         s.lastAbandonReason = kAsAbandonNone;
+        dashAsRuntime.lastShiftMs = nowMs ? nowMs : 1;
+        ++dashAsRuntime.shiftCount;
+        ++dashAsStats.confirmed;
         return AS_CONFIRM_COMPLETE;
     }
     if (nowMs > s.pendingDeadlineMs) {
@@ -314,6 +342,9 @@ inline DashAsConfirm dashAsConfirmGear(uint8_t gearNow, uint32_t nowMs)
         if (exhausted) {
             s.lastAbandonReason = kAsAbandonRetryExhausted;
             s.retries = 0;
+            ++dashAsStats.abandoned;
+        } else {
+            ++dashAsStats.retried;
         }
         s.pendingTargetDi = 0;
         s.pendingDeadlineMs = 0;
@@ -549,6 +580,119 @@ inline DashAsTrigger dashAsPollTrigger(uint32_t nowMs)
         t.gear = (s.gearNow == 4) ? kAsGearR : kAsGearD;  // D/R toggle
     }
     return t;
+}
+
+// ---------------------------------------------------------------------------
+// Permit gate, 0x228 source snapshot (Task 6)
+// ---------------------------------------------------------------------------
+
+// Two-step arm house pattern: the first arm request only OPENS a confirm
+// window; a second request inside the window enables. No single command
+// ever enables TX, and a same-tick double request cannot confirm (the
+// elapsed check demands >= 1 ms between the two).
+static const uint32_t kAsArmWindowMs = 5000;
+// Own-echo suppression: after we transmit a composed 0x228, an echoed copy
+// arriving within this window is ours and must not refresh the source
+// snapshot (which would desynchronize the MsgTxmtId counter).
+static const uint32_t kAsOwnEchoWindowMs = 30;
+
+enum DashAsArmResult : uint8_t
+{
+    kAsArmDeniedMaster = 0,  // master off — arm refused outright
+    kAsArmOpened,            // confirm window opened, NOT armed yet
+    kAsArmEnabled,           // second request inside the window — armed
+    kAsArmAlreadyArmed,
+    kAsArmExpired,           // window lapsed; pending request cleared
+};
+
+struct DashAsPermit
+{
+    bool master = false;             // NVS "autoshift_master"
+    bool armed = false;              // NVS "autoshift_armed" intent
+    uint32_t armPendingSinceMs = 0;  // 0 = no confirm window open
+};
+
+inline DashAsPermit dashAsPermit = {};
+
+inline DashAsArmResult dashAsArmRequest(uint32_t nowMs)
+{
+    if (!dashAsPermit.master) {
+        return kAsArmDeniedMaster;
+    }
+    if (dashAsPermit.armed) {
+        return kAsArmAlreadyArmed;
+    }
+    if (dashAsPermit.armPendingSinceMs != 0) {
+        const uint32_t elapsed = nowMs - dashAsPermit.armPendingSinceMs;
+        if (elapsed >= 1 && elapsed <= kAsArmWindowMs) {
+            dashAsPermit.armed = true;
+            dashAsPermit.armPendingSinceMs = 0;
+            return kAsArmEnabled;
+        }
+        if (elapsed > kAsArmWindowMs) {
+            dashAsPermit.armPendingSinceMs = 0;
+            return kAsArmExpired;
+        }
+        // elapsed == 0: same tick as the open — keep the window, re-open
+    }
+    dashAsPermit.armPendingSinceMs = nowMs ? nowMs : 1;
+    return kAsArmOpened;
+}
+
+inline void dashAsDisarm()
+{
+    dashAsPermit.armed = false;
+    dashAsPermit.armPendingSinceMs = 0;
+    dashAsGateReset();  // no in-flight request survives a disarm
+}
+
+inline void dashAsSetMaster(bool on)
+{
+    dashAsPermit.master = on;
+    if (!on) {
+        dashAsDisarm();  // cascade: master-off always disarms
+    }
+}
+
+// Freshest observed SBW_RQ_SCCM (CanC 0x228) — the compose source. The
+// snapshot skips our own armed-mode TX echoes (kAsOwnEchoWindowMs).
+struct DashAsSbwSource
+{
+    uint8_t data[4] = {0, 0, 0, 0};
+    uint32_t ms = 0;  // 0 = never seen
+    bool seen = false;
+};
+inline DashAsSbwSource dashAsSbwSource = {};
+inline uint32_t dashAsLastSbwTxMs = 0;  // 0 = we never transmitted
+
+inline void dashAsOnSbw0228(const uint8_t d[4], uint32_t nowMs)
+{
+    if (dashAsLastSbwTxMs != 0
+        && (nowMs - dashAsLastSbwTxMs) <= kAsOwnEchoWindowMs) {
+        return;  // our own echo — not a source frame
+    }
+    DashAsSbwSource &src = dashAsSbwSource;
+    src.data[0] = d[0];
+    src.data[1] = d[1];
+    src.data[2] = d[2];
+    src.data[3] = d[3];
+    src.ms = nowMs ? nowMs : 1;
+    src.seen = true;
+}
+
+// DI codes for the submit/confirm path (close loop works in DI codes).
+// The stalk-end P button requests P (DI 1); N is not a confirmable v1
+// target but keeps its code for completeness. 0xFF = invalid index.
+inline uint8_t dashAsGearToDi(uint8_t gear)
+{
+    switch (gear) {
+    case kAsGearP:
+    case kAsGearPBtn: return 1;
+    case kAsGearR: return 2;
+    case kAsGearN: return 3;
+    case kAsGearD: return 4;
+    default: return 0xFF;
+    }
 }
 
 #endif  // defined(DRIVER_P4_3CAN)
