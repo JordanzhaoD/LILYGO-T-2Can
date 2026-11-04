@@ -90,22 +90,29 @@ class ExpBBlastSemanticsContractTests(unittest.TestCase):
         for lane in ("d0", "d1", "d2"):
             self.assertIn(f"if ({lane})", restore)
 
-    def test_send_self_uses_self_flag_and_zero_timeout(self) -> None:
+    def test_send_self_uses_real_driver_path(self) -> None:
+        # Albert-mechanism port (2026-11-04): the drivers now transmit
+        # through P4TwaiNodeCore — the pacing loop still never stalls: the
+        # core sends from its own staging pool with a bounded 2 ms timeout,
+        # so a full hardware queue drops the frame (counted as fail, like
+        # the field). The self-reception capability comes from the node's
+        # loopback flag set by benchSetMode, not a per-frame flag.
         for name, src in (("primary", self.primary), ("secondary", self.secondary)):
             with self.subTest(driver=name):
                 body = _body(src, "bool benchSendSelf(", "#endif")
-                self.assertIn("TWAI_MSG_FLAG_SELF", body)
-                # Zero timeout: a full tx queue drops the frame instead of
-                # stalling the pacing loop (counted as fail, like the field).
-                self.assertRegex(body, r"twai_transmit(_v2)?\([^;]*;\s*\n?\s*.*0\)") if False else None
-                self.assertIn("twai_transmit(&msg, 0);" if name == "primary" else "twai_transmit_v2(handle_, &msg, 0);", body)
+                self.assertIn("core_.send(f)", body)
+                self.assertNotIn("TWAI_MSG_FLAG_SELF", body)
+        core = (ROOT / "include" / "drivers" / "p4_twai_node.h").read_text(encoding="utf-8")
+        self.assertIn("twai_node_transmit(node_, &slot.frame, 2)", core)
 
     def test_bench_set_mode_restores_on_failure(self) -> None:
         for name, src in (("primary", self.primary), ("secondary", self.secondary)):
             with self.subTest(driver=name):
                 body = _body(src, "bool benchSetMode(", "bool benchSendSelf(")
-                self.assertIn("g_config_.mode = keep;", body)
-                self.assertIn("installAndStartLocked(); // best-effort restore", body)
+                # NO_ACK maps to self-test + loopback (round-9 finding: this
+                # silicon has no loopback MODE; the new API splits the two).
+                self.assertIn("m == TWAI_MODE_NO_ACK", body)
+                self.assertIn("core_.benchReinit(false, false); // best-effort restore", body)
 
     def test_sweep_yields_exactly_160_distinct_ids(self) -> None:
         # Reproduce the sweep formula from canBenchBlastFrame and prove the

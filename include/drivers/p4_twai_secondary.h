@@ -4,15 +4,21 @@
 // The T-2CAN dual build drives this bus with an MCP2515 over SPI; the P4
 // board has three native TWAI controllers, so this is the same shape as
 // twai_driver.h (mutex, 500k, 2ms TX timeout, bus-off cooldown) bound to
-// TWAI_NUM_1 on GPIO 4/5, plus the MCP-facing accessors the shared dual
+// controller 1 on GPIO 4/5, plus the MCP-facing accessors the shared dual
 // skeleton in main.cpp calls on the secondary driver
 // (setReceiveAllMode/recoveryCount/consecutiveTxFailures). The filter is
 // accept-all from construction — the recorder-bus default the MCP path
 // establishes via setReceiveAllMode() after init; the method stays as a
-// no-op so the shared call sites compile unchanged.
+// no-op-shaped reapply so the shared call sites compile unchanged.
 // beta08: the ctor also takes (controllerId, mode) so CAN C (CanC, X179
 // 18/19 PT powertrain bus) reuses this class as a LISTEN-ONLY third
 // instance on controller 2 / GPIO 26-27 — observation only, never TX.
+//
+// Albert-P4 mechanism port (2026-11-04): the private layer delegates to
+// P4TwaiNodeCore (new TWAI node API, IRAM/cache-safe ISR, internal-RAM RX
+// ring + TX staging pool). controllerId_ no longer selects hardware (the
+// node API binds any free controller at creation, and construction order
+// keeps CanA→0/CanB→1/CanC→2); it stays as the bench-inject lane selector.
 
 #include "../can_frame_types.h"
 #include "can_driver.h"
@@ -23,6 +29,7 @@
 #pragma GCC diagnostic pop
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include "p4_twai_node.h"
 
 #ifndef T2CAN_SECONDARY_TX_PIN
 #define T2CAN_SECONDARY_TX_PIN GPIO_NUM_4
@@ -40,7 +47,8 @@ public:
                           gpio_num_t rxPin = T2CAN_SECONDARY_RX_PIN,
                           int controllerId = kSecondaryControllerId,
                           twai_mode_t mode = TWAI_MODE_NORMAL)
-        : txPin_(txPin), rxPin_(rxPin), controllerId_(controllerId), mode_(mode) {}
+        : txPin_(txPin), rxPin_(rxPin), controllerId_(controllerId),
+          core_(txPin, rxPin, /*listenOnly=*/mode == TWAI_MODE_LISTEN_ONLY) {}
 
     bool init() override
     {
@@ -49,24 +57,11 @@ public:
         if (!mutex_)
             return false;
 
-        // controller_id = 1: the primary driver owns controller 0. IDF 6
-        // dropped the TWAI_NUM_x enum — controller_id is a plain index —
-        // BUT only the _v2 handle API honors it: legacy twai_driver_install()
-        // always installs controller 0 regardless (g_twai_objs[0]) and every
-        // legacy no-handle call operates on that same controller. Using them
-        // here returned ESP_ERR_INVALID_STATE (controller 0 already owned by
-        // the primary) — and had it succeeded, reads/writes would have hit
-        // the MAIN bus. Every call below is the _v2 handle form.
-        g_config_ = TWAI_GENERAL_CONFIG_DEFAULT_V2(
-            controllerId_, txPin_, rxPin_, mode_);
-        g_config_.rx_queue_len = TWAI_RX_QUEUE_LEN;
-        g_config_.tx_queue_len = TWAI_TX_QUEUE_LEN;
-
-        t_config_ = TWAI_TIMING_CONFIG_500KBITS();
-        f_config_ = TWAI_FILTER_CONFIG_ACCEPT_ALL();
-
+        // Consumer (can_rt) is created after setup; injected via
+        // setRxConsumer() from app_start_can_task.
         lock();
-        driverOK_ = installAndStartLocked();
+        esp_err_t err = core_.init(nullptr);
+        driverOK_ = err == ESP_OK;
         unlock();
         return driverOK_;
     }
@@ -76,11 +71,23 @@ public:
     // discovered-ID table). Kept for the CanDriver interface.
     void setFilters(const uint32_t * /*ids*/, uint8_t /*count*/) override {}
 
-    // Accept-all already active on every (re)install; the MCP path reapplies
-    // its mode after controller resets, this driver cannot lose it.
-    void setReceiveAllMode() {}
+    // Accept-all reapply after controller resets, mirroring the MCP path.
+    void setReceiveAllMode()
+    {
+        lock();
+        if (core_.healthy())
+            core_.applyMaskFilter(0, 0x7FF);
+        unlock();
+    }
 
     bool enableInterrupt(void (* /*onReady*/)()) override { return false; }
+
+    void setRxConsumer(TaskHandle_t consumer)
+    {
+        lock();
+        core_.setConsumer(consumer);
+        unlock();
+    }
 
     bool read(CanFrame &frame) override
     {
@@ -102,8 +109,7 @@ public:
                 return false;
             }
 
-            twai_message_t msg;
-            if (twai_receive_v2(handle_, &msg, 0) != ESP_OK)
+            if (!core_.read(frame))
             {
                 if (isBusOffLocked())
                     recoverWithCooldownLocked();
@@ -112,10 +118,6 @@ public:
             }
             unlock();
 
-            frame.id = msg.identifier;
-            frame.dlc = (msg.data_length_code <= 8) ? msg.data_length_code : 8;
-            memset(frame.data, 0, 8);
-            memcpy(frame.data, msg.data, frame.dlc);
             return true;
         }
         return false;
@@ -132,16 +134,10 @@ public:
             return false;
         }
 
-        twai_message_t msg = {};
-        uint8_t dlc = (frame.dlc <= 8) ? frame.dlc : 8;
-        msg.identifier = frame.id;
-        msg.data_length_code = dlc;
-        memcpy(msg.data, frame.data, dlc);
-
-        // Short timeout (2ms): modified frames should not be dropped, but
-        // long blocks (10ms) risk overflowing the RX queue (same reasoning
-        // as the primary driver).
-        bool ok = twai_transmit_v2(handle_, &msg, pdMS_TO_TICKS(2)) == ESP_OK;
+        // Short timeout lives inside the core (2 ms): modified frames should
+        // not be dropped, but long blocks risk starving the RX ring drain
+        // (same reasoning as the primary driver).
+        bool ok = core_.send(frame);
         if (ok)
             consecutiveTxFailures_ = 0;
         else
@@ -159,7 +155,7 @@ public:
         return ok;
     }
 
-    uint32_t recoveryCount() const { return recoveryCount_; }
+    uint32_t recoveryCount() const { return core_.recoveryCount(); }
     uint8_t consecutiveTxFailures() const { return consecutiveTxFailures_; }
 
 private:
@@ -167,41 +163,21 @@ private:
     // consecutive failed sends, force a recover attempt.
     static constexpr uint8_t kMaxConsecutiveTxFailures = 5;
     static constexpr uint8_t kReadDrainBudget = 8;
-    static constexpr uint32_t BUSOFF_COOLDOWN_MS = 1000;
     static constexpr int kSecondaryControllerId = 1;
 
     bool isBusOffLocked()
     {
-        if (!driverInstalled_)
-            return false;
-        twai_status_info_t status;
-        if (twai_get_status_info_v2(handle_, &status) != ESP_OK)
-            return false;
-        return status.state == TWAI_STATE_BUS_OFF;
+        return core_.isBusOff();
     }
 
     void recoverWithCooldownLocked()
     {
-        uint32_t now = millis();
-        if (now - lastRecovery_ < BUSOFF_COOLDOWN_MS)
-            return;
-        lastRecovery_ = now;
-        recoveryCount_++;
-
-        stopAndUninstallLocked();
-        driverOK_ = installAndStartLocked();
+        core_.recoverWithCooldown();
     }
 
     void tryRecoverLocked()
     {
-        uint32_t now = millis();
-        if (now - lastRecovery_ < BUSOFF_COOLDOWN_MS * 10)
-            return;
-        lastRecovery_ = now;
-        recoveryCount_++;
-
-        stopAndUninstallLocked();
-        driverOK_ = installAndStartLocked();
+        core_.tryRecover();
     }
 
     void lock()
@@ -216,59 +192,27 @@ private:
             xSemaphoreGive(mutex_);
     }
 
-    bool installAndStartLocked()
-    {
-        esp_err_t err = twai_driver_install_v2(&g_config_, &t_config_, &f_config_, &handle_);
-        lastErr_ = err;
-        if (err != ESP_OK)
-        {
-            handle_ = nullptr;
-            driverInstalled_ = false;
-            return false;
-        }
-        driverInstalled_ = true;
-        err = twai_start_v2(handle_);
-        lastErr_ = err;
-        if (err != ESP_OK)
-        {
-            twai_driver_uninstall_v2(handle_);
-            handle_ = nullptr;
-            driverInstalled_ = false;
-            return false;
-        }
-        return true;
-    }
-
-    void stopAndUninstallLocked()
-    {
-        if (!driverInstalled_)
-            return;
-        twai_stop_v2(handle_);
-        twai_driver_uninstall_v2(handle_);
-        handle_ = nullptr;
-        driverInstalled_ = false;
-        driverOK_ = false;
-    }
-
 public:
 #if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
     // Experiment B (crash forensics round 7, 2026-11-03): NO_ACK
-    // self-reception flood — same purpose as TWAIDriver::benchSetMode,
-    // through the _v2 handle API this class mandates (see init(): the
-    // legacy no-handle calls always hit controller 0). exp_b only; the
-    // caller restores the original mode afterwards.
+    // self-reception flood — same purpose as TWAIDriver::benchSetMode, on
+    // this lane. The new API maps NO_ACK onto the node self-test flag;
+    // loopback (self-reception) is a node-level capability wired via
+    // core_.benchReinit for the round-9 jumper plan. exp_b only; the caller
+    // restores the original mode afterwards.
     bool benchSetMode(twai_mode_t m)
     {
+        // Round-9 finding: this silicon has no internal loopback MODE; the
+        // new API splits B1's NO_ACK+self-reception into two node flags.
+        // NO_ACK here = self-test (no ACK needed) + loopback (own frames
+        // self-received) so the flood really drives the ISR -> ring ->
+        // can_rt chain instead of transmitting into a void (rx=0).
         lock();
-        stopAndUninstallLocked();
-        twai_mode_t keep = g_config_.mode;
-        g_config_.mode = m;
-        bool ok = installAndStartLocked();
+        bool ok = core_.benchReinit(/*selfTest=*/m == TWAI_MODE_NO_ACK,
+                                    /*loopback=*/m == TWAI_MODE_NO_ACK);
         if (!ok)
-        {
-            g_config_.mode = keep;
-            installAndStartLocked(); // best-effort restore
-        }
+            core_.benchReinit(false, false); // best-effort restore
+        driverOK_ = core_.healthy();
         unlock();
         return ok;
     }
@@ -276,19 +220,9 @@ public:
     bool benchSendSelf(const CanFrame &f)
     {
         lock();
-        if (!driverOK_ || !handle_)
-        {
-            unlock();
-            return false;
-        }
-        twai_message_t msg = {};
-        msg.identifier = f.id;
-        msg.data_length_code = (f.dlc <= 8) ? f.dlc : 8;
-        memcpy(msg.data, f.data, msg.data_length_code);
-        msg.flags = TWAI_MSG_FLAG_SELF;
-        esp_err_t err = twai_transmit_v2(handle_, &msg, 0);
+        bool ok = driverOK_ && core_.send(f);
         unlock();
-        return err == ESP_OK;
+        return ok;
     }
 #endif
 
@@ -296,14 +230,16 @@ private:
     gpio_num_t txPin_;
     gpio_num_t rxPin_;
     // beta08: CAN C reuses this class as a listen-only third instance
-    // (controller 2, GPIO 26/27) — same mutex/_v2-handle shape, no TX path.
+    // (controller 2, GPIO 26/27) — same mutex/core shape, no TX path.
+    // controllerId_ is now only the bench-inject lane selector (see header
+    // comment): the node API binds free controllers at creation and boot
+    // construction order preserves the CanA/CanB/CanC mapping.
     int controllerId_;
-    twai_mode_t mode_;
 
 public:
     // Last esp_err from install/start — printed by the caller on init failure
     // so field logs carry the reason, not a bare "init failed".
-    esp_err_t lastError() const { return lastErr_; }
+    esp_err_t lastError() const { return core_.lastError(); }
 
     // beta08 listen-only third instance: receiver health for /status can3.
     // Called from the same task as read(), so no lock is taken here.
@@ -313,19 +249,12 @@ public:
     {
         if (!driverOK_)
             return false;
-        return twai_get_status_info_v2(handle_, &out) == ESP_OK;
+        return core_.statusInfo(out);
     }
 
 private:
-    esp_err_t lastErr_ = ESP_OK;
-    twai_handle_t handle_ = nullptr;
-    twai_general_config_t g_config_;
-    twai_timing_config_t t_config_;
-    twai_filter_config_t f_config_;
+    P4TwaiNodeCore core_;
     SemaphoreHandle_t mutex_ = nullptr;
-    bool driverInstalled_ = false;
     bool driverOK_ = false;
-    uint32_t lastRecovery_ = 0;
-    uint32_t recoveryCount_ = 0;
     uint8_t consecutiveTxFailures_ = 0;
 };

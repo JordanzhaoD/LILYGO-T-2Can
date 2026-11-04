@@ -993,7 +993,13 @@ static bool app_main_loop()
 #define APP_CAN_TASK_PRIORITY 18
 #endif
 #ifndef APP_CAN_TASK_CORE
+#if defined(DRIVER_P4_3CAN)
+// Albert-P4 mechanism port (2026-11-04): can_rt runs on core 1, away from
+// esp_hosted SDIO + lwIP on core 0 — the reference firmware's task layout.
+#define APP_CAN_TASK_CORE 1
+#else
 #define APP_CAN_TASK_CORE 0
+#endif
 #endif
 
 #if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
@@ -1105,6 +1111,21 @@ static bool app_start_can_task()
                                             APP_CAN_TASK_PRIORITY, &task, APP_CAN_TASK_CORE);
 #endif
     appCanTaskDedicated = ok == pdPASS;
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+    // Node-core RX rings notify can_rt directly (vTaskNotifyGiveFromISR);
+    // inject the handle now that the task exists — drivers initialize
+    // before the task starts, so the rings run consumer-less until here,
+    // which is safe (frames drop into the ring, notify is skipped).
+    if (ok == pdPASS)
+    {
+        if (appDriver)
+            static_cast<TWAIDriver *>(appDriver.get())->setRxConsumer(task);
+        if (appDriverSecondary)
+            appDriverSecondary->setRxConsumer(task);
+        if (appDriverTertiary)
+            appDriverTertiary->setRxConsumer(task);
+    }
+#endif
     return ok == pdPASS;
 }
 #endif
