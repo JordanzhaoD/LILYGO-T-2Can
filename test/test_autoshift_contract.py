@@ -238,8 +238,16 @@ class AutoshiftContractTests(unittest.TestCase):
             body = match.group(0)
             self.assertIn("= 0", body, "NVS default must be 0 (off)")
             self.assertIn("nvs_get_u8", body)
-        self.assertIn('nvs_set_u8(handle, "autoshift_master"', source)
-        self.assertIn('nvs_set_u8(handle, "autoshift_armed"', source)
+        self.assertIn('nvs_set_u8(handle, "as_master"', source)
+        self.assertIn('nvs_set_u8(handle, "as_armed"', source)
+        # ESP-IDF caps NVS keys at 15 chars (NVS_KEY_NAME_MAX_SIZE); a longer
+        # key fails nvs_set_u8 with INVALID_NAME — the bench caught exactly
+        # that on 2026-11-05: "autoshift_master" (16 chars) printed
+        # "NVS write failed" and never persisted.
+        for key in re.findall(r'nvs_[gs]et_u8\(handle, "([a-z0-9_]+)"', source):
+            self.assertLessEqual(
+                len(key), 15,
+                f"NVS key '{key}' exceeds the 15-char NVS limit")
 
     def test_tick_is_scheduled_in_can_task_loop(self):
         source = self.MAIN_SRC.read_text()

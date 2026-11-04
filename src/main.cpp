@@ -198,7 +198,7 @@ uint8_t t2canAutoshiftMasterGet(void)
     nvs_handle_t handle;
     if (nvs_open("t2can", NVS_READONLY, &handle) == ESP_OK)
     {
-        nvs_get_u8(handle, "autoshift_master", &stored);
+        nvs_get_u8(handle, "as_master", &stored);
         nvs_close(handle);
     }
     return stored;
@@ -209,7 +209,7 @@ bool t2canAutoshiftMasterSet(uint8_t v)
     nvs_handle_t handle;
     if (nvs_open("t2can", NVS_READWRITE, &handle) != ESP_OK)
         return false;
-    bool ok = nvs_set_u8(handle, "autoshift_master", v) == ESP_OK &&
+    bool ok = nvs_set_u8(handle, "as_master", v) == ESP_OK &&
               nvs_commit(handle) == ESP_OK;
     nvs_close(handle);
     return ok;
@@ -221,7 +221,7 @@ uint8_t t2canAutoshiftArmedGet(void)
     nvs_handle_t handle;
     if (nvs_open("t2can", NVS_READONLY, &handle) == ESP_OK)
     {
-        nvs_get_u8(handle, "autoshift_armed", &stored);
+        nvs_get_u8(handle, "as_armed", &stored);
         nvs_close(handle);
     }
     return stored;
@@ -232,7 +232,7 @@ bool t2canAutoshiftArmedSet(uint8_t v)
     nvs_handle_t handle;
     if (nvs_open("t2can", NVS_READWRITE, &handle) != ESP_OK)
         return false;
-    bool ok = nvs_set_u8(handle, "autoshift_armed", v) == ESP_OK &&
+    bool ok = nvs_set_u8(handle, "as_armed", v) == ESP_OK &&
               nvs_commit(handle) == ESP_OK;
     nvs_close(handle);
     return ok;
