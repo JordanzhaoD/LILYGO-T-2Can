@@ -1,0 +1,15 @@
+{"t": 1793771867.0, "kind": "reboot", "ok": true, "info": null}
+{"t": 1793771869.1, "kind": "serial-line", "line": "I (1710) app_init: ELF file SHA256:  0e079e570..."}
+{"t": 1793771957.9, "kind": "arm-start", "arm": "A-silent"}
+{"t": 1793772558.4, "kind": "arm-end", "arm": "A-silent"}
+{"t": 1793772558.4, "kind": "reboot", "ok": true, "info": null}
+{"t": 1793772560.5, "kind": "serial-line", "line": "I (1710) app_init: ELF file SHA256:  0e079e570..."}
+{"t": 1793772648.9, "kind": "arm-start", "arm": "B-status-1hz"}
+{"t": 1793772650.1, "kind": "poll", "ok": true, "info": null}
+{"t": 1793773249.0, "kind": "arm-end", "arm": "B-status-1hz"}
+{"t": 1793773249.0, "kind": "reboot", "ok": true, "info": null}
+{"t": 1793773251.1, "kind": "serial-line", "line": "I (1707) app_init: ELF file SHA256:  0e079e570..."}
+{"t": 1793773339.5, "kind": "arm-start", "arm": "C-system_status-1hz"}
+{"t": 1793773340.7, "kind": "poll", "ok": true, "info": null}
+{"t": 1793773940.6, "kind": "arm-end", "arm": "C-system_status-1hz"}
+{"t": 1793773940.6, "kind": "ring_status", "ok": true, "info": null, "body": "{\"enabled\":true,\"paused\":false,\"span_s\":0,\"fps\":{\"a\":0,\"b\":0,\"c\":0},\"lock\":{\"state\":\"idle\",\"remain_ms\":0,\"pre_ms\":0,\"post_ms\":0,\"bus_mask\":0},\"sessions_space_free\":9437184,\"seq\":0,\"resets\":[[3,0],[3,0],[3,0],[1,0],[4,0],[4,0],[3,0],[3,0]]}"}
