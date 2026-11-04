@@ -1,0 +1,6 @@
+== 60-minute three-bus idle soak (bus_enable=7, autoshift off) ==
+window: 2026-11-05 01:45 - 02:45 local, serial 115200 continuous
+SOAK DONE minutes=60.0 lines=177 marker_hits=0
+(all 177 lines are the known benign 'system_api: 0 mac type is incorrect' WiFi log noise;
+ no guru/abort/Backtrace/TCB TRIP/heap-guard/reset/WDT/watchpoint markers)
+mid-soak independent HTTP probe: http=200 in 27ms, uiBuildId e2e3688ea2de
