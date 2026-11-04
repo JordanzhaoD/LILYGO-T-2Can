@@ -210,7 +210,7 @@ inline int dashHgTcbEval(const DashHgTcbBase *base, uint32_t curNumber,
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "dash_pmp_trap.h"
+#include "dash_tcb_trap.h"
 
 // 取证结构体：.bss 落位，CAPTURE_DRAM coredump 直接捞到。绊网瞬间填好
 // 再 abort() —— 不依赖任何控制台输出（车内无监听者）。
@@ -339,18 +339,19 @@ inline void dashHgTcbAdopt(uint32_t handle, uint32_t number,
     b.nameB = nameB;
     b.stackBase = stackBase;
     dashHgTcbBaselineCount = dashHgTcbBaselineCount + 1;
-    // 实验 F（2026-11-04）：收养到 httpd 任务即武装 PMP 写陷阱——
+    // 实验 F（2026-11-04）：收养到 httpd 任务即武装硬件写陷阱——
     // 三次已证实 TCB 腐写全部落在该任务的 pxStackBase 字段。此后任何
-    // 对该字的 store 都会在写者自己的 PC 上 store access fault。
+    // 对该字的 store 都会在写者自己的 PC 上 breakpoint exception
+    // （trigger watchpoint，v2；v1 PMP 因 P4 启动全锁表项而判死）。
     // （httpd 从不删除/重建：TCB 地址终身有效，无回收误伤面。）
     if (b.nameA == 0x70747468u /* "httpd" */ && b.nameB == 0x00000064u)
     {
-        uint32_t f = dashHgPmpArm(b.handle, b.stackBase);
+        uint32_t f = dashHgTcbTrapArm(b.handle, b.stackBase);
         if (f)
-            Serial.printf("[heap_guard] PMP trap armed @0x%08x (entries 14/15)\n",
-                          (unsigned)f);
+            Serial.printf("[heap_guard] TCB write-trap armed @0x%08x (trigger slot %d, both harts)\n",
+                          (unsigned)f, DASH_TCB_TRAP_SLOT);
         else
-            Serial.println("[heap_guard] PMP trap NOT armed (offset check failed)");
+            Serial.println("[heap_guard] TCB write-trap NOT armed (offset or verify failed)");
     }
 }
 
