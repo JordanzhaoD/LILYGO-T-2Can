@@ -1,0 +1,95 @@
+# Experiment F — hardware TCB write-trap: PMP dead, trigger watchpoint live (2026-11-04)
+
+Follows `../exp-de-bisect-20261104/` (five bench arms, zero reproductions
+of the httpd TCB `pxStackBase` +0x84 rewrite). Decision: stop
+reproducing, trap the writer in hardware. Commits `ce13962` (v1, PMP),
+`06d26b1` (v2, trigger) + stamps; final bench firmware stamped
+`6.0.0-beta11-p4_3can-06d26b140832-2026-11-04T11:52:16Z`
+(sha256 `b8f1129c…15917`), OTA'd to board 2 and standing by armed.
+
+## v1: PMP TOR entries — killed by on-chip evidence
+
+Two locked TOR entries (14 bound, 15 = L|TOR|R, W denied) over
+[TCB+0x30, TCB+0x34), armed on both harts at guard adoption. First bench
+run: banner claimed armed, DIAG `pmp_trap_test` store **passed through
+unimpeded** (NO FAULT). CSR readback added and re-flashed; the numbers:
+
+```
+[heap_guard] PMP trap armed @0x4ff748a0 (entries 14/15)   <- our claim
+[pmp] verify pmpcfg3=0x80000000 pmpaddr14=0x13fdd220 pmpaddr15=0x22000000
+... 2.5s later (self-test moment) ...
+[pmp] pmpcfg0=0x9d9d9b9b pmpcfg1=0x808b8d80
+[pmp] pmpcfg2=0x8b808b8d pmpcfg3=0x80001d1d
+[pmp] pmpaddr14=0x13fdd220 pmpaddr15=0x22000000 mstatus=0x00010089
+```
+
+Reading:
+
+- **entry15**: we wrote cfg `0x89`, hardware kept `0x80` (L set, A=OFF,
+  R cleared) and `pmpaddr15=0x22000000` is not our value — the entry was
+  locked-empty at boot; L=1 entries reject even M-mode reconfiguration.
+- **entry0-11** (`0x9b/0x9d/0x8b/0x8d` bytes): all locked by IDF startup
+  memory-protection layout.
+- **entry12-14** (`0x1d` = NAPOT|R|W|X, no L): borrowed at runtime by
+  system code — entry14 read `0x00` right after arming and `0x1d` 2.5 s
+  later. Borrowing them would corrupt system behavior.
+- `pmpaddr14` also shows the P4 granularity: `0x4ff748a0>>2 = 0x13fdd228`
+  read back `0x13fdd220` — addresses quantize to 64 bytes, so a 4-byte
+  field cannot be fenced exactly even if an entry were free.
+
+Conclusion: zero usable PMP entries on a running P4 IDF system; v1 dead
+by evidence, kept in history (`ce13962`).
+
+## v2: trigger module watchpoint — live and verified end-to-end
+
+IDF's official `esp_cpu_set_watchpoint()` (esp_cpu.h; with no debugger
+attached it goes straight to `rv_utils_set_watchpoint`, which drives
+`tselect`/`tdata1`/`tdata2` + `tcontrol` MTE). P4 exposes
+`SOC_CPU_WATCHPOINTS_NUM = 3` per hart; production firmware uses none
+(the semihosting path only runs with a debugger). Slot 0, 4-byte NAPOT,
+store-only, armed on both harts at guard adoption, gated on a WARL
+readback (type==2, STORE and MACHINE bits kept, tdata2 = 4-byte NAPOT
+pattern) verifying on **both** harts before arming is claimed — v1's
+lesson (a CSR write accepted is not proof the trap is live) made law.
+
+Bench transcript (board 2, v2 intermediate build):
+
+```
+[heap_guard] TCB write-trap armed @0x4ff7489c (trigger slot 0, both harts)
+>> tcb_trap_test
+[tcb_trap] tdata1=0x210000ca tdata2=0x4ff7489d
+[tcb_trap] self-test store to 0x4ff7489c; breakpoint exception expected at this PC
+Guru Meditation Error: Core  0 panic'ed (Breakpoint). Exception was unhandled.
+MEPC    : 0x400243bc  RA      : 0x400243b2  SP      : 0x4ff45da0  GP      : 0x4ff32200
+Backtrace: 0x400243bc:0x4ff45da0 0x400244a2:0x4ff45f00 0x400303d4:0x4ff45f50 ...
+ELF file SHA256: af1733b9b
+rst:0xc (SW_CPU_RESET),boot:0x30f (SPI_FAST_FLASH_BOOT)
+```
+
+`MEPC 0x400243bc` falls inside `dashSerialRunCommand`
+(`0x4002303a + 0x13be`, the bench test is inlined there) — i.e. the
+exception fired **at the store's own PC**, before the store committed.
+Panic → coredump → clean reboot → trap re-armed. The instrument is
+precise: whatever writes that word next stops the CPU with the writer's
+PC in MEPC and lands in the coredump.
+
+`tdata1=0x210000ca`: type=2 (mcontrol), match=NAPOT, M|U enable,
+store-only, action=0 (breakpoint exception). `tdata2=0x4ff7489d` is the
+4-byte NAPOT encoding of `0x4ff7489c`.
+
+## Post-OTA freeze (one-off, resolved)
+
+After OTA'ing the final stamped build, the board's soft-reboot hung
+early (serial stops right after `app_init`, no watchdog reset, HTTP
+down for 60+ s; reproduced across two boots). An `esptool chip_id`
+nudge (which hard-resets via RTS) brought it straight up: armed banner
+at t+3.0 s, STA up, `uiBuildId …06d26b140832` confirmed. Firmware
+itself is fine on a clean boot. If a future OTA reboot hangs the same
+way, esptool nudge is the known unlock. (Not root-caused; candidate:
+early-boot state left by the panic/coredump + OTA restart sequence.)
+
+## Standing by
+
+Board 2 now runs the armed build idle-stable. Next trip on that word —
+bench, car, wherever — yields the writer's PC directly in the panic
+backtrace / coredump, no reproduction recipe needed.
