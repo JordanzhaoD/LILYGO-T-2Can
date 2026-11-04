@@ -265,14 +265,53 @@ class AutoshiftContractTests(unittest.TestCase):
         import re
 
         source = self.MAIN_SRC.read_text()
-        match = re.search(r"static void t2canAutoshiftApplyBusMode\(.*?\n\}",
+        match = re.search(r"static bool t2canAutoshiftApplyBusMode\(.*?\n\}",
                           source, re.DOTALL)
         self.assertIsNotNone(match, "t2canAutoshiftApplyBusMode not found")
         body = match.group(0)
         self.assertIn("TWAI_MODE_NORMAL", body)
         self.assertIn("TWAI_MODE_LISTEN_ONLY", body)
-        self.assertIn("setRxConsumer", body)
+        # the RX consumer re-bind lives in the extracted bind helper
+        self.assertIn("t2canAsBindTertiary()", body)
+        helper = re.search(r"static void t2canAsBindTertiary\(.*?\n\}",
+                           source, re.DOTALL)
+        self.assertIsNotNone(helper, "t2canAsBindTertiary not found")
+        self.assertIn("setRxConsumer", helper.group(0))
         self.assertIn("t2canAutoshiftModeDirty", source)
+
+    def test_apply_bus_mode_recovers_from_failed_reinit(self):
+        """Final-review fix: a failed TWAI2 re-init must not silence CanC
+        until reboot — apply reports success, falls back to LISTEN_ONLY
+        when a NORMAL init fails, and the tick keeps the dirty flag set so
+        a backoff-bounded retry continues."""
+        import re
+
+        source = self.MAIN_SRC.read_text()
+        match = re.search(r"static bool t2canAutoshiftApplyBusMode\(.*?\n\}",
+                          source, re.DOTALL)
+        self.assertIsNotNone(match, "apply-bus-mode body not found")
+        body = match.group(0)
+        self.assertIn("s_asModeRetryMs", body)   # backoff between retries
+        self.assertIn("5000", body)
+        self.assertIn("return false", body)      # failure reaches the tick
+        # LISTEN_ONLY fallback sits after the NORMAL attempt
+        self.assertLess(body.find("TWAI_MODE_NORMAL"),
+                        body.rfind("TWAI_MODE_LISTEN_ONLY"))
+        tick = re.search(r"static void t2canAutoshiftTick\(.*?\n\}",
+                         source, re.DOTALL)
+        self.assertIsNotNone(tick, "tick body not found")
+        self.assertIn("if (!t2canAutoshiftApplyBusMode())", tick.group(0))
+
+    def test_diag_master_off_clears_persisted_armed(self):
+        """Final-review fix: DIAG `autoshift_master 0` must clear the
+        persisted armed bit exactly like the web path — a stale NVS
+        armed=1 would let one command re-enable TX after a power cycle,
+        skipping the two-step ritual."""
+        source = self.DASH_HEADER.read_text()
+        start = source.find('strncmp(start, "autoshift_master"')
+        self.assertGreater(start, -1, "DIAG autoshift_master block not found")
+        window = source[start:start + 900]
+        self.assertIn("t2canAutoshiftArmedSet(0)", window)
 
     def test_status_json_carries_runtime_fields(self):
         import re

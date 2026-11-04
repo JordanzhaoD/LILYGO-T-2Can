@@ -7251,7 +7251,12 @@ static void dashSerialRunCommand(char *cmd)
                 Serial.println("usage: autoshift_master 0|1");
             else
             {
-                dashAsSetMaster(value != 0);
+                const bool on = value != 0;
+                dashAsSetMaster(on);
+                if (!on)
+                    t2canAutoshiftArmedSet(0);  // parity with the web path:
+                                                // stale NVS armed=1 would
+                                                // skip the ritual on reboot
                 if (!t2canAutoshiftMasterSet((uint8_t)(value != 0)))
                     Serial.println("[as] NVS write failed");
                 t2canAutoshiftModeDirty();

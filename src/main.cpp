@@ -339,29 +339,68 @@ static bool t2canAsCan3TxMode = false;  // TWAI2 currently in NORMAL mode?
 
 void t2canAutoshiftModeDirty(void) { t2canAsModeDirty = true; }
 
-static void t2canAutoshiftApplyBusMode()
+static void t2canAsBindTertiary()
 {
+    appDriverTertiary->setReceiveAllMode();
+    if (dashDriver)
+        appDriverTertiary->onSendFrame = dashDriver->onSendFrame;
+    appDriverTertiary->setRxConsumer(xTaskGetCurrentTaskHandle());
+}
+
+// Returns true when the lane is up in the desired mode. A failed re-init
+// must not silence CanC until reboot: the caller keeps the dirty flag set
+// and a backoff-bounded retry continues; when a NORMAL (armed) init fails
+// the observation lane is restored in LISTEN_ONLY — TX stays fail-closed
+// because t2canAsCan3TxMode only turns true on a clean NORMAL init.
+static bool t2canAutoshiftApplyBusMode()
+{
+    static uint32_t s_asModeRetryMs = 0;
     const bool wantTx = dashAsPermit.master && dashAsPermit.armed;
-    if (!appDriverTertiary || wantTx == t2canAsCan3TxMode)
-        return;
+    if (appDriverTertiary && wantTx == t2canAsCan3TxMode)
+        return true;
+    if (!appDriverTertiary)
+    {
+        const uint32_t now = (uint32_t)millis();
+        if (s_asModeRetryMs != 0 && now - s_asModeRetryMs < 5000)
+            return false;  // lane down — retry no faster than every 5s
+        s_asModeRetryMs = now ? now : 1;
+    }
     appDriverTertiary.reset();  // can_rt-owned: no concurrent drain
     appDriverTertiary = std::make_unique<P4TwaiSecondaryDriver>(
         GPIO_NUM_26, GPIO_NUM_27, 2,
         wantTx ? TWAI_MODE_NORMAL : TWAI_MODE_LISTEN_ONLY);
     if (!appDriverTertiary->init())
     {
-        Serial.printf("[AS] CanC re-init failed (err=0x%x) — lane down, gates fail closed\n",
-                      static_cast<int>(appDriverTertiary->lastError()));
-        appDriverTertiary.reset();
-        return;
+        Serial.printf("[AS] CanC re-init failed (err=0x%x) — %s\n",
+                      static_cast<int>(appDriverTertiary->lastError()),
+                      wantTx ? "falling back to LISTEN_ONLY" : "lane down, retrying");
+        if (wantTx)
+        {
+            // fallback: restore the observation lane; gates fail closed
+            appDriverTertiary.reset();
+            appDriverTertiary = std::make_unique<P4TwaiSecondaryDriver>(
+                GPIO_NUM_26, GPIO_NUM_27, 2, TWAI_MODE_LISTEN_ONLY);
+            if (appDriverTertiary->init())
+            {
+                t2canAsBindTertiary();
+                t2canAsCan3TxMode = false;
+            }
+            else
+            {
+                appDriverTertiary.reset();
+            }
+        }
+        else
+        {
+            appDriverTertiary.reset();
+        }
+        return false;  // dirty stays set — backoff retry continues
     }
-    appDriverTertiary->setReceiveAllMode();
-    if (dashDriver)
-        appDriverTertiary->onSendFrame = dashDriver->onSendFrame;
-    appDriverTertiary->setRxConsumer(xTaskGetCurrentTaskHandle());
+    t2canAsBindTertiary();
     t2canAsCan3TxMode = wantTx;
     Serial.printf("[AS] CanC now %s\n",
                   wantTx ? "NORMAL (autoshift armed)" : "LISTEN_ONLY");
+    return true;
 }
 
 static bool t2canAutoshiftSendCan3(const uint8_t d[4])
@@ -382,7 +421,8 @@ static void t2canAutoshiftTick()
     if (t2canAsModeDirty)
     {
         t2canAsModeDirty = false;
-        t2canAutoshiftApplyBusMode();
+        if (!t2canAutoshiftApplyBusMode())
+            t2canAsModeDirty = true;  // lane down — backoff retry via dirty
     }
     if (!dashAsPermit.master || !dashAsPermit.armed)
         return;

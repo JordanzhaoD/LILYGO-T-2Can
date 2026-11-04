@@ -63,7 +63,7 @@ struct DashAutoshiftProfile
     uint8_t t2BrakeByte;            // 0xFF = unknown -> brake undecodable
     uint8_t t2BrakeMask;            // applied when (d[b] & mask) != 0
     uint8_t t2SpeedByte;            // 0xFF = unknown -> speed undecodable
-    uint8_t t2SpeedScale;           // kph per LSB; 0 = unknown
+    uint8_t t2SpeedScaleH;          // hundredths of kph per LSB; 0 = unknown
     // 0x00E STW_ANGLHP_STAT map (Task 5): 16-bit big-endian at bytes 0-1
     int16_t angleScaleT10;          // deci-deg per LSB; 0 = unknown
     int16_t angleOffsetT10;         // deci-deg offset
@@ -104,7 +104,7 @@ static const DashAutoshiftProfile kAsProfile = {
     0xFF,   // t2BrakeByte     [sentinel: Task 2]
     0x00,   // t2BrakeMask     [sentinel: Task 2]
     0xFF,   // t2SpeedByte     [sentinel: Task 2]
-    0,      // t2SpeedScale    [sentinel: Task 2]
+    0,      // t2SpeedScaleH   [sentinel: Task 2]
     0,      // angleScaleT10   [sentinel: Task 2]
     0,      // angleOffsetT10  [sentinel: Task 2]
     500,    // obstacleFreshMs (suite ~8-12Hz; policy default)
@@ -162,6 +162,10 @@ inline bool dashAsSbwCompose(const uint8_t src[4], uint32_t srcAgeMs,
     }
     if (srcAgeMs > dashAsProfile.sbwSrcFreshMs) {
         return false;
+    }
+    if (dashAsProfile.stalkB0[gear] == 0xFF
+        || dashAsProfile.stalkB1[gear] == 0xFF) {
+        return false;  // unfrozen stalk table — never TX sentinel bytes
     }
     out[0] = dashAsProfile.stalkB0[gear];
     out[1] = dashAsProfile.stalkB1[gear];
@@ -411,9 +415,12 @@ inline void dashAsOnTorque2(const uint8_t d[8], uint32_t nowMs)
         s.brake = (d[dashAsProfile.t2BrakeByte]
                    & dashAsProfile.t2BrakeMask) != 0 ? 1 : 0;
     }
-    if (dashAsProfile.t2SpeedByte < 8 && dashAsProfile.t2SpeedScale != 0) {
-        const uint32_t kph = static_cast<uint32_t>(
-            d[dashAsProfile.t2SpeedByte]) * dashAsProfile.t2SpeedScale;
+    if (dashAsProfile.t2SpeedByte < 8 && dashAsProfile.t2SpeedScaleH != 0) {
+        // hundredths of kph per LSB: the Tesla vehicle-speed signal is
+        // sub-unit (~0.07 kph/bit), which an integer scale cannot express
+        const uint32_t ch = static_cast<uint32_t>(
+            d[dashAsProfile.t2SpeedByte]) * dashAsProfile.t2SpeedScaleH;
+        const uint32_t kph = (ch + 50) / 100;  // round to nearest
         s.speedKph = kph < 255 ? static_cast<uint8_t>(kph) : 255;
     }
     if (dashAsGateState.pendingTargetDi != 0) {
@@ -614,6 +621,16 @@ struct DashAsPermit
 
 inline DashAsPermit dashAsPermit = {};
 
+// Invalidate latched trigger state on every permit transition: a scroll
+// gesture recorded while disarmed (or a steering angle already past the
+// threshold at arm time) must never fire on the first armed poll — the
+// driver re-earns the trigger by making a fresh gesture/edge.
+inline void dashAsInvalidateTriggers()
+{
+    dashAsSensor.pending = DashAsTrigger{};
+    dashAsSensor.steerArmed = false;  // require a fresh edge after (re)arm
+}
+
 inline DashAsArmResult dashAsArmRequest(uint32_t nowMs)
 {
     if (!dashAsPermit.master) {
@@ -627,6 +644,7 @@ inline DashAsArmResult dashAsArmRequest(uint32_t nowMs)
         if (elapsed >= 1 && elapsed <= kAsArmWindowMs) {
             dashAsPermit.armed = true;
             dashAsPermit.armPendingSinceMs = 0;
+            dashAsInvalidateTriggers();
             return kAsArmEnabled;
         }
         if (elapsed > kAsArmWindowMs) {
@@ -644,6 +662,7 @@ inline void dashAsDisarm()
     dashAsPermit.armed = false;
     dashAsPermit.armPendingSinceMs = 0;
     dashAsGateReset();  // no in-flight request survives a disarm
+    dashAsInvalidateTriggers();  // no latched gesture survives it either
 }
 
 inline void dashAsSetMaster(bool on)

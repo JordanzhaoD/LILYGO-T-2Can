@@ -30,6 +30,19 @@ static const struct { uint8_t counterByte; uint8_t crc; } kPinned[16] = {
     {0xC0, 0x87}, {0xD0, 0x4A}, {0xE0, 0x00}, {0xF0, 0xCD},
 };
 
+// RAII: simulate the Task-2 freeze by mutating the runtime profile copy,
+// then restore profile + sensor + gate state on scope exit.
+struct ProfileGuard {
+    DashAutoshiftProfile saved;
+    ProfileGuard() : saved(dashAsProfile) {}
+    ~ProfileGuard()
+    {
+        dashAsProfile = saved;
+        dashAsSensor = DashAsSensor{};
+        dashAsGateReset();
+    }
+};
+
 int main()
 {
     // --- CRC8 J1850 against all 16 pinned vehicle vectors ---
@@ -39,30 +52,41 @@ int main()
     }
 
     // --- compose: pair write, counter +1, low nibble kept, crc recompute ---
-    uint8_t out[4];
-    const uint8_t src[4] = {0x40, 0xC0, 0x35, 0x00};  // counter 3, lo nibble 5
-    CHECK(dashAsSbwCompose(src, 0, kAsGearD, out));
-    CHECK(out[0] == kAsProfile.stalkB0[kAsGearD]);
-    CHECK(out[1] == kAsProfile.stalkB1[kAsGearD]);
-    CHECK(((out[2] >> 4) & 0x0F) == 0x04);            // 3 + 1
-    CHECK((out[2] & 0x0F) == 0x05);                   // preserved
-    CHECK(out[3] == dashAsCrc8J1850(out, 3));
+    // (simulate a frozen stalk pair — the sentinel 0xFF table refuses)
+    {
+        ProfileGuard g;
+        for (int i = 0; i < kAsGearCount; ++i) {
+            dashAsProfile.stalkB0[i] = 0x40 + static_cast<uint8_t>(i) * 0x10;
+            dashAsProfile.stalkB1[i] = 0xC0;
+        }
+        uint8_t out[4];
+        const uint8_t src[4] = {0x40, 0xC0, 0x35, 0x00};  // counter 3, lo 5
+        CHECK(dashAsSbwCompose(src, 0, kAsGearD, out));
+        CHECK(out[0] == 0x70);  // frozen pair for gear D: 0x40 + 3*0x10
+        CHECK(out[1] == 0xC0);
+        CHECK(((out[2] >> 4) & 0x0F) == 0x04);            // 3 + 1
+        CHECK((out[2] & 0x0F) == 0x05);                   // preserved
+        CHECK(out[3] == dashAsCrc8J1850(out, 3));
 
-    // --- compose: counter wraps 0xF -> 0x0 ---
-    const uint8_t wrapSrc[4] = {0x40, 0xC0, 0xF5, 0x00};
-    CHECK(dashAsSbwCompose(wrapSrc, 0, kAsGearP, out));
-    CHECK(((out[2] >> 4) & 0x0F) == 0x00);
-    CHECK((out[2] & 0x0F) == 0x05);
-    CHECK(out[3] == dashAsCrc8J1850(out, 3));
+        // --- compose: counter wraps 0xF -> 0x0 ---
+        const uint8_t wrapSrc[4] = {0x40, 0xC0, 0xF5, 0x00};
+        CHECK(dashAsSbwCompose(wrapSrc, 0, kAsGearP, out));
+        CHECK(((out[2] >> 4) & 0x0F) == 0x00);
+        CHECK((out[2] & 0x0F) == 0x05);
+        CHECK(out[3] == dashAsCrc8J1850(out, 3));
 
-    // --- freshness budget: age == budget passes, age > budget refuses ---
-    CHECK(dashAsSbwCompose(src, kAsProfile.sbwSrcFreshMs, kAsGearD, out));
-    CHECK(!dashAsSbwCompose(src, kAsProfile.sbwSrcFreshMs + 1, kAsGearD, out));
-    CHECK(!dashAsSbwCompose(src, 0xFFFFFFFFu, kAsGearD, out));
-
-    // --- invalid gear index refuses ---
-    CHECK(!dashAsSbwCompose(src, 0, 0xFF, out));
-    CHECK(!dashAsSbwCompose(src, 0, kAsGearCount, out));
+        // --- freshness budget: age == budget passes, age > budget refuses ---
+        CHECK(dashAsSbwCompose(src, kAsProfile.sbwSrcFreshMs, kAsGearD, out));
+        CHECK(!dashAsSbwCompose(src, kAsProfile.sbwSrcFreshMs + 1,
+                                kAsGearD, out));
+        CHECK(!dashAsSbwCompose(src, 0, kAsGearCount, out));  // bad index
+    }
+    // sentinel stalk table (unfrozen profile) must refuse even fresh input
+    {
+        uint8_t out4[4] = {0, 0, 0, 0};
+        const uint8_t src4[4] = {0x40, 0xC0, 0x35, 0x00};
+        CHECK(!dashAsSbwCompose(src4, 0, kAsGearD, out4));
+    }
 
     // --- sentinel: profile is UNFROZEN until the Task-2 field session ---
     for (int i = 0; i < kAsGearCount; ++i) {
@@ -206,26 +230,13 @@ int main()
     }
 
     // ================= Task 5: decoders + triggers =================
-    // Field maps are sentinel until the Task-2 freeze; tests simulate the
-    // freeze by mutating the runtime profile copy, then restore everything.
-    struct ProfileGuard {
-        DashAutoshiftProfile saved;
-        ProfileGuard() : saved(dashAsProfile) {}
-        ~ProfileGuard()
-        {
-            dashAsProfile = saved;
-            dashAsSensor = DashAsSensor{};
-            dashAsGateReset();
-        }
-    };
-
     // --- 0x118 decode with the simulated freeze (gear hardcoded b3>>4) ---
     {
         ProfileGuard g;
         dashAsProfile.t2BrakeByte = 6;
         dashAsProfile.t2BrakeMask = 0x20;
         dashAsProfile.t2SpeedByte = 0;
-        dashAsProfile.t2SpeedScale = 1;
+        dashAsProfile.t2SpeedScaleH = 100;  // 1.00 kph/bit
         const uint8_t d[8] = {3, 0, 0, 0x40, 0, 0, 0x20, 0};  // D, brake, 3kph
         dashAsOnTorque2(d, 1000);
         CHECK(dashAsSensor.gearNow == 4);
@@ -452,6 +463,9 @@ int main()
     // --- 0x228 source snapshot feeds the composer ---
     {
         ProfileGuard g;
+        // freeze the D pair so the sentinel guard admits composition
+        dashAsProfile.stalkB0[kAsGearD] = 0x40;
+        dashAsProfile.stalkB1[kAsGearD] = 0xC0;
         const uint8_t idle[4] = {0x40, 0xC0, 0x30, 0x00};
         CHECK(!dashAsSbwSource.seen);
         dashAsOnSbw0228(idle, 1000);
@@ -502,6 +516,79 @@ int main()
         CHECK(dashAsGearToDi(kAsGearR) == 2 && dashAsGearToDi(kAsGearN) == 3);
         CHECK(dashAsGearToDi(kAsGearD) == 4);
         CHECK(dashAsGearToDi(kAsGearCount) == 0xFF);
+    }
+
+    // --- final review: arm/disarm invalidates latched triggers ---
+    {
+        ProfileGuard g;
+        dashAsPermit = DashAsPermit{};
+        dashAsSetMaster(true);
+        dashAsProfile.w45SideByte = 3;
+        dashAsProfile.w45SideL = 0x10;   // left
+        dashAsProfile.w45SideR = 0x20;   // right
+        dashAsProfile.w45DirByte = 4;
+        dashAsProfile.w45DirPos = 0x40;
+        dashAsProfile.w45DirNeg = 0xC0;
+        // gear P so the steering path gets a park threshold (gearNow==0
+        // maps to threshold 0 and steering never fires)
+        const uint8_t t2p[8] = {0, 0, 0, 0x10, 0, 0, 0, 0};
+        dashAsOnTorque2(t2p, 500);
+        const uint8_t lpos[8] = {0, 0, 0, 0x10, 0x40, 0, 0, 0};
+        dashAsOnWheel045(lpos, 1000);    // gesture while DISARMED
+        CHECK(dashAsSensor.pending.type == kAsTrigScroll);
+        CHECK(dashAsArmRequest(2000) == kAsArmOpened);
+        CHECK(dashAsArmRequest(2100) == kAsArmEnabled);
+        // stale gesture must NOT fire on the first armed poll
+        CHECK(dashAsPollTrigger(2200).type == kAsTrigNone);
+        // disarm also invalidates a fresh gesture
+        dashAsOnWheel045(lpos, 2000 + dashAsProfile.scrollEpisodeGapMs + 100);
+        CHECK(dashAsSensor.pending.type == kAsTrigScroll);
+        dashAsDisarm();
+        CHECK(dashAsPollTrigger(2300).type == kAsTrigNone);
+        // steering: past-threshold angle at arm time must not fire; the
+        // one-shot re-arms only after returning inside threshold-margin
+        dashAsProfile.angleScaleT10 = 10;   // 1.0 deg/LSB
+        dashAsProfile.angleOffsetT10 = 0;
+        const uint8_t ang40[8] = {0x00, 40, 0, 0x10, 0, 0, 0, 0};
+        dashAsOnAngle00E(ang40, 3000);      // +40 deg, past the 30 deg gate
+        CHECK(dashAsArmRequest(3100) == kAsArmOpened);
+        CHECK(dashAsArmRequest(3200) == kAsArmEnabled);
+        CHECK(dashAsPollTrigger(3300).type == kAsTrigNone);
+        const uint8_t ang0[8] = {0x00, 0, 0, 0x10, 0, 0, 0, 0};
+        dashAsOnAngle00E(ang0, 3400);       // return inside margin
+        CHECK(dashAsPollTrigger(3500).type == kAsTrigNone);
+        dashAsOnAngle00E(ang40, 3600);      // fresh crossing
+        CHECK(dashAsPollTrigger(3700).type == kAsTrigSteer);
+    }
+
+    // --- final review: composer refuses sentinel stalk bytes ---
+    {
+        ProfileGuard g;
+        dashAsProfile.stalkB0[kAsGearD] = 0xFF;  // partial freeze: no table
+        dashAsProfile.stalkB1[kAsGearD] = 0xFF;
+        const uint8_t src[4] = {0x40, 0xC0, 0x30, 0x00};
+        uint8_t out[4] = {0, 0, 0, 0};
+        CHECK(dashAsSbwCompose(src, 0, kAsGearD, out) == false);
+        dashAsProfile.stalkB0[kAsGearD] = 0x50;  // frozen pair composes
+        dashAsProfile.stalkB1[kAsGearD] = 0xC0;
+        CHECK(dashAsSbwCompose(src, 0, kAsGearD, out) == true);
+        CHECK(out[0] == 0x50);
+    }
+
+    // --- final review: speed scale carries hundredths of kph per LSB ---
+    {
+        ProfileGuard g;
+        dashAsProfile.t2SpeedByte = 6;
+        dashAsProfile.t2SpeedScaleH = 7;         // 0.07 kph/bit
+        const uint8_t d41[8] = {0, 0, 0, 0x40, 0, 0, 41, 0};
+        dashAsOnTorque2(d41, 1000);
+        CHECK(dashAsSensor.speedKph == 3);       // 2.87 rounds to 3
+        const uint8_t d255[8] = {0, 0, 0, 0x40, 0, 0, 255, 0};
+        dashAsOnTorque2(d255, 1100);
+        CHECK(dashAsSensor.speedKph == 18);      // 17.85 rounds to 18
+        dashAsProfile.t2SpeedScaleH = 150;       // 1.5 kph/bit saturates
+        dashAsOnTorque2(d255, 1200);
+        CHECK(dashAsSensor.speedKph == 255);
     }
 
     if (g_fail == 0) {
