@@ -6691,6 +6691,7 @@ static void dashSerialPrintHelp()
 #if defined(DASH_HEAP_GUARD_V2)
     Serial.println("  heap_guard_status  print tripwire slot/forensic state (bench)");
     Serial.println("  heap_guard_test <static|heap|tcb>  deliberately trip the guard (bench verify)");
+    Serial.println("  pmp_trap_test  store the PMP-trapped word; fault at own PC (bench verify)");
 #endif
     Serial.println();
 }
@@ -7115,6 +7116,13 @@ static void dashSerialRunCommand(char *cmd)
         }
         else
             Serial.println("usage: heap_guard_test static|heap|tcb");
+    }
+    else if (strncmp(start, "pmp_trap_test", 13) == 0)
+    {
+        // Experiment F (crash forensics, 2026-11-04): deliberate store into
+        // the PMP-trapped word — must store-fault at THIS handler's own PC,
+        // proving the hardware trap armed AND precise. BENCH ONLY.
+        dashHgPmpBenchTest();
     }
 #endif
     else if (*start)
