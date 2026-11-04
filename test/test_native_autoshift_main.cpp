@@ -205,6 +205,218 @@ int main()
         CHECK(dashAsGateEval(kNow + 3001, okInputs()) == AS_SUBMIT);
     }
 
+    // ================= Task 5: decoders + triggers =================
+    // Field maps are sentinel until the Task-2 freeze; tests simulate the
+    // freeze by mutating the runtime profile copy, then restore everything.
+    struct ProfileGuard {
+        DashAutoshiftProfile saved;
+        ProfileGuard() : saved(dashAsProfile) {}
+        ~ProfileGuard()
+        {
+            dashAsProfile = saved;
+            dashAsSensor = DashAsSensor{};
+            dashAsGateReset();
+        }
+    };
+
+    // --- 0x118 decode with the simulated freeze (gear hardcoded b3>>4) ---
+    {
+        ProfileGuard g;
+        dashAsProfile.t2BrakeByte = 6;
+        dashAsProfile.t2BrakeMask = 0x20;
+        dashAsProfile.t2SpeedByte = 0;
+        dashAsProfile.t2SpeedScale = 1;
+        const uint8_t d[8] = {3, 0, 0, 0x40, 0, 0, 0x20, 0};  // D, brake, 3kph
+        dashAsOnTorque2(d, 1000);
+        CHECK(dashAsSensor.gearNow == 4);
+        CHECK(dashAsSensor.brake == 1);
+        CHECK(dashAsSensor.speedKph == 3);
+        CHECK(dashAsTorque2Fresh(1000));
+        CHECK(!dashAsTorque2Fresh(1000 + dashAsProfile.t2FreshMs + 1));
+        const uint8_t nobrake[8] = {0, 0, 0, 0x10, 0, 0, 0x00, 0};
+        dashAsOnTorque2(nobrake, 2000);
+        CHECK(dashAsSensor.brake == 0);
+        CHECK(dashAsSensor.speedKph == 0);
+    }
+    // --- 0x118 sentinel map: freshness + gear still live, fields unknown ---
+    {
+        ProfileGuard g;
+        const uint8_t d[8] = {5, 0, 0, 0x10, 0, 0, 0xFF, 0};
+        dashAsOnTorque2(d, 1000);
+        CHECK(dashAsSensor.gearNow == 1);
+        CHECK(dashAsSensor.brake == 0xFF);  // unknown, NOT "released"
+        CHECK(dashAsSensor.speedKph == 0xFF);
+        CHECK(dashAsTorque2Fresh(1000));
+    }
+    // --- close loop rides the decoder: confirm on the next 0x118 ---
+    {
+        ProfileGuard g;
+        CHECK(dashAsSubmit(4, 1000));
+        const uint8_t d[8] = {0, 0, 0, 0x40, 0, 0, 0, 0};
+        dashAsOnTorque2(d, 1200);
+        CHECK(dashAsSensor.lastConfirm == AS_CONFIRM_COMPLETE);
+        CHECK(dashAsGateState.pendingTargetDi == 0);
+    }
+
+    // --- 0x00E angle decode + steering trigger (simulated freeze) ---
+    {
+        ProfileGuard g;
+        dashAsProfile.angleScaleT10 = 10;   // 1.0 deg/LSB
+        dashAsProfile.angleOffsetT10 = 0;
+        const uint8_t level[8] = {0x00, 0x00, 0, 0, 0, 0, 0, 0};
+        const uint8_t p25[8] = {0x00, 0x19, 0, 0, 0, 0, 0, 0};   // +25.0
+        const uint8_t p35[8] = {0x00, 0x23, 0, 0, 0, 0, 0, 0};   // +35.0
+        const uint8_t n35[8] = {0xFF, 0xDD, 0, 0, 0, 0, 0, 0};   // -35.0
+        const uint8_t back[8] = {0x00, 0x0A, 0, 0, 0, 0, 0, 0};  // +10.0
+        // park (gear 1), steering crossing 30 deg
+        const uint8_t park[8] = {0, 0, 0, 0x10, 0, 0, 0, 0};
+        dashAsOnTorque2(park, 1000);
+        dashAsOnAngle00E(level, 1100);
+        DashAsTrigger t = dashAsPollTrigger(1200);
+        CHECK(t.type == kAsTrigNone);
+        dashAsOnAngle00E(p25, 1300);         // below threshold
+        t = dashAsPollTrigger(1400);
+        CHECK(t.type == kAsTrigNone);
+        dashAsOnAngle00E(p35, 1500);         // crosses +30
+        t = dashAsPollTrigger(1600);
+        CHECK(t.type == kAsTrigSteer);
+        CHECK(t.dir > 0);
+        CHECK(t.gear == kAsGearD);           // P + steer+ -> D
+        t = dashAsPollTrigger(1700);         // one-shot
+        CHECK(t.type == kAsTrigNone);
+        dashAsOnAngle00E(back, 1800);        // re-arm zone
+        (void)dashAsPollTrigger(1900);
+        dashAsOnAngle00E(n35, 2000);         // crosses -30
+        t = dashAsPollTrigger(2100);
+        CHECK(t.type == kAsTrigSteer);
+        CHECK(t.dir < 0);
+        CHECK(t.gear == kAsGearR);           // P + steer- -> R
+    }
+    // --- steering in D/R toggles at the higher threshold ---
+    {
+        ProfileGuard g;
+        dashAsProfile.angleScaleT10 = 10;
+        const uint8_t drive[8] = {0, 0, 0, 0x40, 0, 0, 0, 0};   // gear D
+        const uint8_t p35[8] = {0x00, 0x23, 0, 0, 0, 0, 0, 0};
+        const uint8_t p65[8] = {0x00, 0x41, 0, 0, 0, 0, 0, 0};
+        const uint8_t back[8] = {0x00, 0x0A, 0, 0, 0, 0, 0, 0};
+        dashAsOnTorque2(drive, 1000);
+        dashAsOnAngle00E(p35, 1100);         // 35 < 60 in D: nothing
+        DashAsTrigger t = dashAsPollTrigger(1200);
+        CHECK(t.type == kAsTrigNone);
+        dashAsOnAngle00E(p65, 1300);         // 65 >= 60
+        t = dashAsPollTrigger(1400);
+        CHECK(t.type == kAsTrigSteer);
+        CHECK(t.gear == kAsGearR);           // D -> R toggle
+        dashAsOnAngle00E(back, 1500);
+        (void)dashAsPollTrigger(1600);
+        // now in R (feed gear 2), +65 again -> back to D
+        const uint8_t rev[8] = {0, 0, 0, 0x20, 0, 0, 0, 0};
+        dashAsOnTorque2(rev, 1700);
+        dashAsOnAngle00E(p65, 1800);
+        t = dashAsPollTrigger(1900);
+        CHECK(t.type == kAsTrigSteer);
+        CHECK(t.gear == kAsGearD);
+    }
+    // --- angle map unfrozen: no steering trigger ever ---
+    {
+        ProfileGuard g;  // angleScaleT10 stays 0
+        const uint8_t park[8] = {0, 0, 0, 0x10, 0, 0, 0, 0};
+        const uint8_t big[8] = {0x01, 0x00, 0, 0, 0, 0, 0, 0};
+        dashAsOnTorque2(park, 1000);
+        dashAsOnAngle00E(big, 1100);
+        CHECK(dashAsSensor.angleDegT10 == 0x7FFF);  // invalid
+        CHECK(dashAsPollTrigger(1200).type == kAsTrigNone);
+    }
+
+    // --- scroll episode: 3 motion frames = exactly ONE trigger ---
+    {
+        ProfileGuard g;
+        dashAsProfile.w45SideByte = 3;
+        dashAsProfile.w45SideL = 0x10;   // left
+        dashAsProfile.w45SideR = 0x20;   // right
+        dashAsProfile.w45DirByte = 4;
+        dashAsProfile.w45DirPos = 0x40;
+        dashAsProfile.w45DirNeg = 0xC0;
+        const uint8_t park[8] = {0, 0, 0, 0x10, 0, 0, 0, 0};
+        dashAsOnTorque2(park, 1000);
+        const uint8_t lpos[8] = {0, 0, 0, 0x10, 0x40, 0, 0, 0};
+        dashAsOnWheel045(lpos, 2000);    // episode start
+        dashAsOnWheel045(lpos, 2010);
+        dashAsOnWheel045(lpos, 2020);
+        DashAsTrigger t = dashAsPollTrigger(2030);
+        CHECK(t.type == kAsTrigScroll);
+        CHECK(t.side == 0);              // left
+        CHECK(t.dir > 0);
+        CHECK(t.gear == kAsGearD);       // left+ = D
+        CHECK(dashAsPollTrigger(2040).type == kAsTrigNone);  // consumed
+        // still inside the episode window: no new trigger
+        dashAsOnWheel045(lpos, 2030);
+        CHECK(dashAsPollTrigger(2040).type == kAsTrigNone);
+        // after the episode gap: a new gesture fires again
+        dashAsOnWheel045(lpos, 2000 + dashAsProfile.scrollEpisodeGapMs + 100);
+        t = dashAsPollTrigger(2300);
+        CHECK(t.type == kAsTrigScroll);
+        // left- = R
+        const uint8_t lneg[8] = {0, 0, 0, 0x10, 0xC0, 0, 0, 0};
+        dashAsOnWheel045(lneg, 3000);
+        t = dashAsPollTrigger(3010);
+        CHECK(t.type == kAsTrigScroll);
+        CHECK(t.dir < 0);
+        CHECK(t.gear == kAsGearR);
+        // right+ = P button, right- = D/R toggle (in P -> D)
+        const uint8_t rpos[8] = {0, 0, 0, 0x20, 0x40, 0, 0, 0};
+        dashAsOnWheel045(rpos, 4000);
+        t = dashAsPollTrigger(4010);
+        CHECK(t.gear == kAsGearPBtn);
+        const uint8_t rneg[8] = {0, 0, 0, 0x20, 0xC0, 0, 0, 0};
+        dashAsOnWheel045(rneg, 5000);
+        t = dashAsPollTrigger(5010);
+        CHECK(t.gear == kAsGearD);       // toggle from P -> D
+    }
+    // --- wheel map unfrozen: scrolls never trigger ---
+    {
+        ProfileGuard g;  // w45* stay 0xFF sentinel
+        const uint8_t lpos[8] = {0, 0, 0, 0x10, 0x40, 0, 0, 0};
+        dashAsOnWheel045(lpos, 1000);
+        CHECK(dashAsPollTrigger(1100).type == kAsTrigNone);
+    }
+
+    // --- obstacle: fresh AND clear, fail-closed when absent/blocked ---
+    {
+        ProfileGuard g;
+        dashAsProfile.oocBlockByte = 0;
+        dashAsProfile.oocBlockMask = 0x01;
+        dashAsProfile.sdiBlockByte = 0;
+        dashAsProfile.sdiBlockMask = 0x01;
+        const uint8_t clear8[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        const uint8_t blocked[8] = {1, 0, 0, 0, 0, 0, 0, 0};
+        // nothing seen yet: NOT clear (absent telemetry is not clear)
+        CHECK(!dashAsObstacleFreshAndClear(1000));
+        dashAsOnObstacle(0x23E, clear8, 1000);   // ooc clear
+        CHECK(!dashAsObstacleFreshAndClear(1000));  // sdi still absent
+        dashAsOnObstacle(0x20E, clear8, 1010);   // sdi clear
+        CHECK(dashAsObstacleFreshAndClear(1020));
+        // blocked bit set on either frame -> blocked (keep ooc fresh so
+        // the block, not staleness, is what fails the check)
+        dashAsOnObstacle(0x23E, clear8, 1995);
+        dashAsOnObstacle(0x20E, blocked, 2000);
+        CHECK(!dashAsObstacleFreshAndClear(2010));
+        dashAsOnObstacle(0x23E, clear8, 2995);
+        dashAsOnObstacle(0x20E, clear8, 3000);
+        CHECK(dashAsObstacleFreshAndClear(3010));
+        dashAsOnObstacle(0x20E, clear8, 3095);
+        dashAsOnObstacle(0x23E, blocked, 3100);  // ooc blocked
+        CHECK(!dashAsObstacleFreshAndClear(3110));
+        // both fresh stamps go stale
+        CHECK(!dashAsObstacleFreshAndClear(
+            3100 + dashAsProfile.obstacleFreshMs + 1));
+        // unrelated id ignored: 0x22E (CanB-only sdiRear) fed CLEAR data
+        // must not clear the blocked state recorded at 3100
+        dashAsOnObstacle(0x22E, clear8, 3200);
+        CHECK(!dashAsObstacleFreshAndClear(3210));
+    }
+
     if (g_fail == 0) {
         std::printf("native autoshift: ALL PASS\n");
     }

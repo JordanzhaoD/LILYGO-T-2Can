@@ -53,6 +53,10 @@
 // Recorder v2 (P4-only blackbox ring): self-guarded header, compiles away
 // on every other board.
 #include "web/dash_recorder_v2.h"
+// Auto-shift engine core (P4-only): self-guarded header.
+#if defined(DRIVER_P4_3CAN)
+#include "dash_autoshift.h"
+#endif
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
 #if defined(DASH_PLUGIN_ENGINE)
@@ -1124,6 +1128,15 @@ static void mcpDashSniffCan3(const CanFrame &f)
 #if defined(DASH_RECORDER_V2)
     dashRecV2Submit(tagged, kRecV2BusC, 'R');
 #endif
+#if defined(DRIVER_P4_3CAN)
+    // Auto-shift sensors on the PT bus: steering angle 0x00E and the
+    // obstacle pair 0x23E/0x20E (blocker-only posture; 0x22E sdiRear is
+    // CanB-only and accepted absent per Jordan's 2026-11-05 decision).
+    if (tagged.id == 0x00E && tagged.dlc >= 2)
+        dashAsOnAngle00E(tagged.data, millis());
+    else if ((tagged.id == 0x23E || tagged.id == 0x20E) && tagged.dlc >= 1)
+        dashAsOnObstacle(tagged.id, tagged.data, millis());
+#endif
 }
 
 #define LOG_CAP 80
@@ -1234,6 +1247,17 @@ static void mcpDashOnFrame(const CanFrame &f)
              f.bus == CAN_BUS_PARTY)
         dashLegacyWheel045DndCtrl.observeGatewayMirror(f.data, f.dlc,
                                                        static_cast<uint32_t>(now));
+#if defined(DRIVER_P4_3CAN)
+    // Auto-shift sensors on the vehicle bus (CanA): DI_torque2 0x118 gates
+    // + close loop, STW_ACTN_RQ 0x045 scroll episodes. VEH-only, never the
+    // PARTY mirror.
+    if (f.id == 0x118 && f.dlc >= 8 &&
+        (f.bus == CAN_BUS_CH || f.bus == CAN_BUS_VEH))
+        dashAsOnTorque2(f.data, static_cast<uint32_t>(now));
+    else if (f.id == 0x045 && f.dlc >= 8 &&
+             (f.bus == CAN_BUS_CH || f.bus == CAN_BUS_VEH))
+        dashAsOnWheel045(f.data, static_cast<uint32_t>(now));
+#endif
     // v1.19 JITTER procedure: raw 0x045 stream feeds the carrier-lock cache
     // (the pump only transmits riding behind a <47 ms old native frame).
     // VEH-only: PARTY mirrors of this bus must not refresh the cache, and

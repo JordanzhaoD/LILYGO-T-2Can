@@ -105,6 +105,49 @@ class AutoshiftContractTests(unittest.TestCase):
                       "AS_CONFIRM_ABANDONED", "dashAsLastAbandonReason"):
             self.assertIn(token, source)
 
+    DASH_HEADER = ROOT / "include" / "web" / "mcp2515_dashboard.h"
+
+    def test_dashboard_includes_autoshift_header_behind_p4_guard(self):
+        source = self.DASH_HEADER.read_text()
+        self.assertIn('#include "dash_autoshift.h"', source)
+
+    def test_cana_drain_feeds_autoshift_decoders(self):
+        """mcpDashOnFrame (the CanA/CanB RX path) feeds 0x118 torque2 and
+        0x045 wheel decoders inside a DRIVER_P4_3CAN guard, on the
+        vehicle-bus (never the PARTY mirror)."""
+        import re
+
+        source = self.DASH_HEADER.read_text()
+        match = re.search(
+            r"static void mcpDashOnFrame\(const CanFrame &f\).*?\n\}",
+            source, re.DOTALL)
+        self.assertIsNotNone(match, "mcpDashOnFrame body not found")
+        body = match.group(0)
+        self.assertIn("#if defined(DRIVER_P4_3CAN)", body)
+        self.assertIn("f.id == 0x118", body)
+        self.assertIn("dashAsOnTorque2(", body)
+        self.assertIn("f.id == 0x045", body)
+        self.assertIn("dashAsOnWheel045(", body)
+
+    def test_canc_drain_feeds_angle_and_obstacle_decoders(self):
+        """mcpDashSniffCan3 (the CanC/PT RX path) feeds the 0x00E angle
+        decoder and the 0x23E/0x20E obstacle decoder inside a
+        DRIVER_P4_3CAN guard."""
+        import re
+
+        source = self.DASH_HEADER.read_text()
+        match = re.search(
+            r"static void mcpDashSniffCan3\(const CanFrame &f\).*?\n\}",
+            source, re.DOTALL)
+        self.assertIsNotNone(match, "mcpDashSniffCan3 body not found")
+        body = match.group(0)
+        self.assertIn("#if defined(DRIVER_P4_3CAN)", body)
+        self.assertIn("0x00E", body)
+        self.assertIn("dashAsOnAngle00E(", body)
+        self.assertIn("dashAsOnObstacle(", body)
+        self.assertIn("0x23E", body)
+        self.assertIn("0x20E", body)
+
     def test_guard_is_total_without_define(self):
         """Without DRIVER_P4_3CAN the header must expose NOTHING: a TU
         referencing dashAsCrc8J1850 must fail to compile (undeclared).
