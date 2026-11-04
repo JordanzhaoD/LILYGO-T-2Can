@@ -138,3 +138,39 @@ Breakpoint panic. Two reversals follow:
 
 (Pending when the board returns to bench: read 0x15E0000, confirm the
 dump's embedded uiBuildId = 06d26b140832 and MEPC 0x400243bc.)
+
+## Blackbox clips from F1 (+ Nov-2 sess_64): CanA-only field data profile
+
+Recorder v2's first field outing — record, lock, export (bin + csv)
+all worked. CSV reminder: `id` column is DECIMAL (69=0x045 bit us
+again). Clips live in `~/Downloads` (and MacServer); analysis summary:
+
+| clip | date | buses | fps | unique ids | gear(0x118 b3>>4) |
+|---|---|---|---|---|---|
+| sess_64 | Nov 2 (static, car awake) | 1+2+3 | 3087 | 364 | — |
+| sess_70/71 | Nov 4 F1 (driving) | 1 | ~302 | 11 | 4 (=D) const |
+| sess_68/69 | Nov 4 F1 (driving) | 1 | ~302 | 11 | 4 (=D) const |
+
+All four F1 clips fall inside the driving window (ts 278-638 s of the
+single crash-free boot). CanA-only traffic = 11 known IDs only
+(0x118/0x186 @100 Hz, 0x488 @50, 0x370 @25, 0x045/0x318 @10, 0x3ee @4,
+0x399 ~2, 0x398/0x2f8/0x438 @1). Scroll-wheel decode confirmed on real
+input (2-4 motion frames per clip, matching physical scrolls; board
+also TXed 2 mirrored 0x045 frames at the same moment).
+
+**Quantified load delta**: CanA-only driving = 303 fps vs 3-bus static
+= 3087 fps (bus2/BDY 1771 + bus3/PT 1245 contribute 97%, 356 IDs).
+The 12-22 s family's required condition is "3 buses present" (L0
+baseline crashed, CanA-only does not); whether the driver is raw
+ISR/rx-path load or 3-bus-specific content stays open — the
+bus_enable ladder (5 = +CanC ≈1.5 kfps, 7 = full ≈3.3+ kfps) is
+exactly the instrument to separate those axes.
+
+**TX was active the whole trip** (and already on Nov 2): 0x3EE bit46
+refresh @~1.1 Hz, bit46 alternating set/clear (58/59), riding the
+fresh-RX tail precisely (TX-after-RX gap median 0.2 ms, max 0.6 ms).
+The car's own 0x3EE never carries bit46 (0/117 RX) — the board is the
+only bit46 source, i.e. the whitelist-bridge core function ran in the
+field for ~27 crash-free minutes alongside the baseline. For a
+zero-TX observation baseline, disarm via the defense-page TX master
+switch.
