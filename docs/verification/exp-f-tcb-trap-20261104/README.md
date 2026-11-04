@@ -93,3 +93,48 @@ early-boot state left by the panic/coredump + OTA restart sequence.)
 Board 2 now runs the armed build idle-stable. Next trip on that word —
 bench, car, wherever — yields the writer's PC directly in the panic
 backtrace / coredump, no reproduction recipe needed.
+
+## Run F1 — first armed car trip (2026-11-04 22:28-23:02): clean negative
+
+Firmware 06d26b14, CanA-only (route-A baseline busmask 0x01), board 2
+USB on MacBook with full serial + HTTP + events capture
+(`~/Desktop/car-runs/run-f1/` on MacServer: serial-f1.txt 165KB,
+events-f1.md, poller-f1.jsonl, coredump-f1.raw, probe.bin).
+
+| phase | duration | crashes | trap |
+|---|---|---|---|
+| static (car awake, CanA traffic) | ~3 min | 0 | armed, no trip |
+| drive | ~10 min | 0 | armed, no trip |
+| return | ~14 min (~2 min dark window) | 0 | armed, no trip |
+| replug check | full boot capture | 0 | re-armed @0x4ff747f4 |
+
+Hard results:
+
+1. **~27 min CanA-only real-car, zero crashes** — vs. the same car on
+   3 buses dying in 12-22 s. Route-A baseline (20efa75 lineage) holds
+   in the field; ISR-pressure hypothesis gains another point. (Bar for
+   "baseline met" was >=30 min; ~27 min observed — Jordan's call
+   whether to extend or accept.)
+2. **The pxStackBase writer never struck** — trap armed on every
+   observed boot, zero trips, ledger gained no [4,x]. The writer's
+   activity window plausibly needs the 3-bus pressure and/or polling
+   storm that this baseline run deliberately lacks. Next ladder step
+   (bus_enable 5 = +CanC) will show.
+
+### Correction: coredump partition address
+
+The bench brief above said coredump @ 0xFE0000 — that was the 16MB
+partition table. p4_3can actually uses
+`partitions_32mb_ota_8192k_nvs64.csv` (32MB flash): **coredump =
+0x15E0000, size 0x100000 (1MB)**. The F1 probe found an ELF magic at
+0x15E0000 — a dump IS present, almost certainly the bench self-test
+Breakpoint panic. Two reversals follow:
+
+- **Breakpoint panics DO write coredumps.** The earlier "partition
+  empty after self-test" observation was a wrong-region read, not a
+  write failure.
+- Future no-MacBook trips keep a full evidence chain: any trip leaves
+  a recoverable dump with the writer's MEPC, independent of serial.
+
+(Pending when the board returns to bench: read 0x15E0000, confirm the
+dump's embedded uiBuildId = 06d26b140832 and MEPC 0x400243bc.)
