@@ -1,0 +1,32 @@
+{"t": 1793788892.7, "kind": "reboot", "arm": "E1", "ok": true}
+{"t": 1793788894.8, "kind": "serial-line", "line": "I (1707) app_init: ELF file SHA256:  0e079e570..."}
+{"t": 1793788983.7, "kind": "flood-start", "arm": "E1"}
+{"t": 1793788983.8, "kind": "probe", "arm": "E1", "n": 0, "ok": true, "err": null}
+{"t": 1793788990.0, "kind": "probe", "arm": "E1", "n": 1, "ok": true, "err": null}
+{"t": 1793788996.1, "kind": "probe", "arm": "E1", "n": 2, "ok": true, "err": null}
+{"t": 1793789002.6, "kind": "probe", "arm": "E1", "n": 3, "ok": true, "err": null}
+{"t": 1793789009.3, "kind": "probe", "arm": "E1", "n": 4, "ok": true, "err": null}
+{"t": 1793789015.7, "kind": "probe", "arm": "E1", "n": 5, "ok": true, "err": null}
+{"t": 1793789022.4, "kind": "probe", "arm": "E1", "n": 6, "ok": true, "err": null}
+{"t": 1793789028.9, "kind": "probe-post", "arm": "E1", "n": 0, "ok": true, "err": null}
+{"t": 1793789035.5, "kind": "probe-post", "arm": "E1", "n": 1, "ok": true, "err": null}
+{"t": 1793789041.9, "kind": "probe-post", "arm": "E1", "n": 2, "ok": true, "err": null}
+{"t": 1793789048.3, "kind": "probe-post", "arm": "E1", "n": 3, "ok": true, "err": null}
+{"t": 1793789054.7, "kind": "probe-post", "arm": "E1", "n": 4, "ok": true, "err": null}
+{"t": 1793789061.2, "kind": "probe-post", "arm": "E1", "n": 5, "ok": true, "err": null}
+{"t": 1793789067.6, "kind": "probe-post", "arm": "E1", "n": 6, "ok": true, "err": null}
+{"t": 1793789074.0, "kind": "probe-post", "arm": "E1", "n": 7, "ok": true, "err": null}
+{"t": 1793789080.4, "kind": "probe-post", "arm": "E1", "n": 8, "ok": true, "err": null}
+{"t": 1793789086.9, "kind": "probe-post", "arm": "E1", "n": 9, "ok": true, "err": null}
+{"t": 1793789093.3, "kind": "arm-end", "arm": "E1", "trip": false}
+{"t": 1793789093.3, "kind": "reboot", "arm": "E2", "ok": true}
+{"t": 1793789095.4, "kind": "serial-line", "line": "I (1710) app_init: ELF file SHA256:  0e079e570..."}
+{"t": 1793789314.5, "kind": "flood-end", "arm": "E2", "done": true}
+{"t": 1793789314.7, "kind": "burst", "arm": "E2", "i": 0, "ok": true, "err": null}
+{"t": 1793789314.7, "kind": "burst", "arm": "E2", "i": 1, "ok": true, "err": null}
+{"t": 1793789314.8, "kind": "burst", "arm": "E2", "i": 2, "ok": true, "err": null}
+{"t": 1793789315.8, "kind": "burst-end", "arm": "E2", "trip": false}
+{"t": 1793789736.7, "kind": "idle-end", "arm": "E2", "trip": false}
+{"t": 1793789736.9, "kind": "single-shot", "arm": "E2", "ok": true, "err": null}
+{"t": 1793789797.3, "kind": "arm-end", "arm": "E2", "trip": false}
+{"t": 1793789797.4, "kind": "ring_status", "body": "{\"enabled\":true,\"paused\":false,\"span_s\":0,\"fps\":{\"a\":0,\"b\":0,\"c\":0},\"lock\":{\"state\":\"idle\",\"remain_ms\":0,\"pre_ms\":0,\"post_ms\":0,\"bus_mask\":0},\"sessions_space_free\":9437184,\"seq\":0,\"resets\":[[3,0],[3,0],[3,0],[3,0],[3,0],[3,0],[3,0],[1,0]]}"}

@@ -1,0 +1,23 @@
+{"t": 1793774840.5, "kind": "reboot", "arm": "D1-system_status", "ok": true}
+{"t": 1793774842.6, "kind": "serial-line", "line": "I (1710) app_init: ELF file SHA256:  0e079e570..."}
+{"t": 1793774931.5, "kind": "flood-start", "arm": "D1-system_status"}
+{"t": 1793774946.4, "kind": "serial-line", "line": "[exp_b] done: switchOk=1 tx=17/0/0 fail=1983/0/0 elapsed=13978ms"}
+{"t": 1793775052.2, "kind": "flood-end", "arm": "D1-system_status"}
+{"t": 1793775062.4, "kind": "single-shot", "arm": "D1-system_status", "path": "/system_status", "ok": true, "info": null}
+{"t": 1793775122.6, "kind": "after-single", "arm": "D1-system_status", "trip": false}
+{"t": 1793775122.7, "kind": "burst", "arm": "D1-system_status", "i": 0, "ok": true}
+{"t": 1793775133.4, "kind": "burst", "arm": "D1-system_status", "i": 10, "ok": true}
+{"t": 1793775144.1, "kind": "burst", "arm": "D1-system_status", "i": 20, "ok": true}
+{"t": 1793775215.0, "kind": "arm-end", "arm": "D1-system_status", "trip": false}
+{"t": 1793775215.0, "kind": "reboot", "arm": "D2-status", "ok": true}
+{"t": 1793775217.1, "kind": "serial-line", "line": "I (1710) app_init: ELF file SHA256:  0e079e570..."}
+{"t": 1793775306.0, "kind": "flood-start", "arm": "D2-status"}
+{"t": 1793775320.8, "kind": "serial-line", "line": "[exp_b] done: switchOk=1 tx=17/0/0 fail=1983/0/0 elapsed=13977ms"}
+{"t": 1793775426.7, "kind": "flood-end", "arm": "D2-status"}
+{"t": 1793775436.8, "kind": "single-shot", "arm": "D2-status", "path": "/status", "ok": true, "info": null}
+{"t": 1793775497.1, "kind": "after-single", "arm": "D2-status", "trip": false}
+{"t": 1793775497.1, "kind": "burst", "arm": "D2-status", "i": 0, "ok": true}
+{"t": 1793775507.6, "kind": "burst", "arm": "D2-status", "i": 10, "ok": true}
+{"t": 1793775518.1, "kind": "burst", "arm": "D2-status", "i": 20, "ok": true}
+{"t": 1793775588.8, "kind": "arm-end", "arm": "D2-status", "trip": false}
+{"t": 1793775588.8, "kind": "ring_status", "ok": true}
