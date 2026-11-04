@@ -311,6 +311,16 @@ static constexpr bool kDashCan3Available = true;
 static constexpr bool kDashCan3Available = false;
 #endif
 
+// Autoshift v1 (P4 only): SBW gear injection exists on the surface only
+// when the firmware says so. Emitted unconditionally (false elsewhere) so
+// older UIs and every non-P4 build keep a byte-identical surface — same
+// contract as kDashCan3Available above.
+#if defined(DRIVER_P4_3CAN)
+static constexpr bool kDashAutoshiftAvailable = true;
+#else
+static constexpr bool kDashAutoshiftAvailable = false;
+#endif
+
 static constexpr bool kDashLightingBusSupported = kDashCan2Available;
 static constexpr bool kDashServiceModeSupported = kDashCan2Available;
 static constexpr bool kDashStalkTestSupported = kDashCan2Available;
@@ -331,6 +341,10 @@ static String dashCapabilitiesJson()
     j += "can3Available";
     j += "\":"; // "can3Available":
     j += kDashCan3Available ? "true" : "false";
+    j += ",\"";
+    j += "autoshiftAvailable";
+    j += "\":"; // "autoshiftAvailable":
+    j += kDashAutoshiftAvailable ? "true" : "false";
     j += ",\"";
     j += "lightingBusSupported";
     j += "\":"; // "lightingBusSupported":
@@ -6774,6 +6788,30 @@ static void mcpDashAutoshiftTestFrame(const char *arg)
                   dashAsSbwSource.seen ? (unsigned long)age : 0UL,
                   out[0], out[1], out[2], out[3]);
 }
+
+#if defined(DRIVER_P4_3CAN) && !defined(NATIVE_BUILD)
+// GET /autoshift_status — one JSON line for the drive-page v1 card.
+static void handleAutoshiftStatus()
+{
+    server.send(200, "application/json", mcpDashAutoshiftStatusJson());
+}
+
+// POST /autoshift_master {enabled:0|1} — the web surface may ONLY move the
+// master bit: arming stays the two-step serial ritual, and nothing here
+// composes or transmits a frame. Master-off cascades disarm in the engine
+// and must also clear the persisted armed bit (a stale NVS armed=1 would
+// otherwise skip the ritual on the next master-on).
+static void handleAutoshiftMaster()
+{
+    const bool enable = server.hasArg("enabled") && server.arg("enabled") == "1";
+    dashAsSetMaster(enable);
+    t2canAutoshiftMasterSet(enable ? 1 : 0);
+    if (!enable)
+        t2canAutoshiftArmedSet(0);
+    t2canAutoshiftModeDirty(); // can_rt applies the TWAI2 mode flip
+    server.send(200, "application/json", mcpDashAutoshiftStatusJson());
+}
+#endif
 #endif
 
 #ifdef ESP_PLATFORM
@@ -9093,6 +9131,10 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/legacy_fsd_config", HTTP_GET, handleLegacyFsdConfig);
     server.on("/legacy_fsd_config", HTTP_POST, handleLegacyFsdConfig);
     server.on("/gear_assist_status", HTTP_GET, handleGearAssistStatus);
+#if defined(DRIVER_P4_3CAN)
+    server.on("/autoshift_status", HTTP_GET, handleAutoshiftStatus);
+    server.on("/autoshift_master", HTTP_POST, handleAutoshiftMaster);
+#endif
     // Phase 1 新增端点
     server.on("/vehicle_ota_status", HTTP_GET, handleVehicleOtaStatus);
     server.on("/hotspot_config", HTTP_GET, handleHotspotConfig);

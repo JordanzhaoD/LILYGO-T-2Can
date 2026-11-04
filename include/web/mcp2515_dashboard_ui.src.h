@@ -1837,12 +1837,32 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <!-- Page 10: Auto Shift (Phase 5A placeholder) -->
     <div class="page" id="pg-shift" data-single-hide="1">
 <div class="page-title"><span data-i18n="自动换挡 ">自动换挡 </span><span class="exp-badge" data-i18n="储备功能">储备功能</span></div>
+<div data-cap="autoshift">
+<div class="card">
+  <div class="card-title" data-i18n="自动换挡 v1">自动换挡 v1</div>
+  <div class="card-subtitle" data-i18n="滚轮/方向盘触发 → 门控链 → CanC 0x228 注入">滚轮/方向盘触发 → 门控链 → CanC 0x228 注入</div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name"><span data-i18n="总开关">总开关</span> <span class="exp-badge" data-i18n="实验">实验</span></div>
+      <div class="setting-desc" data-i18n="关闭即级联解除武装；武装仍需串口两步仪式（autoshift_arm）">关闭即级联解除武装；武装仍需串口两步仪式（autoshift_arm）</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="as-master-tgl" onchange="saveAsMaster()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="diag-grid">
+    <div class="diag-item"><span class="lbl" data-i18n="状态">状态</span><span class="v-info" id="as-state">--</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="当前挡位">当前挡位</span><span class="v-dim" id="as-gear">--</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="门控判定">门控判定</span><span class="v-dim" id="as-verdict">--</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="0x228 源龄">0x228 源龄</span><span class="v-dim" id="as-src-age">--</span></div>
+  </div>
+  <div class="setting-desc" id="as-counts" data-i18n="提交 0 / 确认 0 / TX 0/0">提交 0 / 确认 0 / TX 0/0</div>
+</div>
+</div>
 <div class="card" style="border-color:#f59e0b;background:rgba(245,158,11,0.06)">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
     <span style="font-size:24px">⚠️</span>
     <div>
-      <div style="font-weight:700;color:#f59e0b" data-i18n="储备功能未开放">储备功能未开放</div>
-      <div class="setting-desc" data-i18n="此页面为只读遥测展示，自动换挡功能将在后续版本中实装">此页面为只读遥测展示，自动换挡功能将在后续版本中实装</div>
+      <div style="font-weight:700;color:#f59e0b" data-i18n="只读遥测">只读遥测</div>
+      <div class="setting-desc" data-i18n="P4 固件在此页提供自动换挡 v1 控制；其他固件保持只读遥测展示">P4 固件在此页提供自动换挡 v1 控制；其他固件保持只读遥测展示</div>
     </div>
   </div>
 </div>
@@ -1987,6 +2007,15 @@ function fmtUp(sec){
 
 // ── I18N ───────────────────────────────────────────────────
 var I18N={
+  '自动换挡 v1':'Auto Shift v1','总开关':'Master Switch',
+  '滚轮/方向盘触发 → 门控链 → CanC 0x228 注入':'Wheel/steering trigger → gate chain → CanC 0x228 injection',
+  '关闭即级联解除武装；武装仍需串口两步仪式（autoshift_arm）':'Off cascades disarm; arming stays the two-step serial ritual (autoshift_arm)',
+  '门控判定':'Gate Verdict','0x228 源龄':'0x228 Source Age',
+  '提交 0 / 确认 0 / TX 0/0':'Sent 0 / Confirmed 0 / TX 0/0',
+  '总开关开':'Master On','武装窗口':'Arming Window','已武装':'Armed','未见':'unseen',
+  '提交':'Sent','确认':'Confirmed',
+  '只读遥测':'Read-only Telemetry',
+  'P4 固件在此页提供自动换挡 v1 控制；其他固件保持只读遥测展示':'P4 firmware exposes Auto Shift v1 on this page; other builds stay read-only',
   '驾驶状态':'Drive Status','硬件模式':'Hardware Mode','驾驶风格':'Drive Style',
   '速度策略':'Speed Strategy','CAN2 控制':'CAN2 Control','FSD 防护':'FSD Guard',
   'OTA 升级':'OTA Update','网络设置':'Network','CAN 诊断':'CAN Diagnostics',
@@ -2194,7 +2223,7 @@ var I18N={
   '未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。':'Unknown / invalid / SNA gears block injection by default; AP disconnect resets gate timing instantly. Enforced server-side in C++ (handlers.h) — the web UI cannot bypass it.',
 };
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
-var CAP={singleCan:false,can2Available:true,can3Available:false,lightingBusSupported:true,serviceModeSupported:true,stalkTestSupported:true,bus2SnifferSupported:true,fsdActivation:true,speedStrategy:true,driveProfile:true,networkSettings:true,otaUpdate:true,canDiagnostics:true,recorderV2Available:false};
+var CAP={singleCan:false,can2Available:true,can3Available:false,lightingBusSupported:true,serviceModeSupported:true,stalkTestSupported:true,bus2SnifferSupported:true,fsdActivation:true,speedStrategy:true,driveProfile:true,networkSettings:true,otaUpdate:true,canDiagnostics:true,recorderV2Available:false,autoshiftAvailable:false};
 var PRODUCT_SINGLE_CAN_NAME='Atlas Single CAN';
 var PRODUCT_DUAL_CAN_NAME='Atlas T-2CAN';
 function isSingleCan(){return !!CAP.singleCan}
@@ -2210,6 +2239,7 @@ function capEnabled(name){
   if(name==='can3')return !!CAP.can3Available;
   if(name==='lighting')return !!CAP.lightingBusSupported;
   if(name==='recorderV2')return !!CAP.recorderV2Available;
+  if(name==='autoshift')return !!CAP.autoshiftAvailable;
   return true;
 }
 function applyCapabilities(c){
@@ -2294,6 +2324,7 @@ function showPage(pageId){
   if(pageId==='pg-speed')loadSpeedStrategy();
   if(pageId==='pg-defense')loadDefenseConfig();
   if(pageId==='pg-shift'&&!isSingleCan())pollGearAssist();
+  if(pageId==='pg-shift')pollAutoshift();
   if(pageId==='pg-ota'){loadFirmwareInfo();loadOtaReleaseState();}
   if(pageId==='pg-network'){pollWifiStatus();pollGatewayStatus();loadGatewayDns();loadGatewayBlocked();}
 }
@@ -4012,6 +4043,33 @@ async function pollGearAssist(){
   setCls('shift-fsd','v-dim '+(d.can_online?'v-ok':'v-err'));
 }
 
+// ── Autoshift v1 (P4 only, capability-gated) ───────────────
+var AS_STATE_NAMES={off:T('关闭'),master_on:T('总开关开'),arm_pending:T('武装窗口'),armed:T('已武装')};
+var AS_VERDICTS=['SUBMIT','MASTER','STALE_118','SPEED','BRAKE','OBSTACLE','COOLDOWN','COUNT','PENDING','ALREADY'];
+var AS_GEAR_NAMES={1:'P',2:'R',3:'N',4:'D'};
+function renderAsStatus(d){
+  if(!d)return;
+  setText('as-state',AS_STATE_NAMES[d.state]||d.state);
+  setText('as-gear',AS_GEAR_NAMES[d.gearNow]||'--');
+  setText('as-verdict',d.verdict===0?'SUBMIT':('BLOCK '+(AS_VERDICTS[d.verdict]||('?'+d.verdict))));
+  setText('as-src-age',d.sourceAgeMs<0?T('未见'):(d.sourceAgeMs+' ms'));
+  var c=d.counts||{};
+  setText('as-counts',T('提交')+' '+(c.submitted||0)+' / '+T('确认')+' '+(c.confirmed||0)+' / TX '+(c.txOk||0)+'/'+(c.txFail||0));
+  var tgl=$('as-master-tgl');
+  if(tgl)tgl.checked=(d.state!=='off');
+}
+async function pollAutoshift(){
+  if(!capEnabled('autoshift'))return;
+  renderAsStatus(await fetchJson('/autoshift_status'));
+}
+async function saveAsMaster(){
+  var tgl=$('as-master-tgl');
+  var r=null;
+  try{r=await postForm('/autoshift_master',{enabled:tgl&&tgl.checked?'1':'0'});}
+  catch(e){}
+  renderAsStatus(r);
+}
+
 // ── Legacy Real Wiring Truth Cards ────────────────────────
 var legacyFsdConfigLoaded=false;
 function renderLegacyFsdPolicyCards(policy){
@@ -4184,6 +4242,7 @@ document.addEventListener('DOMContentLoaded',function(){
       if(pid==='pg-can'){if(canTab==='sniffer'&&!sniffPaused)pollSniffer();else if(canTab==='recorder')pollRecStatus();else if(canTab==='debug')pollLastWrite()}
       if((pid==='pg-bus2'||pid==='pg-overview')&&!isSingleCan()&&CAP.can2Available)pollCAN2();
       if(pid==='pg-shift'&&!isSingleCan())pollGearAssist();
+      if(pid==='pg-shift')pollAutoshift();
     }
   };
   pollTimer=setInterval(pollTick,pollMs);

@@ -304,6 +304,128 @@ class AutoshiftContractTests(unittest.TestCase):
                                         f"#endif underflow at line {i}")
         self.assertEqual(depth, 0, "unclosed #if remains at EOF")
 
+    # ---- Task 7: shared UI section, capability gate, web endpoints ----
+
+    UI_SRC = ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h"
+    UI_GEN = ROOT / "include" / "web" / "mcp2515_dashboard_ui.h"
+
+    def test_ui_src_has_capability_gated_autoshift_section(self):
+        """The v1 section lives on the pg-shift page (the placeholder page
+        that promises this feature) inside a data-cap="autoshift" wrapper:
+        hidden on every board whose firmware lacks the capability."""
+        src = self.UI_SRC.read_text()
+        self.assertIn('<div data-cap="autoshift">', src)
+        for tid in ('id="as-state"', 'id="as-gear"', 'id="as-verdict"',
+                    'id="as-src-age"', 'id="as-counts"'):
+            self.assertIn(tid, src)
+        # bilingual labels via the house i18n dictionary
+        self.assertIn('data-i18n="自动换挡 v1"', src)
+        self.assertIn('data-i18n="总开关"', src)
+        self.assertIn("'自动换挡 v1':'Auto Shift v1'", src)
+        self.assertIn("'总开关':'Master Switch'", src)
+
+    def test_ui_master_toggle_posts_to_master_endpoint(self):
+        """Master toggle follows the defense-page toggle pattern: checkbox
+        onchange handler posts {enabled:0|1} to /autoshift_master."""
+        import re
+
+        src = self.UI_SRC.read_text()
+        self.assertIn('id="as-master-tgl"', src)
+        self.assertIn('onchange="saveAsMaster()"', src)
+        match = re.search(r"async function saveAsMaster\(\).*?\n\}",
+                          src, re.DOTALL)
+        self.assertIsNotNone(match, "saveAsMaster not found")
+        body = match.group(0)
+        self.assertIn("postForm('/autoshift_master'", body)
+
+    def test_ui_polls_status_and_maps_runtime_fields(self):
+        import re
+
+        src = self.UI_SRC.read_text()
+        match = re.search(r"async function pollAutoshift\(\).*?\n\}",
+                          src, re.DOTALL)
+        self.assertIsNotNone(match, "pollAutoshift not found")
+        body = match.group(0)
+        self.assertIn("fetchJson('/autoshift_status')", body)
+        # wired at both pg-shift activation sites (the definition is
+        # pinned separately above; it has no trailing semicolon)
+        self.assertEqual(src.count("pollAutoshift();"), 2,
+                         "pollAutoshift must be called at exactly the two "
+                         "pg-shift activation sites")
+
+    def test_ui_capability_default_off_and_mapping(self):
+        """Non-P4 boards default the capability false and capEnabled maps
+        the name — the section never renders there (house can3 pattern)."""
+        src = self.UI_SRC.read_text()
+        self.assertIn("autoshiftAvailable:false", src)
+        self.assertIn(
+            "if(name==='autoshift')return !!CAP.autoshiftAvailable;", src)
+
+    def test_dashboard_emits_autoshift_capability(self):
+        source = self.DASH_HEADER.read_text()
+        self.assertIn(
+            "#if defined(DRIVER_P4_3CAN)\n"
+            "static constexpr bool kDashAutoshiftAvailable = true;\n"
+            "#else\n"
+            "static constexpr bool kDashAutoshiftAvailable = false;\n"
+            "#endif",
+            source,
+        )
+        # emission is unconditional so older UIs just see false
+        self.assertIn('j += "autoshiftAvailable";', source)
+        self.assertIn('j += kDashAutoshiftAvailable ? "true" : "false";',
+                      source)
+
+    def test_dashboard_registers_autoshift_endpoints_p4_only(self):
+        source = self.DASH_HEADER.read_text()
+        self.assertIn(
+            "#if defined(DRIVER_P4_3CAN)\n"
+            '    server.on("/autoshift_status", HTTP_GET,'
+            " handleAutoshiftStatus);\n"
+            '    server.on("/autoshift_master", HTTP_POST,'
+            " handleAutoshiftMaster);\n"
+            "#endif",
+            source,
+        )
+
+    def test_status_endpoint_serves_runtime_json(self):
+        import re
+
+        source = self.DASH_HEADER.read_text()
+        match = re.search(r"static void handleAutoshiftStatus\(\).*?\n\}",
+                          source, re.DOTALL)
+        self.assertIsNotNone(match, "handleAutoshiftStatus not found")
+        self.assertIn("mcpDashAutoshiftStatusJson()", match.group(0))
+
+    def test_master_endpoint_persists_and_cascades(self):
+        """The web toggle only ever moves the master bit: it must persist
+        NVS master, clear NVS armed when switching off (else a later
+        master-on would skip the two-step arm ritual), mark the bus-mode
+        dirty flag — and must expose NO arm or transmit path."""
+        import re
+
+        source = self.DASH_HEADER.read_text()
+        match = re.search(r"static void handleAutoshiftMaster\(\).*?\n\}",
+                          source, re.DOTALL)
+        self.assertIsNotNone(match, "handleAutoshiftMaster not found")
+        body = match.group(0)
+        for token in ("dashAsSetMaster(", "t2canAutoshiftMasterSet(",
+                      "t2canAutoshiftArmedSet(0)", "t2canAutoshiftModeDirty()"):
+            self.assertIn(token, body)
+        for banned in ("autoshift_arm", "t2canAutoshiftSendCan3",
+                       "dashAsSbwCompose"):
+            self.assertNotIn(banned, body,
+                             f"web master endpoint must stay {banned}-free")
+
+    def test_generated_ui_blob_carries_autoshift_tokens(self):
+        """src/ui sync: the regenerated ui.h plaintext fallback carries
+        the new section tokens (regeneration discipline, minify script)."""
+        gen = self.UI_GEN.read_text()
+        # the minifier strips attribute quotes: data-cap=autoshift
+        for token in ("data-cap=autoshift", "as-master-tgl",
+                      "/autoshift_status", "/autoshift_master"):
+            self.assertIn(token, gen)
+
     def test_guard_is_total_without_define(self):
         """Without DRIVER_P4_3CAN the header must expose NOTHING: a TU
         referencing dashAsCrc8J1850 must fail to compile (undeclared).
