@@ -1,0 +1,6 @@
+== OTA flash of final-review fix build 2c5f832 (bare body POST /update, X-File-Name) ==
+http=200 uploaded=1418464B -> OK
+
+== post-flash /status probe ==
+uiBuildId":"6.0.0-beta11-p4_3can-2c5f8326f0ad-2026-11-04T17:33:07Z
+autoshiftAvailable":true

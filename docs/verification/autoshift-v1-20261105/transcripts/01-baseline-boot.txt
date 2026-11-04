@@ -1,0 +1,32 @@
+<system_status> 
+<system_status> [system_status]
+<system_status> uptime=5015s firmware=6.0.0-beta11 idf=6.0.1
+<system_status> cpu=400MHz load=sampling
+<system_status> heap_free=33567475 heap_largest=33030132 heap_min=33535743 tasks=21
+<system_status> wifi=AP+STA connected=yes ap_clients=0 rssi=-34
+<system_status> temp=37.1C
+<system_status> 
+<system_status> [heap_guard] TCB TRIP idx=12 verdict=4 expected=0x4ff77908 actual=0x4ff7798c
+<system_status> 
+<system_status> abort() was called at PC 0x40004491 on core 1
+<system_status> Core  1 register dump:
+<system_status> MEPC    : 0x4ff2b0c4  RA      : 0x4ff2b06c  SP      : 0x4ff7ea70  GP      : 0x4ff32200
+<system_status> TP      : 0x4ff7ebd0  T0      : 0x37363534  T1      : 0x7271706f  T2      : 0x33323130
+<system_status> S0/FP   : 0x4ff7ea80  S1      : 0x4ff7eabc  A0      : 0x4ff7eabc  A1      : 0x4ff7ea9e
+<system_status> A2      : 0x00000000  A3      : 0x4ff7eae9  A4      : 0x00000001  A5      : 0x4ff40000
+<system_status> A6      : 0x00000000  A7      : 0x76757473  S2      : 0x4ff7eabc  S3      : 0x4ff7eaa0
+<system_status> S4      : 0x4ff40000  S5      : 0x00000000  S6      : 0x4ff3a000  S7      : 0x0000000a
+<system_status> S8      : 0x00000000  S9      : 0x00000000  S10     : 0xffffffff  S11     : 0x00000008
+<system_status> T3      : 0x6e6d6c6b  T4      : 0x6a696867  T5      : 0x66656463  T6      : 0x62613938
+<system_status> MSTATUS : 0x00011881  MTVEC   : 0x4ff20003  MCAUSE  : 0x00000002  MTVAL   : 0x00000000
+<system_status> MHARTID : 0x00000001
+<system_status> Backtrace: 0x4ff2b0c4:0x4ff7ea70 0x4ff2b06c:0x4ff7ea90 0x4ff28c82:0x4ff7eb10 0x40004494:0x4ff7eb40 0x400046ca:0x4ff7eb90 0x40004770:0x4ff7eba0 0x400d5936:0x4ff7ebb0 0x00000000:0x00000000
+<system_status> 
+<system_status> 
+<system_status> 
+<system_status> ELF file SHA256: 3e883d436
+<system_status> 
+<system_status> I (6394) esp_core_dump_flash: Save core dump to flash...
+<system_status> I (6399) esp_core_dump_common: Backing up stack @ 0x4ff7e920 and use core dump stack @ 0x4ff3c660
+<system_status> I (6409) esp_core_dump_flash: Erase flash 655360 bytes @ 0x15e0000
+<system_status> I (10325) esp_core_dump_flash: Write end offset 0x9fbe0, check sum length 32

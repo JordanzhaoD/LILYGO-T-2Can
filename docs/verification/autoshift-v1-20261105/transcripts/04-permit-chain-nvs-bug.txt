@@ -1,0 +1,14 @@
+<autoshift_status> [as] {"state":"off","verdict":0,"lastBlock":0,"pending":0,"retries":0,"gearNow":0,"sourceAgeMs":-1,"counts":{"trig":0,"submitted":0,"blocked":0,"confirmed":0,"retried":0,"abandoned":0,"txOk":0,"txFail":0}}
+<autoshift_master 1> [as] NVS write failed
+<autoshift_master 1> autoshift_master=0 (armed=0)
+<autoshift_master 1> [AS] CanC now LISTEN_ONLY
+<autoshift_status> [as] {"state":"master_on","verdict":0,"lastBlock":0,"pending":0,"retries":0,"gearNow":0,"sourceAgeMs":-1,"counts":{"trig":0,"submitted":0,"blocked":0,"confirmed":0,"retried":0,"abandoned":0,"txOk":0,"txFail":0}}
+<autoshift_arm> [as] confirm window open — call autoshift_arm again within 5s
+<autoshift_arm> [as] ARMED — CanC leaves listen-only; shift requests may transmit
+<autoshift_arm> [AS] CanC now NORMAL (autoshift armed)
+<autoshift_status> [as] {"state":"armed","verdict":0,"lastBlock":0,"pending":0,"retries":0,"gearNow":0,"sourceAgeMs":-1,"counts":{"trig":0,"submitted":0,"blocked":0,"confirmed":0,"retried":0,"abandoned":0,"txOk":0,"txFail":0}}
+<autoshift_test 1> [as_test] compose refused (source stale/absent or gear invalid)
+<autoshift_test 1> [as_test] compose refused (source stale/absent or gear invalid)
+<autoshift_disarm> [as] disarmed — CanC returns to listen-only
+<autoshift_disarm> [AS] CanC now LISTEN_ONLY
+<autoshift_status> [as] {"state":"master_on","verdict":0,"lastBlock":0,"pending":0,"retries":0,"gearNow":0,"sourceAgeMs":12642,"counts":{"trig":0,"submitted":0,"blocked":0,"confirmed":0,"retried":0,"abandoned":0,"txOk":0,"txFail":0}}
