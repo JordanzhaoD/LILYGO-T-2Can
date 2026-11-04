@@ -61,6 +61,50 @@ class AutoshiftContractTests(unittest.TestCase):
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             self.assertIn("ALL PASS", run.stdout)
 
+    def test_gate_eval_order_is_pinned(self):
+        """The gate chain evaluates master -> stale -> speed -> brake ->
+        cooldown -> count -> obstacle -> pending -> target -> submit.
+        Pinned by source ordering inside dashAsGateEval's body (scoped
+        extraction: the enum declaration lists the same tokens)."""
+        import re
+
+        source = HEADER.read_text()
+        match = re.search(
+            r"DashAsVerdict dashAsGateEval\(uint32_t nowMs.*?\n\}",
+            source, re.DOTALL)
+        self.assertIsNotNone(match, "dashAsGateEval body not found")
+        body = match.group(0)
+        tokens = ["AS_BLOCK_MASTER", "AS_BLOCK_STALE_118", "AS_BLOCK_SPEED",
+                  "AS_BLOCK_BRAKE", "AS_BLOCK_COOLDOWN", "AS_BLOCK_COUNT",
+                  "AS_BLOCK_OBSTACLE", "AS_BLOCK_PENDING", "AS_ALREADY_TARGET",
+                  "AS_SUBMIT"]
+        positions = [body.find(tok) for tok in tokens]
+        for tok, pos in zip(tokens, positions):
+            self.assertGreater(pos, -1, f"{tok} missing from eval body")
+        self.assertEqual(positions, sorted(positions),
+                         f"eval order drifted: {list(zip(tokens, positions))}")
+
+    def test_gate_inputs_struct_fields(self):
+        source = HEADER.read_text()
+        for field in ("bool master;", "bool torque2Fresh;", "uint8_t speedKph;",
+                      "bool brakeApplied;", "uint8_t gearNow;",
+                      "uint8_t gearTarget;", "bool obstacleFreshAndClear;",
+                      "uint32_t lastShiftMs;", "uint32_t nowCount;"):
+            self.assertIn(field, source)
+
+    def test_profile_carries_session_shift_count_limit(self):
+        source = HEADER.read_text()
+        self.assertIn("shiftCountMax", source)
+
+    def test_native_main_covers_gate_matrix_and_close_loop(self):
+        source = NATIVE_MAIN.read_text()
+        for token in ("AS_BLOCK_MASTER", "AS_BLOCK_STALE_118", "AS_BLOCK_SPEED",
+                      "AS_BLOCK_BRAKE", "AS_BLOCK_OBSTACLE", "AS_BLOCK_COOLDOWN",
+                      "AS_BLOCK_COUNT", "AS_BLOCK_PENDING", "AS_ALREADY_TARGET",
+                      "AS_CONFIRM_COMPLETE", "AS_CONFIRM_RETRY",
+                      "AS_CONFIRM_ABANDONED", "dashAsLastAbandonReason"):
+            self.assertIn(token, source)
+
     def test_guard_is_total_without_define(self):
         """Without DRIVER_P4_3CAN the header must expose NOTHING: a TU
         referencing dashAsCrc8J1850 must fail to compile (undeclared).

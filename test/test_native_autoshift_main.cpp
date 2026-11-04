@@ -79,6 +79,132 @@ int main()
     CHECK(dashAsGearFromDi(5) == 0xFF);
     CHECK(dashAsGearFromDi(7) == 0xFF);  // DI SNA
 
+    // ================= Task 4: gate chain matrix =================
+    const uint32_t kNow = 10000;
+    auto okInputs = []() {
+        DashAsInputs in = {};
+        in.master = true;
+        in.torque2Fresh = true;
+        in.speedKph = 8;
+        in.brakeApplied = true;
+        in.gearNow = 1;             // DI P
+        in.gearTarget = kAsGearD;
+        in.obstacleFreshAndClear = true;
+        in.lastShiftMs = 0;         // no previous shift
+        in.nowCount = 0;
+        return in;
+    };
+
+    // master first — even with everything else failing too
+    {
+        DashAsInputs in = okInputs();
+        in.master = false;
+        in.brakeApplied = false;    // would also block; master must win
+        dashAsGateReset();
+        CHECK(dashAsGateEval(kNow, in) == AS_BLOCK_MASTER);
+    }
+    // stale 0x118
+    {
+        DashAsInputs in = okInputs();
+        in.torque2Fresh = false;
+        dashAsGateReset();
+        CHECK(dashAsGateEval(kNow, in) == AS_BLOCK_STALE_118);
+    }
+    // speed limit: 8 passes (full happy path below), 9 blocks
+    {
+        DashAsInputs in = okInputs();
+        in.speedKph = 9;
+        dashAsGateReset();
+        CHECK(dashAsGateEval(kNow, in) == AS_BLOCK_SPEED);
+    }
+    // brake released
+    {
+        DashAsInputs in = okInputs();
+        in.brakeApplied = false;
+        dashAsGateReset();
+        CHECK(dashAsGateEval(kNow, in) == AS_BLOCK_BRAKE);
+    }
+    // cooldown window (last shift 500 ms ago, cooldown 1000 ms)
+    {
+        DashAsInputs in = okInputs();
+        in.lastShiftMs = kNow - 500;
+        dashAsGateReset();
+        CHECK(dashAsGateEval(kNow, in) == AS_BLOCK_COOLDOWN);
+    }
+    // per-session count at limit
+    {
+        DashAsInputs in = okInputs();
+        in.nowCount = kAsProfile.shiftCountMax;
+        dashAsGateReset();
+        CHECK(dashAsGateEval(kNow, in) == AS_BLOCK_COUNT);
+    }
+    // obstacle stale or blocked — absent telemetry is NOT clear
+    {
+        DashAsInputs in = okInputs();
+        in.obstacleFreshAndClear = false;
+        dashAsGateReset();
+        CHECK(dashAsGateEval(kNow, in) == AS_BLOCK_OBSTACLE);
+    }
+    // single in-flight: a pending request blocks new submissions
+    {
+        dashAsGateReset();
+        CHECK(dashAsSubmit(4, kNow));            // target DI D
+        CHECK(dashAsGateEval(kNow, okInputs()) == AS_BLOCK_PENDING);
+    }
+    // already at target
+    {
+        DashAsInputs in = okInputs();
+        in.gearNow = 4;                          // DI D
+        in.gearTarget = kAsGearD;
+        dashAsGateReset();
+        CHECK(dashAsGateEval(kNow, in) == AS_ALREADY_TARGET);
+    }
+    // happy path
+    {
+        dashAsGateReset();
+        CHECK(dashAsGateEval(kNow, okInputs()) == AS_SUBMIT);
+    }
+
+    // --- close loop ---
+    // exact-code confirm: DI 4 matches pending DI 4
+    {
+        dashAsGateReset();
+        CHECK(dashAsSubmit(4, kNow));
+        CHECK(dashAsConfirmGear(4, kNow + 100) == AS_CONFIRM_COMPLETE);
+        // pending cleared -> gate open again
+        CHECK(dashAsGateEval(kNow + 100, okInputs()) == AS_SUBMIT);
+    }
+    // codes 0 (INVALID) and 7 (SNA) never confirm
+    {
+        dashAsGateReset();
+        CHECK(dashAsSubmit(4, kNow));
+        CHECK(dashAsConfirmGear(0, kNow + 100) == AS_CONFIRM_WAIT);
+        CHECK(dashAsConfirmGear(7, kNow + 200) == AS_CONFIRM_WAIT);
+        CHECK(dashAsConfirmGear(4, kNow + 300) == AS_CONFIRM_COMPLETE);
+    }
+    // N (3) matches its own pending target but is outside {1,2,4}: waits
+    {
+        dashAsGateReset();
+        CHECK(dashAsSubmit(3, kNow));
+        CHECK(dashAsConfirmGear(3, kNow + 100) == AS_CONFIRM_WAIT);
+    }
+    // no pending -> idle
+    {
+        dashAsGateReset();
+        CHECK(dashAsConfirmGear(4, kNow) == AS_CONFIRM_IDLE);
+    }
+    // deadline expiry: retry first, abandon at retryMax with a reason
+    {
+        dashAsGateReset();
+        CHECK(dashAsSubmit(4, kNow));                       // deadline kNow+1000
+        CHECK(dashAsConfirmGear(1, kNow + 1001) == AS_CONFIRM_RETRY);
+        CHECK(dashAsSubmit(4, kNow + 2000));                // the one retry
+        CHECK(dashAsConfirmGear(1, kNow + 3001) == AS_CONFIRM_ABANDONED);
+        CHECK(dashAsLastAbandonReason() != 0);
+        // abandoned -> pending cleared -> gate open (caller re-arms policy)
+        CHECK(dashAsGateEval(kNow + 3001, okInputs()) == AS_SUBMIT);
+    }
+
     if (g_fail == 0) {
         std::printf("native autoshift: ALL PASS\n");
     }
