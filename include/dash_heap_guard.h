@@ -220,11 +220,23 @@ inline int dashHgTcbEval(const DashHgTcbBase *base, uint32_t curNumber,
 // 绊网仅编入 P4 构建（T2CAN 黄金基线零行为差异）：p4_3can build_flags
 // 定义 DASH_HEAP_GUARD_V2。纯决策核无条件编译（原生测试钉死语义）。
 #if defined(ESP_PLATFORM) && !defined(NATIVE_BUILD) && defined(DASH_HEAP_GUARD_V2)
+#include <stddef.h> // offsetof
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "dash_tcb_trap.h"
+
+// 编译期钉死 TCB 字段偏移（终审 Important #1，2026-11-06）：TCB+0x30 =
+// pxStackBase、TCB+0x48 = pxEndOfStack 只在本 sdkconfig 形态下成立
+// （MAX_TASK_NAME_LEN=16 + SMP + 无 list-integrity 字节；IDF 自身以
+// pxDummy6/pxDummy8 ↔ pxStack/pxEndOfStack 的 _Static_assert 锚定同两值）。
+// 配置漂移（如 name-len 调 24）会移动字段 → 账本门全体失败 → 真 carve
+// 重新绊、构建仍绿、实车复发 —— 现在改为编译期爆炸，第一时间暴露。
+_Static_assert(offsetof(StaticTask_t, pxDummy6) == 0x30u,
+               "pxStackBase offset drifted: TCB+0x30 assumption broken");
+_Static_assert(offsetof(StaticTask_t, pxDummy8) == 0x48u,
+               "pxEndOfStack offset drifted: TCB+0x48 assumption broken");
 
 // 取证结构体：.bss 落位，CAPTURE_DRAM coredump 直接捞到。绊网瞬间填好
 // 再 abort() —— 不依赖任何控制台输出（车内无监听者）。

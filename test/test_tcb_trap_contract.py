@@ -267,6 +267,20 @@ class CarveGlueContractTests(unittest.TestCase):
         nxt = self.dash.index('strncmp(start, "heap_guard_test', status)
         self.assertIn("carves=", self.dash[status:nxt])
 
+    def test_tcb_field_offsets_pinned_by_static_assert(self):
+        # Review finding (final, 2026-11-06): TCB+0x48 == pxEndOfStack and
+        # TCB+0x30 == pxStackBase hold ONLY under this sdkconfig (task name
+        # len 16, SMP, no list-integrity bytes). A silent config bump would
+        # move the field, fail the ledger gate on every read, and bring the
+        # in-car false-trip family back with fully green builds. The offsets
+        # must be compile-time pinned inside the ESP gate.
+        start = self.guard.index(
+            '#if defined(ESP_PLATFORM) && !defined(NATIVE_BUILD) '
+            '&& defined(DASH_HEAP_GUARD_V2)')
+        body = self.guard[start:]
+        self.assertIn("_Static_assert(offsetof(StaticTask_t, pxDummy8) == 0x48u", body)
+        self.assertIn("_Static_assert(offsetof(StaticTask_t, pxDummy6) == 0x30u", body)
+
 
 if __name__ == "__main__":
     unittest.main()
