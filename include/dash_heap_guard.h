@@ -153,6 +153,7 @@ enum DashHgTcbVerdict
     kDashHgTcbTripName = 3,      // 同号而名字头 8 字节被改写
     kDashHgTcbTripStackBase = 4, // 同号而 pxStackBase 被改写
     kDashHgTcbTripTop = 5,       // pxTopOfStack 越出 [pxStackBase, dramEnd)
+    kDashHgTcbAdoptCarve = 6,    // IDF 惰性协处理器 carve：换基线不绊（v4）
 };
 
 struct DashHgTcbBase
@@ -187,17 +188,30 @@ inline void dashHgPackName8(const char *name, uint32_t *a, uint32_t *b)
 }
 
 // dramEnd = 内部 DRAM 段顶（P4: 0x4ffc0000，与 dashHgRangeOk 同段）。
+// saTcbstack/saAllocator = 栈顶 RvCoprocSaveArea 账本（调用方读好传入，
+// 保持纯函数）：sa_tcbstack 只在 allocator==0 时写一次（=最初基址）、
+// sa_allocator = carve 后新基址（游标逐次前移）。
 inline int dashHgTcbEval(const DashHgTcbBase *base, uint32_t curNumber,
                          uint32_t curNameA, uint32_t curNameB,
                          uint32_t curStackBase, uint32_t curTopOfStack,
-                         uint32_t dramEnd)
+                         uint32_t dramEnd,
+                         uint32_t saTcbstack, uint32_t saAllocator)
 {
     if (curNumber != base->taskNumber)
         return kDashHgTcbAdopt; // 同址新任务（句柄回收）：重新收养
     if (curNameA != base->nameA || curNameB != base->nameB)
         return kDashHgTcbTripName;
     if (curStackBase != base->stackBase)
+    {
+        // IDF 惰性协处理器 carve：sa 账本互锁（pxPortGetCoprocArea 语义）。
+        // 注意 sa_tcbstack 只在 allocator==0 时写一次（=最初基址）——连环
+        // carve（先 FPU 后 PIE）时它低于已更新的基线，故判据是 ≤ 而非 ==。
+        if (saAllocator != 0 && saAllocator == curStackBase
+            && curStackBase > base->stackBase
+            && saTcbstack != 0 && saTcbstack <= base->stackBase)
+            return kDashHgTcbAdoptCarve;
         return kDashHgTcbTripStackBase;
+    }
     if (curTopOfStack < curStackBase || curTopOfStack >= dramEnd)
         return kDashHgTcbTripTop;
     return kDashHgTcbOk;
@@ -416,7 +430,8 @@ inline bool dashHgTcbScan(bool confirm)
             continue;
         }
         int v = dashHgTcbEval(&dashHgTcbBaseline[idx], st.xTaskNumber,
-                              nameA, nameB, stackBase, top, 0x4ffc0000u);
+                              nameA, nameB, stackBase, top, 0x4ffc0000u,
+                              0u, 0u); // sa 账本占位：Task 2 接真值
         if (v == kDashHgTcbAdopt)
         {
             // 句柄回收再利用：整槽换新基线

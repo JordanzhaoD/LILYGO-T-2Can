@@ -249,12 +249,15 @@ void test_tcb_matching_observation_is_ok()
     DashHgTcbBase b = tcbBaseline("can_rt", 7, 0x4ff79000u);
     uint32_t nameA = 0, nameB = 0;
     dashHgPackName8("can_rt", &nameA, &nameB);
-    // pxTopOfStack somewhere inside [base, dramEnd): stacks grow down
+    // pxTopOfStack somewhere inside [base, dramEnd): stacks grow down.
+    // saTcbstack/saAllocator = 0: task never carved, ledger absent.
     TEST_ASSERT_EQUAL(kDashHgTcbOk, dashHgTcbEval(&b, 7, nameA, nameB,
-                                                  0x4ff79000u, 0x4ff7a080u, kDramEnd));
+                                                  0x4ff79000u, 0x4ff7a080u, kDramEnd,
+                                                  0u, 0u));
     // top equal to base is legal (deepest possible growth)
     TEST_ASSERT_EQUAL(kDashHgTcbOk, dashHgTcbEval(&b, 7, nameA, nameB,
-                                                  0x4ff79000u, 0x4ff79000u, kDramEnd));
+                                                  0x4ff79000u, 0x4ff79000u, kDramEnd,
+                                                  0u, 0u));
 }
 
 void test_tcb_recycled_handle_adopts()
@@ -264,7 +267,8 @@ void test_tcb_recycled_handle_adopts()
     uint32_t nameA = 0, nameB = 0;
     dashHgPackName8("recycle", &nameA, &nameB);
     TEST_ASSERT_EQUAL(kDashHgTcbAdopt, dashHgTcbEval(&b, 13, nameA, nameB,
-                                                     0x4ff50000u, 0x4ff50100u, kDramEnd));
+                                                     0x4ff50000u, 0x4ff50100u, kDramEnd,
+                                                     0u, 0u));
 }
 
 void test_tcb_name_rewrite_trips()
@@ -274,7 +278,8 @@ void test_tcb_name_rewrite_trips()
     uint32_t nameA = 0, nameB = 0;
     dashHgPackName8("\xa5\xa5\xa5\xa5\xa5_rt", &nameA, &nameB);
     TEST_ASSERT_EQUAL(kDashHgTcbTripName, dashHgTcbEval(&b, 7, nameA, nameB,
-                                                        0x4ff79000u, 0x4ff7a080u, kDramEnd));
+                                                        0x4ff79000u, 0x4ff7a080u, kDramEnd,
+                                                        0u, 0u));
 }
 
 void test_tcb_stack_base_rewrite_trips()
@@ -283,7 +288,8 @@ void test_tcb_stack_base_rewrite_trips()
     uint32_t nameA = 0, nameB = 0;
     dashHgPackName8("can_rt", &nameA, &nameB);
     TEST_ASSERT_EQUAL(kDashHgTcbTripStackBase, dashHgTcbEval(&b, 7, nameA, nameB,
-                                                             0x4ff88000u, 0x4ff7a080u, kDramEnd));
+                                                             0x4ff88000u, 0x4ff7a080u, kDramEnd,
+                                                             0u, 0u));
 }
 
 void test_tcb_top_of_stack_out_of_bounds_trips()
@@ -293,10 +299,103 @@ void test_tcb_top_of_stack_out_of_bounds_trips()
     dashHgPackName8("can_rt", &nameA, &nameB);
     // 0xA5-filled TCB: pxTopOfStack reads 0xa5a5a5a5 — below base and outside DRAM
     TEST_ASSERT_EQUAL(kDashHgTcbTripTop, dashHgTcbEval(&b, 7, nameA, nameB,
-                                                       0x4ff79000u, 0xa5a5a5a5u, kDramEnd));
+                                                       0x4ff79000u, 0xa5a5a5a5u, kDramEnd,
+                                                       0u, 0u));
     // above the DRAM top is equally poisoned
     TEST_ASSERT_EQUAL(kDashHgTcbTripTop, dashHgTcbEval(&b, 7, nameA, nameB,
-                                                       0x4ff79000u, 0x50000000u, kDramEnd));
+                                                       0x4ff79000u, 0x50000000u, kDramEnd,
+                                                       0u, 0u));
+}
+
+// ── TCB carve verdict v4 (2026-11-05 P0 adjudication) ─────────────────────
+// The "+0x84 pxStackBase bump" family is ESP-IDF's LEGAL lazy coprocessor
+// context save: pxPortGetCoprocArea() carves sizeof(RvFPUSaveArea)=132 at
+// the task stack bottom and bumps pxStackBase. The sa ledger at the stack
+// top (RvCoprocSaveArea) interlock decides: allocator cursor == new base,
+// forward move, original base (written once, only when allocator==0) at or
+// below our baseline. Real-case addresses: can_rt 0x4ff7fe6c -> 0x4ff7fef0.
+
+void test_tcb_fpu_carve_accepted()
+{
+    // can_rt's first float (0x488 steering angle * 0.1f, in-car only):
+    // FPU carve, base+0x84, ledger coherent -> adopt, never trip.
+    DashHgTcbBase b = tcbBaseline("can_rt", 12, 0x4ff7fe6cu);
+    TEST_ASSERT_EQUAL(kDashHgTcbAdoptCarve, dashHgTcbEval(
+                          &b, b.taskNumber, b.nameA, b.nameB,
+                          0x4ff7fef0u,  // cur = base + 0x84 (RvFPUSaveArea = 132)
+                          0x4ff81000u,  // top
+                          kDramEnd,
+                          0x4ff7fe6cu,  // saTcbstack == original base
+                          0x4ff7fef0u)); // saAllocator == new base
+}
+
+void test_tcb_cumulative_carve_accepted()
+{
+    // Second coproc (PIE-shaped +60) after the FPU carve: sa_tcbstack keeps
+    // the ORIGINAL base (written once) — below the updated baseline. The
+    // interlock is <=, not ==.
+    DashHgTcbBase b = tcbBaseline("can_rt", 12, 0x4ff7fef0u); // post-FPU baseline
+    TEST_ASSERT_EQUAL(kDashHgTcbAdoptCarve, dashHgTcbEval(
+                          &b, b.taskNumber, b.nameA, b.nameB,
+                          0x4ff7ff2cu,  // cur = baseline + 60 (PIE-shaped)
+                          0x4ff81000u, kDramEnd,
+                          0x4ff7fe6cu,  // original base, < baseline
+                          0x4ff7ff2cu)); // allocator cursor == new base
+}
+
+void test_tcb_carve_without_ledger_trips()
+{
+    // Ledger absent (allocator==0, task never carved): a moved stack base
+    // is still corruption. No free pass without the ledger.
+    DashHgTcbBase b = tcbBaseline("can_rt", 12, 0x4ff7fe6cu);
+    TEST_ASSERT_EQUAL(kDashHgTcbTripStackBase, dashHgTcbEval(
+                          &b, b.taskNumber, b.nameA, b.nameB,
+                          0x4ff7fef0u, 0x4ff81000u, kDramEnd,
+                          0x4ff7fe6cu, 0u));
+}
+
+void test_tcb_carve_ledger_mismatch_trips()
+{
+    // Ledger cursor does not equal the observed new base: not IDF's doing.
+    DashHgTcbBase b = tcbBaseline("can_rt", 12, 0x4ff7fe6cu);
+    TEST_ASSERT_EQUAL(kDashHgTcbTripStackBase, dashHgTcbEval(
+                          &b, b.taskNumber, b.nameA, b.nameB,
+                          0x4ff7fef0u, 0x4ff81000u, kDramEnd,
+                          0x4ff7fe6cu, 0x4ff7fef4u)); // cur + 4
+}
+
+void test_tcb_backward_carve_trips()
+{
+    // A self-consistent-looking ledger on a BACKWARD move: only forward
+    // carves are accepted (restore-on-delete is handled by retire, and
+    // backward jumps are corruption regardless of the ledger).
+    DashHgTcbBase b = tcbBaseline("can_rt", 12, 0x4ff7fe6cu);
+    TEST_ASSERT_EQUAL(kDashHgTcbTripStackBase, dashHgTcbEval(
+                          &b, b.taskNumber, b.nameA, b.nameB,
+                          0x4ff7fe1cu, 0x4ff81000u, kDramEnd, // base - 0x50
+                          0x4ff7fe1cu, 0x4ff7fe1cu));
+}
+
+void test_tcb_name_rewrite_beats_valid_carve()
+{
+    // Identity check runs first: a renamed task with a perfect ledger is a
+    // name trip, not a carve adoption.
+    DashHgTcbBase b = tcbBaseline("can_rt", 7, 0x4ff7fe6cu);
+    TEST_ASSERT_EQUAL(kDashHgTcbTripName, dashHgTcbEval(
+                          &b, b.taskNumber, b.nameA ^ 0x1u, b.nameB,
+                          0x4ff7fef0u, 0x4ff81000u, kDramEnd,
+                          0x4ff7fe6cu, 0x4ff7fef0u));
+}
+
+void test_tcb_top_below_adopted_base_trips()
+{
+    // After adoption the NEW baseline governs overflow: sp below it means
+    // the carve area itself is being eaten — still a trip.
+    DashHgTcbBase b = tcbBaseline("can_rt", 7, 0x4ff7fef0u); // adopted baseline
+    TEST_ASSERT_EQUAL(kDashHgTcbTripTop, dashHgTcbEval(
+                          &b, b.taskNumber, b.nameA, b.nameB,
+                          0x4ff7fef0u, 0x4ff7fe00u, kDramEnd, // top < base
+                          0u, 0u));
 }
 
 int runUnityTests()
@@ -326,6 +425,13 @@ int runUnityTests()
     RUN_TEST(test_tcb_name_rewrite_trips);
     RUN_TEST(test_tcb_stack_base_rewrite_trips);
     RUN_TEST(test_tcb_top_of_stack_out_of_bounds_trips);
+    RUN_TEST(test_tcb_fpu_carve_accepted);
+    RUN_TEST(test_tcb_cumulative_carve_accepted);
+    RUN_TEST(test_tcb_carve_without_ledger_trips);
+    RUN_TEST(test_tcb_carve_ledger_mismatch_trips);
+    RUN_TEST(test_tcb_backward_carve_trips);
+    RUN_TEST(test_tcb_name_rewrite_beats_valid_carve);
+    RUN_TEST(test_tcb_top_below_adopted_base_trips);
     return UNITY_END();
 }
 
