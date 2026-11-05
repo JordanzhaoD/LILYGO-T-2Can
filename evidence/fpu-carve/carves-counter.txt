@@ -1,0 +1,12 @@
+[heap_guard] slots=6 carves=2 forensic{magic=0x32444748 reason=0x00000000 expected=0x00000000 actual=0x00000000 ms=0 armed=0}
+  slot[0] dashHandler    set   members=1: {ptr=0x4ff72fc8 head=0x4010e5c0}
+  slot[1] appDriver      stable members=1: {ptr=0x4ffbc110 head=0x4010e658}
+  slot[2] appHandler     stable members=1: {ptr=0x4ffbc244 head=0x4010e5c0}
+  slot[3] appActiveHandler set   members=1: {ptr=0x4ff72fc8 head=0x4010e5c0}
+  slot[4] appDriverSecondary stable members=1: {ptr=0x4ff738e4 head=0x4010e67c}
+  slot[5] appDriverTertiary stable members=1: {ptr=0x4ff75924 head=0x4010e67c}
+E (1044492) system_api: 0 mac type is incorrect (not found)
+E (1045412) system_api: 0 mac type is incorrect (not found)
+E (1046428) system_api: 0 mac type is incorrect (not found)
+E (1047411) system_api: 0 mac type is incorrect (not found)
+E (1048410) system_api: 0 mac type is incorrect (not found)

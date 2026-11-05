@@ -1,0 +1,166 @@
+ESP-ROM:esp32p4-eco7-20260109
+Build:Jan  9 2026
+rst:0xc (SW_CPU_RESET),boot:0x30f (SPI_FAST_FLASH_BOOT)
+Core0 Saved PC:0x4ff2b22a
+Core1 Saved PC:0x4ff26056
+SPI mode:DIO, clock div:1
+load:0x4ffb60d0,len:0x1048
+load:0x4ffac2c0,len:0xe2c
+load:0x4ffaefc0,len:0x39ac
+entry 0x4ffac2c0
+I (247) hex_psram: vendor id    : 0x0d (AP)
+I (247) hex_psram: Latency      : 0x01 (Fixed)
+I (248) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+I (248) hex_psram: dev id       : 0x03 (generation 4)
+I (253) hex_psram: density      : 0x07 (256 Mbit)
+I (257) hex_psram: good-die     : 0x06 (Pass)
+I (261) hex_psram: SRF          : 0x02 (Slow Refresh)
+I (266) hex_psram: BurstType    : 0x00 ( Wrap)
+I (270) hex_psram: BurstLen     : 0x03 (2048 Byte)
+I (275) hex_psram: BitMode      : 0x01 (X16 Mode)
+I (279) hex_psram: Readlatency  : 0x02 (10 cycles@Fixed)
+I (284) hex_psram: DriveStrength: 0x00 (1/1)
+I (288) MSPI Timing: Enter psram timing tuning
+I (451) esp_psram: Found 32MB PSRAM device
+I (452) esp_psram: Speed: 80MHz
+I (454) hex_psram: psram CS IO is dedicated
+I (454) cpu_start: Multicore app
+I (1681) esp_psram: SPI SRAM memory test OK
+I (1690) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+I (1691) cpu_start: Pro cpu start user code
+I (1691) cpu_start: cpu freq: 400000000 Hz
+I (1693) app_init: Application information:
+I (1697) app_init: Project name:     ev_open_can_tools
+I (1702) app_init: App version:      6.0.0-beta11
+I (1706) app_init: Compile time:     Nov  5 2026 19:23:03
+I (1711) app_init: ELF file SHA256:  4e290856b...
+I (1716) app_init: ESP-IDF:          6.0.1
+I (1720) efuse_init: Min chip rev:     v3.1
+I (1723) efuse_init: Max chip rev:     v3.99
+I (1728) efuse_init: Chip rev:         v3.2
+I (1732) heap_init: Initializing. RAM available for dynamic allocation:
+I (1739) heap_init: At 4FF3FFB0 len 0007B010 (492 KiB): RETENT_RAM
+I (1744) heap_init: At 4FFBAFC0 len 00004BF0 (18 KiB): RAM
+I (1753) heap_init: At 50108080 len 00007F80 (31 KiB): RTCRAM
+I (1754) heap_init: At 30100250 len 00001DB0 (7 KiB): SPM
+I (2520) esp_psram: Adding pool of 32768K of PSRAM memory to heap allocator
+I (2521) spi_flash: detected chip: gd
+I (2521) spi_flash: flash io: dio
+I (2522) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (2528) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (2535) esp_core_dump_flash: Init core dump to flash
+I (2540) esp_core_dump_flash: Found partition 'coredump' @ 15e0000 1048576 bytes
+I (3135) esp_core_dump_flash: Core dump data checksum is correct
+I (3136) esp_core_dump_flash: Found core dump 663232 bytes in flash @ 0x15e0000
+I (3138) main_task: Started on CPU0
+I (3141) esp_psram: Reserving pool of 32K of internal memory for DMA/internal allocations
+I (3149) main_task: Calling app_main()
+ESP32 TWAI ready @ 500k
+[REC2] blackbox ready: 9437184 bytes at 0x016e0000 (existing header)
+[REC2] protection rebuilt from 0 session meta(s)
+[REC2] blackbox writer task started
+[REC2] boot #335 reason=3 diedMidFlush=0
+[BOOT] Prefs loaded HW=0
+[BOOT] canActive=YES
+I (7117) dash_gateway: blocked domain cache allocated in PSRAM (3200 bytes)
+I (7118) dash_gateway: pending DNS query cache allocated in PSRAM (23552 bytes)
+I (7124) dash_gateway: blacklist rule cache allocated in PSRAM (9700 bytes)
+I (7131) dash_gateway: whitelist rule cache allocated in PSRAM (19400 bytes)
+I (7139) dash_gateway: DNS response cache allocated in PSRAM (83456 bytes)
+I (7256) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+W (7256) H_API: ESP-Hosted config valid; reuse existing config
+I (7259) H_API: ** add_esp_wifi_remote_channels **
+I (7265) H_SDIO_DRV: sdio_data_to_rx_buf_task started
+I (7269) H_API: ESP-Hosted Try to communicate with ESP-Hosted slave
+
+I (7274) transport: Attempt connection with slave: retry[0]
+W (7280) H_SDIO_DRV: Reset slave using GPIO[54]
+I (7284) os_wrapper_esp: GPIO [54] configured
+I (8808) sdio_wrapper: SDIO master: Slot 1, Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+I (8808) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+I (8812) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+I (8853) sdio_wrapper: Function 0 Blocksize: 512
+I (8853) sdio_wrapper: Function 1 Blocksize: 512
+I (8953) H_SDIO_DRV: Card init success, TRANSPORT_RX_ACTIVE
+I (8953) transport: set_transport_state: 1
+I (8953) transport: Waiting for esp_hosted slave to be ready
+I (8968) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+I (8968) H_SDIO_DRV: Open data path at slave
+I (8968) H_SDIO_DRV: Starting SDIO process rx task
+I (8970) H_SDIO_DRV: Received ESP_PRIV_IF type message
+I (8975) transport: Received INIT event from ESP32 peripheral
+I (8980) transport: EVENT: 12
+I (8983) transport: Identified slave [esp32c6]
+I (8987) transport: EVENT: 11
+I (8990) transport: capabilities: 0xd
+I (8993) transport: Features supported are:
+I (8997) transport: 	 * WLAN
+I (9000) transport: 	   - HCI over SDIO
+I (9003) transport: 	   - BLE only
+I (9007) transport: EVENT: 13
+W (9009) transport: Version mismatch: Host [2.13.0] > Co-proc [0.0.0] ==> Upgrade co-proc to avoid RPC timeouts
+W (9019) transport: Co-processor fw did not report transport size,
+W (9025) transport: and may not be compatible with host.
+W (9030) transport: Please update the co-processor firmware.
+I (9035) transport: ESP board type is : 13
+
+W (9040) H_SDIO_DRV: co-processor's number of Tx buffers is not known
+W (9046) H_SDIO_DRV: rx buffers on host will be dynamically allocated: allocation attempt may fail
+I (9054) transport: Base transport is set-up, TRANSPORT_TX_ACTIVE
+I (9060) H_API: Transport active
+I (9063) transport: Slave chip Id[12]
+I (9067) transport: raw_tp_dir[-], flow_ctrl: low[60] high[80]
+I (9072) transport: transport_delayed_init
+I (9076) esp_cli: Registering command: crash
+I (9080) esp_cli: Registering command: reboot
+I (9084) esp_cli: Registering command: mem-dump
+I (9088) esp_cli: Registering command: task-dump
+I (9093) esp_cli: Registering command: cpu-dump
+I (9097) esp_cli: Registering command: heap-trace
+I (9101) esp_cli: Registering command: sock-dump
+I (9106) esp_cli: Registering command: host-power-save
+I (9110) hci_stub_drv: Host BT Support: Disabled
+I (9115) H_SDIO_DRV: Received INIT event
+I (9118) H_SDIO_DRV: Event type: 0x22
+I (9122) H_SDIO_DRV: Write thread started
+[WIFI] esp_hosted bring-up ok (attempt 1/3)
+[WIFI] esp_hosted bring-up err=0
+I (9157) transport: Attempt connection with slave: retry[0]
+I (9157) transport: Transport is already up
+I (9270) RPC_WRAP: Coprocessor Boot-up
+I (9528) wifiap: home channel change (no payload), now=1 was=0
+I (9545) RPC_WRAP: ESP Event: wifi station started
+I (9556) dash_gateway: AP DNS configured -> 100.100.1.1
+I (9556) dash_gateway: DNS socket bound to UDP 53 (fd=48)
+W (9556) dash_gateway: ip_napt_enable_netif failed
+I (9559) dash_gateway: AP ready ip=100.100.1.1 clients=0 dns=configured nat=waiting
+[WIFI] AP: Atlas-P4-3CAN  IP: 100.100.1.1
+[CFG] Handler switched to LEGACY
+W (9584) wifiap: napt bit lost (AP bounce?), re-applying
+[WEB] Dashboard: http://100.100.1.1
+I (9586) dash_gateway: AP DNS already configured, skipping DHCP restart
+I (9595) wifiap: home channel change (no payload), now=1 was=1
+I (9598) RPC_WRAP: ESP Event: softap started
+[BOOT] ev-open-can-tools ready
+I (9605) RPC_WRAP: ESP Event: softap stopped
+W (9596) dash_gateway: ip_napt_enable_netif failed
+[BUS] bus_enable=0x7 (bit1=CanB bit2=CanC)
+CAN B (TWAI1) ready @ 500k
+CAN C (TWAI2) ready @ 500k (listen-only)
+I (9626) RPC_WRAP: ESP Event: softap started
+[heap_guard] TCB sentinel carve-aware (IDF lazy coproc save exempt), patrol 250ms
+I (9617) dash_gateway: AP ready ip=100.100.1.1 clients=0 dns=configured nat=waiting
+[DIAG] Serial commands ready. Type help.
+[REC2] SNTP sync started
+[REC2] wall clock synced
+[WIFI] Trying slot 0: JordanAP
+I (10663) H_API: esp_wifi_remote_connect
+[WIFI] Connecting to JordanAP...
+W (11695) wifiap: napt bit lost (AP bounce?), re-applying
+I (11695) dash_gateway: AP DNS already configured, skipping DHCP restart
+I (11695) dash_gateway: AP ready ip=100.100.1.1 clients=0 dns=configured nat=on
+I (14008) RPC_WRAP: ESP Event: Station mode: Connected
+I (14008) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x4006a51a
+[WIFI] Connected to JordanAP IP: 192.168.1.146
+[WIFI] AP channel already matches STA CH1
+I (15276) dash_gateway: STA ready ip=192.168.1.146 upstream_dns=192.168.1.1 mode=auto dhcp=192.168.1.1 nat=on

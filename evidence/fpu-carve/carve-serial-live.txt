@@ -1,0 +1,9 @@
+
+[system_status]
+uptime=89s firmware=6.0.0-beta11 idf=6.0.1
+cpu=400MHz load=sampling
+heap_free=33560971 heap_largest=33030132 heap_min=33541959 tasks=21
+wifi=AP+STA connected=yes ap_clients=0 rssi=-37
+temp=36.1C
+
+[heap_guard] TCB carve accepted httpd 0x4ff77b10 -> 0x4ff77b94 (IDF lazy coproc save)
