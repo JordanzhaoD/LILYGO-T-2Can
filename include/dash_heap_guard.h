@@ -325,6 +325,7 @@ inline void dashHeapGuardCheckStatics()
 static DashHgTcbBase dashHgTcbBaseline[DASH_HG_MAX_TASKS];
 static uint8_t dashHgTcbBaselineCount = 0;
 static TaskStatus_t dashHgTcbStats[DASH_HG_MAX_TASKS]; // .bss：巡逻栈放不下
+static uint16_t dashHgTcbCarves = 0; // v4：已收养的合法协处理器 carve 数
 
 inline int dashHgTcbIndexOf(uint32_t handle)
 {
@@ -429,9 +430,38 @@ inline bool dashHgTcbScan(bool confirm)
             dashHgTcbAdopt(handle, st.xTaskNumber, nameA, nameB, stackBase);
             continue;
         }
+        // v4 sa 账本（RvCoprocSaveArea）：end 读自 TCB+0x48（pxEndOfStack，
+        // 与 IDF vPortTCBPreDeleteHook 内联 lw 72(s1) 一致）。账本位于
+        // align16(end-24)：{enable, sa_tcbstack, sa_allocator, coprocs[3]}。
+        // 只有 end/sa 落在内部 DRAM 段才解引用——TCB+0x48 本身被腐写成
+        // 野指针时不给巡逻队二次伤害（越界 → 0,0 → 分类器自然判 trip）。
+        uint32_t saTcb = 0, saAllo = 0;
+        uint32_t end = handle ? *(volatile uint32_t *)(uintptr_t)(handle + 0x48u) : 0;
+        uint32_t sa = (end - 24u) & ~15u;
+        if (end > stackBase && (sa & 0xfff00000u) == 0x4ff00000u
+            && sa + 12u <= 0x4ffc0000u)
+        {
+            saTcb = *(volatile uint32_t *)(uintptr_t)(sa + 4u);
+            saAllo = *(volatile uint32_t *)(uintptr_t)(sa + 8u);
+        }
         int v = dashHgTcbEval(&dashHgTcbBaseline[idx], st.xTaskNumber,
                               nameA, nameB, stackBase, top, 0x4ffc0000u,
-                              0u, 0u); // sa 账本占位：Task 2 接真值
+                              saTcb, saAllo);
+        if (v == kDashHgTcbAdoptCarve)
+        {
+            // IDF 惰性协处理器 carve（首个浮点/DSP/PIE 指令）：先留证据
+            // 再换基线。基线更新后同一 carve 不会重报；后续新 carve =
+            // 新事件，理应再报一行（can_rt=开车后 0x488 首浮点、httpd=
+            // 客户端连上后 fps 首浮点——日志即实车定案闭环）。sa 互锁
+            // 本身就是确认：不进 suspicious/二次确认。
+            Serial.printf("[heap_guard] TCB carve accepted %s 0x%08x -> 0x%08x (IDF lazy coproc save)\n",
+                          st.pcTaskName,
+                          (unsigned)dashHgTcbBaseline[idx].stackBase,
+                          (unsigned)stackBase);
+            dashHgTcbBaseline[idx].stackBase = stackBase;
+            ++dashHgTcbCarves;
+            continue;
+        }
         if (v == kDashHgTcbAdopt)
         {
             // 句柄回收再利用：整槽换新基线

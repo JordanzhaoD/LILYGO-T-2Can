@@ -204,5 +204,46 @@ class TcbTrapSemanticsContractTests(unittest.TestCase):
         self.assertLess(guard, store)
 
 
+class CarveGlueContractTests(unittest.TestCase):
+    """v4 (2026-11-05 P0 adjudication): the +0x84 pxStackBase bump family is
+    ESP-IDF's LEGAL lazy coprocessor context save — pxPortGetCoprocArea()
+    carves sizeof(RvFPUSaveArea)=132 at the task stack bottom and bumps the
+    base (can_rt 0x4ff7fe6c -> 0x4ff7fef0, httpd likewise). The patrol scan
+    must read the stack-top sa ledger (RvCoprocSaveArea) and adopt
+    legitimate carves instead of tripping on them."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.guard = GUARD.read_text()
+
+    def scan_body(self):
+        start = self.guard.index("inline bool dashHgTcbScan")
+        return self.guard[start:]
+
+    def test_scan_reads_ledger_with_range_gate(self):
+        # TCB+0x48 (pxEndOfStack) may itself be corrupt: the derived sa
+        # pointer is dereferenced only inside the internal-DRAM segment
+        # gate, so a wild end-of-stack can never crash the patrol itself.
+        # Out-of-range yields (0,0) and the evaluator trips naturally.
+        body = self.scan_body()
+        self.assertIn("handle + 0x48u", body)
+        self.assertIn("0x4ff00000u", body)
+        self.assertIn("0x4ffc0000u", body)
+
+    def test_scan_has_carve_adoption_branch(self):
+        # Adoption moves the baseline to the carved base, counts the event,
+        # and lets the loop continue (no suspicious, no confirm pass).
+        body = self.scan_body()
+        self.assertIn("kDashHgTcbAdoptCarve", body)
+        self.assertIn("dashHgTcbBaseline[idx].stackBase = stackBase", body)
+        self.assertIn("++dashHgTcbCarves", body)
+
+    def test_carve_log_line_format(self):
+        # The carve line is the field confirmation channel: seeing it plus
+        # zero crashes closes the adjudication loop.
+        self.assertIn("TCB carve accepted", self.guard)
+        self.assertIn("(IDF lazy coproc save)", self.guard)
+
+
 if __name__ == "__main__":
     unittest.main()
