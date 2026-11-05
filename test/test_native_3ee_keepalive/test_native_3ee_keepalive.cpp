@@ -9,6 +9,14 @@
 // flipped from a continuous 2Hz carrier (max gap 964ms) to six 2-5s gaps
 // across its parking endgame. The tail-ride TX starves with the carrier and
 // the car-side consumer ages out bit46 + the speed offset (FSD UI flicker).
+// 2026-11-06 second field round: the first fix (1800ms trigger) still
+// flickered. Re-measured idle carrier: ~945ms beats with quantized skips
+// (1.94/2.94/3.94s). Driving holds bit46 through 964ms gaps, so consumer
+// aging sits somewhere in (964ms, 1940ms) — the 1800ms trigger could land
+// AFTER aging in every window. The trigger now bounds worst-case consumer
+// hunger at 750ms (safe margin under the 964ms stability floor); an idle
+// 945ms beat gets one between-beat keep-alive, a 2Hz drive beat (500ms)
+// gets none.
 // These tests pin the pure timing policy of the keep-alive state machine:
 // silence trigger, cadence, template expiry, instant native yield, per-page
 // independence, and gate handling. Payload patching / gate mirroring live in
@@ -32,18 +40,30 @@ void test_silence_below_threshold_no_action()
 {
     ka.observeMux0(kMux0Native, CAN_BUS_VEH, 1000);
     ka.observeMux1(kMux1Native, CAN_BUS_VEH, 1000);
-    // 1799ms of silence: still under kSilenceTriggerMs (1800).
+    // 749ms of silence: still under kSilenceTriggerMs (750). This is the
+    // driving regime (2Hz beats, max native gap 964ms): no keep-alive.
     TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::None,
-                          (int)ka.tick(2799, true, true));
+                          (int)ka.tick(1749, true, true));
 }
 
 void test_silence_at_threshold_fires_mux0_first()
 {
     ka.observeMux0(kMux0Native, CAN_BUS_VEH, 1000);
     ka.observeMux1(kMux1Native, CAN_BUS_VEH, 1000);
-    // Exactly 1800ms of silence: eligible (>= boundary).
+    // Exactly 750ms of silence: eligible (>= boundary).
     TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::SendMux0,
-                          (int)ka.tick(2800, true, true));
+                          (int)ka.tick(1750, true, true));
+}
+
+void test_idle_beat_gets_between_beat_keepalive()
+{
+    // 2026-11-06 regression pin: the idle carrier beats at ~945ms — under
+    // the old 1800ms trigger a full idle beat was "silence" and every
+    // endgame window aged the consumer before our first frame. The 750ms
+    // trigger must cover a 950ms beat gap.
+    ka.observeMux0(kMux0Native, CAN_BUS_VEH, 1000);
+    TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::SendMux0,
+                          (int)ka.tick(1950, true, true)); // 950ms gap
 }
 
 void test_mux1_follows_on_next_tick()
@@ -51,25 +71,25 @@ void test_mux1_follows_on_next_tick()
     ka.observeMux0(kMux0Native, CAN_BUS_VEH, 1000);
     ka.observeMux1(kMux1Native, CAN_BUS_VEH, 1000);
     TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::SendMux0,
-                          (int)ka.tick(2800, true, true));
+                          (int)ka.tick(1750, true, true));
     // mux0's cadence timer now holds it back; mux1 fires immediately.
     TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::SendMux1,
-                          (int)ka.tick(2801, true, true));
+                          (int)ka.tick(1751, true, true));
 }
 
 // ── Cadence ────────────────────────────────────────────────────────────────
 
-void test_cadence_boundary_899ms_blocked_900ms_eligible()
+void test_cadence_boundary_749ms_blocked_750ms_eligible()
 {
     ka.observeMux0(kMux0Native, CAN_BUS_VEH, 1000);
-    (void)ka.tick(2800, true, true); // mux0 keep-alive issued at 2800
-    (void)ka.tick(2801, true, true); // mux1 issued at 2801
-    // 2800+899: cadence not yet due for mux0 (and mux1 issued 1ms ago).
+    (void)ka.tick(1750, true, true); // mux0 keep-alive issued at 1750
+    (void)ka.tick(1751, true, true); // mux1 issued at 1751
+    // 1750+749: cadence not yet due for mux0 (and mux1 issued 1ms ago).
     TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::None,
-                          (int)ka.tick(3699, true, true));
-    // 2800+900: mux0 eligible again.
+                          (int)ka.tick(2499, true, true));
+    // 1750+750: mux0 eligible again.
     TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::SendMux0,
-                          (int)ka.tick(3700, true, true));
+                          (int)ka.tick(2500, true, true));
 }
 
 // ── Native yield ───────────────────────────────────────────────────────────
@@ -78,23 +98,29 @@ void test_native_return_yields_instantly()
 {
     ka.observeMux0(kMux0Native, CAN_BUS_VEH, 1000);
     ka.observeMux1(kMux1Native, CAN_BUS_VEH, 1000);
-    (void)ka.tick(2800, true, true); // keep-alive mux0 sent
+    (void)ka.tick(1750, true, true); // keep-alive mux0 sent
     // Native carrier returns; the tail-ride owns the stream again.
-    ka.observeMux0(kMux0Native, CAN_BUS_VEH, 2810);
-    ka.observeMux1(kMux1Native, CAN_BUS_VEH, 2811);
+    ka.observeMux0(kMux0Native, CAN_BUS_VEH, 1760);
+    ka.observeMux1(kMux1Native, CAN_BUS_VEH, 1761);
     TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::None,
-                          (int)ka.tick(4000, true, true));
+                          (int)ka.tick(1762, true, true));
+    // Still quiet well past the old trigger point: the native return
+    // restarted the silence clock.
+    TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::None,
+                          (int)ka.tick(2509, true, true)); // 749ms silence
+    TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::SendMux0,
+                          (int)ka.tick(2510, true, true)); // 750ms: due
 }
 
 void test_native_blip_restarts_the_silence_window()
 {
     ka.observeMux0(kMux0Native, CAN_BUS_VEH, 1000);
-    // A native 1500ms in resets the silence clock: at 1500+1799 no fire.
+    // A native 1500ms in resets the silence clock: at 1500+749 no fire.
     ka.observeMux0(kMux0Native, CAN_BUS_VEH, 2500);
     TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::None,
-                          (int)ka.tick(4299, true, true));
+                          (int)ka.tick(3249, true, true));
     TEST_ASSERT_EQUAL_INT((int)Dash3eeKeepAlive::Action::SendMux0,
-                          (int)ka.tick(4300, true, true));
+                          (int)ka.tick(3250, true, true));
 }
 
 // ── Template expiry (fail-closed) ─────────────────────────────────────────
@@ -249,8 +275,9 @@ int main()
     UNITY_BEGIN();
     RUN_TEST(test_silence_below_threshold_no_action);
     RUN_TEST(test_silence_at_threshold_fires_mux0_first);
+    RUN_TEST(test_idle_beat_gets_between_beat_keepalive);
     RUN_TEST(test_mux1_follows_on_next_tick);
-    RUN_TEST(test_cadence_boundary_899ms_blocked_900ms_eligible);
+    RUN_TEST(test_cadence_boundary_749ms_blocked_750ms_eligible);
     RUN_TEST(test_native_return_yields_instantly);
     RUN_TEST(test_native_blip_restarts_the_silence_window);
     RUN_TEST(test_template_expiry_at_10s_fail_closed);

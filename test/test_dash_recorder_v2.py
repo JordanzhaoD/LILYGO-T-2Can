@@ -131,13 +131,56 @@ class DashRecorderV2LockContractTests(unittest.TestCase):
         # invariant; the flush-task flag died with the flush task).
         self.assertIn("dashRecV2LockRequest", self.rec2)
         lock_start = self.rec2.index("dashRecV2LockRequest")
-        guard_region = self.rec2[lock_start:lock_start + 700]
+        # Window widened 700 → 1200: the range validation (P0 fix,
+        # 2026-11-05) now opens the function before the state guard.
+        guard_region = self.rec2[lock_start:lock_start + 1200]
         self.assertIn("if (recV2State != kRecV2Idle)", guard_region,
                       "lock request refuses while arming is in flight")
         self.assertIn("busy", guard_region,
                       "lock request refuses while a flush is in flight")
         self.assertIn("409", self.dash,
                       "handler answers 409 on the busy path")
+
+    def test_lock_request_validates_window_bounds(self) -> None:
+        # P0 fix (2026-11-05 evening incident): the serial layer called
+        # dashRecV2LockRequest raw and 0/0 + 99999/99999 giant windows
+        # were accepted (27.7h arming window, only a full reboot could
+        # end it). The range check lives INSIDE the lock request — the
+        # single source of truth every entry point (HTTP, serial) shares.
+        lock_at = self.rec2.index("static bool dashRecV2LockRequest(")
+        lock_body = self.rec2[lock_at:lock_at + 1200]
+        self.assertIn("preMs < 10000UL", lock_body,
+                      "pre-window floor is enforced in the engine itself")
+        self.assertIn("preMs > 600000UL", lock_body,
+                      "pre-window ceiling is enforced in the engine itself")
+        self.assertIn("postMs < 5000UL", lock_body,
+                      "post-window floor is enforced in the engine itself")
+        self.assertIn("postMs > 300000UL", lock_body,
+                      "post-window ceiling is enforced in the engine itself")
+        bounds_at = lock_body.index("preMs < 10000UL")
+        state_at = lock_body.index("if (recV2State != kRecV2Idle)")
+        self.assertLess(bounds_at, state_at,
+                        "invalid values are rejected before the busy check")
+
+    def test_unlock_cancels_arming_window(self) -> None:
+        # P0 fix companion: an arming window started by mistake (giant
+        # bounds from the serial layer, wrong bus mask, ...) must be
+        # cancellable WITHOUT creating a session or protecting blocks —
+        # only the "died mid-arming" ledger flag is reclaimed.
+        unlock_at = self.rec2.index("static bool dashRecV2UnlockRequest(")
+        unlock_body = self.rec2[unlock_at:unlock_at + 1400]
+        self.assertIn("kRecV2Arming", unlock_body,
+                      "unlock only works while the window is arming")
+        self.assertIn("not arming", unlock_body,
+                      "any other state is refused with a reason")
+        self.assertIn('putUChar("rv2_flushing", 0)', unlock_body,
+                      "unlock reclaims the died-mid-arming ledger flag")
+        self.assertIn("kRecV2Idle", unlock_body,
+                      "unlock returns the engine to idle (ring keeps rolling)")
+        self.assertIn('strncmp(start, "rv2_unlock", 10)', self.dash,
+                      "serial dispatcher routes rv2_unlock")
+        self.assertIn("rv2_unlock", self.dash,
+                      "serial help mentions rv2_unlock")
 
     def test_seq_nvs_monotonic(self) -> None:
         self.assertIn("rv2_seq", self.rec2)
@@ -713,8 +756,10 @@ class DashRecorderV2CarFieldFixTests(unittest.TestCase):
         # (arming start), cleared inside recBBFinishLock — a boot that reads
         # flag==1 died inside an arming window. The boot ledger clears the
         # flag too, after reading it (scope counts to the live functions).
+        # Window widened 1400 → 2000: the P0 range validation now opens
+        # the lock function (see test_lock_request_validates_window_bounds).
         lock_at = self.rec2.index("static bool dashRecV2LockRequest(")
-        lock_body = self.rec2[lock_at:lock_at + 1400]
+        lock_body = self.rec2[lock_at:lock_at + 2000]
         self.assertEqual(lock_body.count('putUChar("rv2_flushing", 1)'), 1,
                          "arming start raises the flag exactly once")
         finish_at = self.rec2.index("static void recBBFinishLock()")

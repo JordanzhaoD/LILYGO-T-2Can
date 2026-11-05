@@ -41,11 +41,15 @@
 #include "riscv/rv_utils.h"
 
 // trigger 槽位。P4 每核 3 个（SOC_CPU_WATCHPOINTS_NUM），IDF 生产代码
-// 仅在调试器 semihosting 场景使用；板上无调试器 → slot 0 空闲。
-#define DASH_TCB_TRAP_SLOT 0
+// 仅在调试器 semihosting 场景使用；板上无调试器 → slot 0/1 空闲。
+#define DASH_TCB_TRAP_SLOT 0   // httpd pxStackBase（三次腐写受害者）
+#define DASH_TCB_TRAP_SLOT2 1  // can_rt pxStackBase（2026-11-06 早场受害者）
 
-// 已武装的受保护字段地址（0 = 未武装）。自验命令只打这一个字。
-static volatile uint32_t dashHgTrapField = 0;
+// 已武装的受保护字段地址（0 = 未武装）。自验命令只打 slot0 这一个字。
+static volatile uint32_t dashHgTrapField = 0;  // slot 0（httpd）
+static volatile uint32_t dashHgTrapField2 = 0; // slot 1（can_rt）
+// 重布防计数（诊断用：httpd 每次重启换 TCB +1）。
+static volatile uint32_t dashHgTrapRearms = 0;
 
 // 每 hart 的武装验证位图（bit0=core0, bit1=core1；全 1 才宣称 armed）。
 static volatile uint32_t dashHgTrapOkMask = 0;
@@ -53,42 +57,76 @@ static volatile uint32_t dashHgTrapOkMask = 0;
 // 在【当前 hart】武装 + WARL 回读验证。回读不过（type≠mcontrol、
 // store/machine 位被清、tdata2 编码不符）= 硬件不支持该配置，绝不宣称
 // 武装成功（PMP 版教训：写入成功 ≠ 生效）。
+// arg 低 2 位编码槽位（字段地址 4 对齐，低 2 位恒 0）。
 static void dashTcbTrapArmCore(void *arg)
 {
-    const uint32_t addr = (uint32_t)(uintptr_t)arg;
-    if (esp_cpu_set_watchpoint(DASH_TCB_TRAP_SLOT, (const void *)(uintptr_t)addr, 4,
+    const uint32_t packed = (uint32_t)(uintptr_t)arg;
+    const uint32_t slot = packed & 3u;
+    const uint32_t addr = packed & ~3u;
+    if (esp_cpu_set_watchpoint(slot, (const void *)(uintptr_t)addr, 4,
                                ESP_CPU_WATCHPOINT_STORE) != ESP_OK)
         return;
-    RV_WRITE_CSR(tselect, DASH_TCB_TRAP_SLOT);
+    RV_WRITE_CSR(tselect, slot);
     const uint32_t t1 = RV_READ_CSR(tdata1);
     const uint32_t t2 = RV_READ_CSR(tdata2);
     // 期望：type=2（mcontrol）、store 匹配、M-mode 生效、tdata2 为
     // 4 字节 NAPOT 编码（addr 对齐 | 0b01）。
     if (((t1 >> 28) == 2u) && (t1 & TDATA1_STORE) && (t1 & TDATA1_MACHINE) &&
-        (t2 == ((addr & ~3u) | 1u)))
+        (t2 == (addr | 1u)))
         dashHgTrapOkMask |= (1u << (uint32_t)xPortGetCoreID());
 }
 
-// 全 hart 武装。返回受保护字段地址；偏移自检失败（字段当前值 ≠
-// pxStackBase）或任一 hart 回读验证失败返回 0 并拒绝宣称武装——绝不
-// 圈一个身份不明的字、也绝不半武装了还报成功。
-static uint32_t dashHgTcbTrapArm(uint32_t tcb, uint32_t stackBase)
+// 在【当前 hart】解除槽位（tdata1=0 关闭 trigger）。
+static void dashTcbTrapClearCore(void *arg)
 {
-    if (tcb == 0 || dashHgTrapField != 0)
-        return dashHgTrapField;
-    const uint32_t field = tcb + 0x30; // pxStackBase（round-8 coredump 验证）
-    if (*(volatile uint32_t *)(uintptr_t)field != stackBase)
-        return 0;
-    dashHgTrapOkMask = 0;
-    dashTcbTrapArmCore((void *)(uintptr_t)field); // 当前核
+    RV_WRITE_CSR(tselect, (uint32_t)(uintptr_t)arg);
+    RV_WRITE_CSR(tdata1, 0);
+}
+
+// 全 hart 解除某槽位（任务退役时调用，防被释放/复用内存的合法写误伤）。
+static void dashHgTcbTrapClear(uint32_t slot, volatile uint32_t &fieldVar)
+{
+    if (fieldVar == 0)
+        return;
+    dashTcbTrapClearCore((void *)(uintptr_t)slot);
     const uint32_t self = (uint32_t)xPortGetCoreID();
     for (uint32_t c = 0; c < (uint32_t)portNUM_PROCESSORS; ++c)
         if (c != self)
-            esp_ipc_call_blocking(c, dashTcbTrapArmCore, (void *)(uintptr_t)field);
+            esp_ipc_call_blocking(c, dashTcbTrapClearCore, (void *)(uintptr_t)slot);
+    fieldVar = 0;
+}
+
+// 全 hart 武装（可重布防）。返回受保护字段地址；偏移自检失败（字段当前
+// 值 ≠ pxStackBase）或任一 hart 回读验证失败返回 0 并拒绝宣称武装——绝不
+// 圈一个身份不明的字、也绝不半武装了还报成功。
+//
+// 2026-11-06 v3（晚场事故后）：首版一次性布防（dashHgTrapField!=0 早退）
+// 在 httpd 网络弹跳重启换 TCB 后失效——陷阱永远盯着首个 TCB 的尸体，晚场
+// 崩溃（受害者 httpd#2）由此漏网。现改为：地址变了就重布防（同址幂等）。
+// 任务删除由 dashHgTcbTrapClear 解除，消掉复用内存误伤窗口。
+static uint32_t dashHgTcbTrapArm(uint32_t tcb, uint32_t stackBase,
+                                 uint32_t slot, volatile uint32_t &fieldVar)
+{
+    if (tcb == 0)
+        return 0;
+    const uint32_t field = tcb + 0x30; // pxStackBase（round-8 coredump 验证）
+    if (fieldVar == field)
+        return field; // 同址已武装：幂等快路径
+    if (*(volatile uint32_t *)(uintptr_t)field != stackBase)
+        return 0;
+    dashHgTrapOkMask = 0;
+    dashTcbTrapArmCore((void *)(uintptr_t)(field | (slot & 3u))); // 当前核
+    const uint32_t self = (uint32_t)xPortGetCoreID();
+    for (uint32_t c = 0; c < (uint32_t)portNUM_PROCESSORS; ++c)
+        if (c != self)
+            esp_ipc_call_blocking(c, dashTcbTrapArmCore,
+                                  (void *)(uintptr_t)(field | (slot & 3u)));
     const uint32_t all = (1u << (uint32_t)portNUM_PROCESSORS) - 1u;
     if (dashHgTrapOkMask != all)
         return 0;
-    dashHgTrapField = field;
+    if (fieldVar != 0)
+        dashHgTrapRearms = dashHgTrapRearms + 1;
+    fieldVar = field;
     return field;
 }
 

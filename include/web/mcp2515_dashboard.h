@@ -6830,7 +6830,8 @@ static void dashSerialPrintHelp()
     Serial.println("  sta_drop       disconnect the STA link (esp_hosted panic bench repro)");
 #if defined(DASH_RECORDER_V2)
     Serial.println("  rv2_status     recorder v2 ring/lock status JSON (bench)");
-    Serial.println("  rv2_lock <pre_s> <post_s> <bus_mask>  arm blackbox lock (bench)");
+    Serial.println("  rv2_lock <pre_s> <post_s> <bus_mask>  arm blackbox lock (pre 10-600s, post 5-300s)");
+    Serial.println("  rv2_unlock                           cancel an arming lock window (ring keeps rolling)");
     Serial.println("  rv2_flood <fps> <s> <bus_mask>  inject synthetic traffic (crash repro, blocks serial)");
     Serial.println("  rv2_frame <bus> <id-hex> <dlc> <b..>  inject one frame through the REAL path (replay)");
     Serial.println("  rv2_replay <0|1>                fast serial drain for host-driven replay");
@@ -7117,16 +7118,31 @@ static void dashSerialRunCommand(char *cmd)
     }
     else if (strncmp(start, "rv2_lock", 8) == 0)
     {
-        unsigned preS = 10, postS = 30, mask = 7;
+        unsigned preS = 0, postS = 0, mask = 0;
         int parsed = sscanf(start + 8, " %u %u %u", &preS, &postS, &mask);
+        if (parsed != 3)
+        {
+            // 2026-11-05 晚场：裸 "rv2_lock" 曾以默认值静默起窗。显式三参。
+            Serial.println("[rv2_lock] usage: rv2_lock <pre_s 10-600> <post_s 5-300> <bus_mask 1-7>");
+            return;
+        }
         String err = "";
-        Serial.printf("[rv2_lock] pre=%us post=%us mask=%u (parsed %d/3)\n",
-                      preS, postS, mask, parsed);
+        Serial.printf("[rv2_lock] pre=%us post=%us mask=%u\n",
+                      preS, postS, mask);
         if (dashRecV2LockRequest(preS * 1000UL, postS * 1000UL,
                                  (uint8_t)mask, err))
             Serial.println("[rv2_lock] armed");
         else
             Serial.println("[rv2_lock] refused: " + err);
+    }
+    else if (strncmp(start, "rv2_unlock", 10) == 0)
+    {
+        // 2026-11-05 晚场事故：巨窗 armed 后无取消命令，只能整机重启。
+        String err = "";
+        if (dashRecV2UnlockRequest(err))
+            Serial.println("[rv2_unlock] cancelled");
+        else
+            Serial.println("[rv2_unlock] refused: " + err);
     }
     else if (strncmp(start, "rv2_flood", 9) == 0)
     {

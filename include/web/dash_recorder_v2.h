@@ -1188,6 +1188,15 @@ static void dashRecV2SetTwaiMissed(uint32_t a, uint32_t b, uint32_t c)
 static bool dashRecV2LockRequest(uint32_t preMs, uint32_t postMs,
                                  uint8_t busMask, String &err)
 {
+    // 2026-11-05 晚场事故：串口层裸调本函数，0/0 与 99999/99999 巨窗
+    // 双双被放行（HTTP 层有范围检查而这里没有）→ 27.7h 巨窗只能整机重启
+    // 解除。范围检查下沉到本函数 = 单一真源，串口/HTTP 任何入口同权。
+    // 界限与 handleRingLock 完全一致：pre 10-600s，post 5-300s。
+    if (preMs < 10000UL || preMs > 600000UL || postMs < 5000UL || postMs > 300000UL)
+    {
+        err = "pre_s/post_s out of range (pre 10-600s, post 5-300s)";
+        return false;
+    }
     if (!recBBEnabled)
     {
         err = "recorder v2 disabled";
@@ -1224,6 +1233,32 @@ static bool dashRecV2LockRequest(uint32_t preMs, uint32_t postMs,
         p.end();
     }
     recV2State = kRecV2Arming;
+    return true;
+}
+
+// 取消一个 arming 中的锁窗（2026-11-05 晚场事故后补）：不发 session、
+// 不保护任何块区间，环继续滚动记录。只回收锁窗副作用——rv2_flushing
+// 台账位（boot 读到 1 会误判"死在锁窗内"）。锁入时的 recBBWptrSave
+// 只是环写指针的 NVS 检查点，取消后依然成立，无需回滚。
+static bool dashRecV2UnlockRequest(String &err)
+{
+    if (!recBBEnabled)
+    {
+        err = "recorder v2 disabled";
+        return false;
+    }
+    if (recV2State != kRecV2Arming)
+    {
+        err = "not arming";
+        return false;
+    }
+    Preferences p;
+    p.begin("rec_v2", false);
+    p.putUChar("rv2_flushing", 0);
+    p.end();
+    recV2State = kRecV2Idle;
+    recV2SetLastError("lock cancelled");
+    Serial.println("[REC2] lock cancelled - ring keeps rolling, no session");
     return true;
 }
 

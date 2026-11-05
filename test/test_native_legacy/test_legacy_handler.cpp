@@ -1231,7 +1231,7 @@ void test_keepalive_fresh_carrier_no_keepalive()
     handler.handleMessage(n1, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 
-    const uint32_t now = advanceMs(1000); // < 1800ms: carrier rhythm normal
+    const uint32_t now = advanceMs(700); // < 750ms: driving rhythm (2Hz beats)
     handler.keepAliveTick(mock, now);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }

@@ -26,11 +26,14 @@ struct Dash3eeKeepAlivePage
 
 struct Dash3eeKeepAlive
 {
-    // 1800ms：大于行驶期正常间隙（964ms 实测、1958ms 历史），小于车机消费端
-    // 老化（实测扛过 1958ms 不丢功能）——保活帧总能在消费端饿死前进场。
-    static constexpr uint32_t kSilenceTriggerMs = 1800;
-    // 900ms：贴原生每页 ~1Hz 节奏，略密以留余量。
-    static constexpr uint32_t kCadenceMs = 900;
+    // 750ms：把消费端最坏饥饿压到 750ms。2026-11-06 二轮实车后重定标——首版
+    // 1800ms 仍闪：行驶 964ms 间隙功能不掉 → 老化阈值 >964ms；9 月"扛过 1958ms"
+    // 是 T2CAN 另一总线口证据不能搬用 → 老化阈值可在 (964,1940) 任意处，1800ms
+    // 触发可能每个静默窗都迟于老化。750ms 在 964ms 稳定下限下留出安全垫：怠速
+    // 945ms 节拍每拍最多补一帧（原生回来立即让位），行驶 2Hz（500ms）零触发。
+    static constexpr uint32_t kSilenceTriggerMs = 750;
+    // 750ms：与触发同值——静默期内消费端间隙恒 ≤750ms。
+    static constexpr uint32_t kCadenceMs = 750;
     // 10s 无任何原生 = 车机上下文已变（屏幕灭/功能无关），停止刷存在感。
     static constexpr uint32_t kTemplateMaxAgeMs = 10000;
 
