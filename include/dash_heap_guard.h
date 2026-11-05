@@ -361,32 +361,13 @@ inline void dashHgTcbAdopt(uint32_t handle, uint32_t number,
     b.nameB = nameB;
     b.stackBase = stackBase;
     dashHgTcbBaselineCount = dashHgTcbBaselineCount + 1;
-    // 实验 F（2026-11-04）→ v3（2026-11-06 晚场后）：收养到 httpd/can_rt
-    // 即武装硬件写陷阱——四次已证实 TCB 腐写全部落在 pxStackBase 字段
-    // （httpd×3 + can_rt×1）。此后任何对该字的 store 都会在写者自己的
-    // PC 上 breakpoint exception（trigger watchpoint；v1 PMP 因 P4 启动
-    // 全锁表项判死）。
-    // ⚠ 2026-11-06 修正：httpd 并非终身有效——网络弹跳会删除重建（换
-    // TCB 地址）。v2 一次性布防由此漏网（晚场受害者 httpd#2 无 trap）。
-    // v3 = 逐次重布防（地址变即重 arm）+ 退役解除（防复用内存误伤）。
-    if (b.nameA == 0x70747468u /* "httpd" */ && b.nameB == 0x00000064u)
-    {
-        uint32_t f = dashHgTcbTrapArm(b.handle, b.stackBase,
-                                      DASH_TCB_TRAP_SLOT, dashHgTrapField);
-        if (f)
-            Serial.printf("[heap_guard] TCB write-trap armed @0x%08x (trigger slot %d, both harts, rearms=%u)\n",
-                          (unsigned)f, DASH_TCB_TRAP_SLOT, (unsigned)dashHgTrapRearms);
-        else
-            Serial.println("[heap_guard] TCB write-trap NOT armed (offset or verify failed)");
-    }
-    else if (b.nameA == 0x5F6E6163u /* "can_" */ && b.nameB == 0x00007472u /* "rt" */)
-    {
-        uint32_t f = dashHgTcbTrapArm(b.handle, b.stackBase,
-                                      DASH_TCB_TRAP_SLOT2, dashHgTrapField2);
-        if (f)
-            Serial.printf("[heap_guard] TCB write-trap2 armed @0x%08x (trigger slot %d, both harts, rearms=%u)\n",
-                          (unsigned)f, DASH_TCB_TRAP_SLOT2, (unsigned)dashHgTrapRearms);
-    }
+    // v4（2026-11-05 P0 定案）：此处不再武装 TCB 写陷阱。被盯字段
+    // （pxStackBase）存在合法写者——IDF 惰性协处理器上下文保存
+    // （pxPortGetCoprocArea 在栈底 carve 并上推基址；实车 can_rt 首个
+    // 0x488 浮点、httpd 的 fps JSON 都会触发）。watchpoint 对它必然
+    // 假阳性 → 实车秒级自崩。守卫改为 carve 感知（见 dashHgTcbEval /
+    // dashHgTcbScan）；陷阱机器保留编译（历史 + 未来复用），退役解除
+    // 路径保留（对零值是无害空操作）。
 }
 
 inline void dashHgTcbTrip(int verdict, uint8_t idx, uint32_t expected, uint32_t actual)
@@ -531,6 +512,7 @@ inline void dashHeapGuardStart()
 {
     xTaskCreatePinnedToCore(dashHeapGuardPatrolTask, "heappatrol", 4096, nullptr,
                             1, nullptr, 1);
+    Serial.println("[heap_guard] TCB sentinel carve-aware (IDF lazy coproc save exempt), patrol 250ms");
 }
 
 // ── 台架验证钩子（DIAG heap_guard_test，仅台架）──────────────────────────

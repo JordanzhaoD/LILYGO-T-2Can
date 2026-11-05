@@ -24,6 +24,16 @@ TCB's corpse. Now re-arming per adoption (same address = idempotent),
 two slots (0 = httpd, 1 = can_rt), and retiring a task disarms its slot
 so freed/reused memory cannot raise false positives.
 
+v4 (2026-11-05 P0 adjudication, landed 2026-11-06): the watched field has
+a LAWFUL writer — the "+0x84 pxStackBase bump" family is ESP-IDF's lazy
+coprocessor context save (pxPortGetCoprocArea carves the save area at the
+task stack bottom and bumps the base; in-car can_rt's first float = the
+0x488 steering angle, httpd's = fps JSON). A watchpoint on that field
+false-positives within seconds of driving, so the arming is REMOVED: the
+guard is now carve-aware (sa-ledger interlock in dashHgTcbEval, adoption
+in dashHgTcbScan) and the trap machinery stays compiled, unarmed, for
+history and future reuse.
+
 These tests pin the safety properties so they cannot rot:
 - the trap only builds inside the DASH_HEAP_GUARD_V2 gate (T2CAN golden
   build zero-diff),
@@ -162,19 +172,20 @@ class TcbTrapSemanticsContractTests(unittest.TestCase):
         self.assertLess(disarm, forget,
                         "the trigger is disabled before the field is forgotten")
 
-    def test_arming_keys_on_httpd_name(self):
-        self.assertIn('b.nameA == 0x70747468u /* "httpd" */', self.guard)
-        self.assertIn("b.nameB == 0x00000064u", self.guard)
+    def test_adopt_no_longer_arms_trap(self):
+        # v4: the watched field has a lawful writer (IDF lazy coproc save),
+        # so adoption must not arm the watchpoint — a trap there false-
+        # positives within seconds of driving. The machinery stays compiled
+        # and retire still disarms (harmless no-op on zeros).
+        start = self.guard.index("inline void dashHgTcbAdopt")
+        end = self.guard.index("inline void", start + 10)
+        body = self.guard[start:end]
+        self.assertNotIn("dashHgTcbTrapArm(", body)
 
-    def test_second_slot_arms_on_can_rt_name(self):
-        # 2026-11-06 morning crash victim: can_rt. Slot 1 watches it the
-        # same way slot 0 watches httpd.
+    def test_trap_slot2_define_stays(self):
+        # The machinery (slot packing, two slots) stays compiled for history
+        # and future reuse — only the arming calls are gone.
         self.assertIn("#define DASH_TCB_TRAP_SLOT2 1", self.trap)
-        self.assertIn('b.nameA == 0x5F6E6163u /* "can_" */', self.guard)
-        self.assertIn('b.nameB == 0x00007472u /* "rt" */', self.guard)
-        adopt = self.guard.index('b.nameB == 0x00007472u')
-        body = self.guard[adopt:]
-        self.assertIn("DASH_TCB_TRAP_SLOT2, dashHgTrapField2", body)
 
     def test_arms_all_harts(self):
         self.assertIn("esp_ipc_call_blocking", self.trap)
@@ -215,6 +226,7 @@ class CarveGlueContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.guard = GUARD.read_text()
+        cls.dash = DASH.read_text()
 
     def scan_body(self):
         start = self.guard.index("inline bool dashHgTcbScan")
@@ -243,6 +255,17 @@ class CarveGlueContractTests(unittest.TestCase):
         # zero crashes closes the adjudication loop.
         self.assertIn("TCB carve accepted", self.guard)
         self.assertIn("(IDF lazy coproc save)", self.guard)
+
+    def test_boot_line_is_carve_aware(self):
+        # The old "TCB write-trap armed" boot lines are gone; the patrol
+        # announces carve awareness instead.
+        self.assertIn("carve-aware (IDF lazy coproc save exempt)", self.guard)
+
+    def test_status_reports_carves(self):
+        # heap_guard_status must expose the adoption count for field reads.
+        status = self.dash.index('strncmp(start, "heap_guard_status", 17)')
+        nxt = self.dash.index('strncmp(start, "heap_guard_test', status)
+        self.assertIn("carves=", self.dash[status:nxt])
 
 
 if __name__ == "__main__":

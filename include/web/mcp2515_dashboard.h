@@ -7328,8 +7328,10 @@ static void dashSerialRunCommand(char *cmd)
     {
         // Tripwire v2 state (2026-11-02 forensics round 3): slots + the .bss
         // forensic struct that also lands in every DRAM-captured coredump.
-        Serial.printf("[heap_guard] slots=%u forensic{magic=0x%08x reason=0x%08x expected=0x%08x actual=0x%08x ms=%lu armed=%lu}\n",
-                      dashHgSlotCount, dashHeapGuardForensic.magic,
+        // v4: carves = legitimate IDF lazy-coproc carves adopted so far.
+        Serial.printf("[heap_guard] slots=%u carves=%u forensic{magic=0x%08x reason=0x%08x expected=0x%08x actual=0x%08x ms=%lu armed=%lu}\n",
+                      dashHgSlotCount, dashHgTcbCarves,
+                      dashHeapGuardForensic.magic,
                       dashHeapGuardForensic.reason, dashHeapGuardForensic.expected,
                       dashHeapGuardForensic.actual, (unsigned long)dashHeapGuardForensic.tickMs,
                       (unsigned long)dashHeapGuardForensic.armed);
