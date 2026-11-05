@@ -6,6 +6,13 @@
 //
 // Plain C++ (no Unity): the pytest contract test asserts exit code 0
 // and the "ALL PASS" banner.
+//
+// PIO-inert guard: PlatformIO's native test builder globs top-level
+// test/*.cpp into EVERY native unit build, where this file would fail
+// (no -DDRIVER_P4_3CAN there) and collide with Unity's main() even if
+// it compiled. The pytest clang++ invocation never defines NATIVE_BUILD,
+// so the guard is transparent to the real consumer of this file.
+#ifndef NATIVE_BUILD
 
 #include <cstdio>
 
@@ -596,3 +603,5 @@ int main()
     }
     return g_fail == 0 ? 0 : 1;
 }
+
+#endif // NATIVE_BUILD

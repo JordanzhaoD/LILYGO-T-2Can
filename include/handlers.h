@@ -13,6 +13,7 @@
 #include "dash_bionic_steer.h"
 #include "dash_reactive_nag.h"
 #include "dash_fsd_diag.h"
+#include "dash_3ee_keepalive.h"
 
 #ifndef DASH_FSD_252_COMPAT
 #define DASH_FSD_252_COMPAT 0
@@ -365,6 +366,10 @@ struct CarManagerBase
     virtual bool bionicDisabled() const { return false; }
     virtual void resetBionic(uint32_t seed) { (void)seed; }
     virtual DashLegacyNagDiag legacyNagDiag(uint32_t /*nowMs*/) const { return {}; }
+    // 0x3EE carrier-silence keep-alive (see dash_3ee_keepalive.h). Default
+    // no-op: only the Legacy profile owns 0x3EE injections; every other
+    // handler stays byte-identical in behavior.
+    virtual void keepAliveTick(CanDriver & /*driver*/, uint32_t /*nowMs*/) {}
     virtual ~CarManagerBase() = default;
 };
 
@@ -384,9 +389,96 @@ struct LegacyHandler : public CarManagerBase
     uint8_t legacyNagLastTxBus{CAN_BUS_ANY};
     bool legacyNagHasTxFingerprint{false};
 
+    // 0x3EE 载波静默保活（dash_3ee_keepalive.h）：模板在 RX 路径预门缓存，
+    // tick 由 CAN 任务驱动（main.cpp t2can3eeKeepAliveTick）。
+    Dash3eeKeepAlive keepAlive3ee{};
+
     static FsdDiagBus legacyDiagBus(const CanFrame &frame)
     {
         return frame.bus == CAN_BUS_PARTY ? FsdDiagBus::CanB : FsdDiagBus::CanA;
+    }
+
+    // 0x3EE keep-alive tick (driven from the CAN task, main.cpp). During a
+    // native carrier silence (the car's UI computer duty-cycles 0x3EE
+    // outside active driving — 2026-11-05/06 field root cause) the
+    // tail-ride above has no frame to ride and the car-side consumer ages
+    // out bit46 + the speed offset (FSD UI flicker). This tick re-feeds the
+    // consumer from the cached native template at the native ~1Hz/page
+    // rhythm. Gate chain mirrors the RX branches, evaluated fresh because
+    // the tick fires when no RX frame exists to carry them; a returning
+    // native instantly reclaims the stream (observe refreshes lastNativeMs
+    // and the silence gate closes). Deliberately does NOT touch
+    // legacyFsdDiag/legacySpeedDiag stats — the keep-alive counts live on
+    // keepAlive3ee and the TX recorder hook evidences the frames.
+    void keepAliveTick(CanDriver &drv, uint32_t nowMs) override
+    {
+        const bool speedRequested = legacySpeedOffsetRequested();
+        if (!(bool)fsdTriggered && !speedRequested)
+            return; // NotTriggered mirror
+        if (!abortGuard.allowsInjection())
+        {
+            abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux0);
+            return;
+        }
+        if (jitterInhibit3ee && jitterInhibit3ee())
+            return; // the jitter procedure owns bit46 while it runs
+        if (!builtInFsdInjectionAllowed())
+            return; // plugin ownership mirror
+
+        bool activationAllowed = false;
+        if ((bool)fsdTriggered)
+        {
+            activationAllowed = legacyFsdActivationAllowed
+                                    ? legacyFsdActivationAllowed(nowMs)
+                                    : injectionAllowed();
+        }
+        const bool speedAllowed = speedRequested && injectionAllowed();
+        const bool mux1Allowed =
+            legacyFsdDiag.policy != LegacyFsdPolicy::Stable &&
+            (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
+             (bool)legacyFsdDiag.mux1Enable);
+        const Dash3eeKeepAlive::Action action =
+            keepAlive3ee.tick(nowMs,
+                              activationAllowed || speedAllowed,
+                              mux1Allowed && injectionAllowed());
+        if (action == Dash3eeKeepAlive::Action::None)
+            return;
+
+        CanFrame f = {};
+        f.id = 1006;
+        f.dlc = 8;
+        if (action == Dash3eeKeepAlive::Action::SendMux0)
+        {
+            if (!keepAlive3ee.copyMux0Template(f.data))
+                return;
+            f.bus = keepAlive3ee.mux0NativeBus;
+            if (activationAllowed)
+                setBit(f, 46, true);
+            const uint8_t effectiveOffset =
+                speedAllowed ? computeLegacySpeedOffset(nowMs) : 0;
+            if (effectiveOffset > 0)
+                dashWriteLegacyOffsetTo3eeMux0(f.data, effectiveOffset,
+                                               legacySpeedDiag.outputOffsetPct);
+            if (activationAllowed &&
+                (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
+                 (legacyFsdDiag.policy == LegacyFsdPolicy::Experimental &&
+                  legacyFsdDiag.profileWriteEnable)))
+                setSpeedProfileV12V13(f, speedProfile);
+        }
+        else
+        {
+            if (!keepAlive3ee.copyMux1Template(f.data))
+                return;
+            f.bus = keepAlive3ee.mux1NativeBus;
+            setBit(f, 19, false);
+            if (legacyFsdDiag.visionLimitClearEnable)
+                setBit(f, 48, false);
+        }
+        framesSent++;
+        const bool ok = drv.send(f);
+        if (onSend)
+            onSend(action == Dash3eeKeepAlive::Action::SendMux0 ? 0 : 1, ok);
+        (void)ok;
     }
 
     static FsdDiagDriver legacyDiagDriver(const CanFrame &frame)
@@ -869,6 +961,10 @@ struct LegacyHandler : public CarManagerBase
                 // even when the gates swallow the frame.
                 if (jitterObserve3ee)
                     jitterObserve3ee(frame.data, frame.bus, nowMs);
+                // Keep-alive template cache: same pre-gate discipline — the
+                // template must stay fresh even when the gates below eat the
+                // frame, so the tick can bridge the carrier silence.
+                keepAlive3ee.observeMux0(frame.data, frame.bus, nowMs);
 
                 const bool speedRequested = legacySpeedOffsetRequested();
                 const bool speedBusAllowed = speedRequested && legacySpeedBus.accept(frame, nowMs);
@@ -1003,6 +1099,8 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.mux1.recordRx(nowMs);
                 legacyFsdDiag.markMux1Rx(nowMs);
                 legacyFsdDiag.mux1.recordPath(legacyDiagBus(frame), legacyDiagDriver(frame));
+                // Pre-gate mux1 template cache (see the mux0 branch).
+                keepAlive3ee.observeMux1(frame.data, frame.bus, nowMs);
                 if (legacyFsdDiag.policy == LegacyFsdPolicy::Stable)
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::DisabledInStable;

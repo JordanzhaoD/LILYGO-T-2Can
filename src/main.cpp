@@ -1068,6 +1068,19 @@ static void t2canJitterTick()
 #endif
     dashJitterCtrl.recordTxResult(ok);
 }
+
+// 0x3EE carrier-silence keep-alive (2026-11-05/06 FSD-flicker fix, see
+// dash_3ee_keepalive.h): feeds the car's consumer during the UI computer's
+// duty-cycle silences so bit46 + the speed offset never age out. Runs on
+// the CAN task next to the jitter tick; the handler mirrors the tail-ride
+// gate chain internally and yields instantly when natives return.
+static void t2can3eeKeepAliveTick()
+{
+    if (!canActive || !appDriver || vehicleOtaActive || !dashHandler)
+        return;
+    dashHandler->keepAliveTick(*appDriver, millis());
+}
+
 #endif
 
 static void app_main_setup()
@@ -1303,6 +1316,7 @@ static void app_can_task(void *)
         t2canStalkInjectTick();
         t2canWheelDndTick();
         t2canJitterTick();
+        t2can3eeKeepAliveTick();
 #endif
         appCanTaskLoops = appCanTaskLoops + 1;
         if (!processed)

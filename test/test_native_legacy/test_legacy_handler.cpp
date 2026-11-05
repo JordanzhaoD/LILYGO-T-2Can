@@ -1172,6 +1172,126 @@ void test_legacy_nag_replays_real_capture_with_counter_gaps()
     TEST_ASSERT_EQUAL_UINT8(0, (echo.data[4] >> 6) & 0x03);
 }
 
+// --- 0x3EE carrier-silence keep-alive (2026-11-05/06 flicker root cause) ---
+
+// Advance the native fake clock (each dashDiagNowMs() call = +1ms) and
+// return the resulting now.
+static uint32_t advanceMs(uint32_t ms)
+{
+    for (uint32_t i = 0; i < ms; ++i)
+        (void)dashDiagNowMs();
+    return dashDiagNowMs();
+}
+
+static CanFrame makeNative3eeMux0()
+{
+    CanFrame f = {.id = 1006};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40; // FSD UI bit -> fsdTriggered
+    f.data[6] = 0x02;
+    return f;
+}
+
+static CanFrame makeNative3eeMux1()
+{
+    CanFrame f = {.id = 1006};
+    f.data[0] = 0x01;
+    setBit(f, 19, true); // the tail-ride clears this
+    return f;
+}
+
+void test_keepalive_mux0_after_silence_bit46_template_preserved()
+{
+    // Default Stable policy: mux0-only (mirrors the RX branch).
+    CanFrame n0 = makeNative3eeMux0();
+    CanFrame n1 = makeNative3eeMux1();
+    handler.handleMessage(n0, mock); // tail-ride send #1
+    handler.handleMessage(n1, mock); // Stable: not sent
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+
+    const uint32_t now = advanceMs(2000); // >= 1800ms of carrier silence
+    handler.keepAliveTick(mock, now);
+
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+    const CanFrame &ka = mock.sent[1];
+    TEST_ASSERT_EQUAL_UINT32(1006, ka.id);
+    TEST_ASSERT_EQUAL_HEX8(0x00, ka.data[0]); // mux0
+    TEST_ASSERT_EQUAL_HEX8(0x40, ka.data[5] & 0x40); // bit46 set
+    // Template preserved byte-for-byte except the patched bit46 byte.
+    TEST_ASSERT_EQUAL_HEX8(0x40, ka.data[4]);
+    TEST_ASSERT_EQUAL_HEX8(0x02, ka.data[6]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, ka.data[1]);
+}
+
+void test_keepalive_fresh_carrier_no_keepalive()
+{
+    CanFrame n0 = makeNative3eeMux0();
+    CanFrame n1 = makeNative3eeMux1();
+    handler.handleMessage(n0, mock);
+    handler.handleMessage(n1, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+
+    const uint32_t now = advanceMs(1000); // < 1800ms: carrier rhythm normal
+    handler.keepAliveTick(mock, now);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+void test_keepalive_mux1_clears_bit19()
+{
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::TeslaParity;
+    CanFrame n0 = makeNative3eeMux0();
+    CanFrame n1 = makeNative3eeMux1();
+    handler.handleMessage(n0, mock); // send #1
+    handler.handleMessage(n1, mock); // send #2 (bit19 cleared)
+
+    const uint32_t now = advanceMs(2000);
+    handler.keepAliveTick(mock, now); // mux0 first
+    handler.keepAliveTick(mock, now + 1); // then mux1
+
+    TEST_ASSERT_EQUAL(4, mock.sent.size());
+    const CanFrame &ka1 = mock.sent[3];
+    TEST_ASSERT_EQUAL_HEX8(0x01, ka1.data[0]); // mux1
+    TEST_ASSERT_EQUAL_HEX8(0x00, ka1.data[2] & 0x08); // bit19 cleared
+}
+
+void test_keepalive_yield_on_native_return()
+{
+    CanFrame n0 = makeNative3eeMux0();
+    handler.handleMessage(n0, mock);
+    uint32_t now = advanceMs(2000);
+    handler.keepAliveTick(mock, now);
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+
+    // Native carrier returns: the tail-ride owns the stream again.
+    CanFrame back = makeNative3eeMux0();
+    handler.handleMessage(back, mock); // send #3 (tail-ride)
+    now = advanceMs(500); // well under the silence trigger
+    handler.keepAliveTick(mock, now);
+    TEST_ASSERT_EQUAL(3, mock.sent.size());
+}
+
+void test_keepalive_activation_denied_suppresses_mux0()
+{
+    handler.legacyFsdActivationAllowed = denyLegacyActivation;
+    CanFrame n0 = makeNative3eeMux0();
+    handler.handleMessage(n0, mock); // gate eats it: no send
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+
+    const uint32_t now = advanceMs(2000);
+    handler.keepAliveTick(mock, now);
+    // Stable policy also keeps mux1 off -> nothing may be synthesized.
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
+void test_keepalive_template_expiry_stops()
+{
+    CanFrame n0 = makeNative3eeMux0();
+    handler.handleMessage(n0, mock); // send #1
+    const uint32_t now = advanceMs(11000); // > 10s: template stale
+    handler.keepAliveTick(mock, now);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -1243,6 +1363,13 @@ int main()
     RUN_TEST(test_legacy_can1080_records_tx_fail);
 
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
+
+    RUN_TEST(test_keepalive_mux0_after_silence_bit46_template_preserved);
+    RUN_TEST(test_keepalive_fresh_carrier_no_keepalive);
+    RUN_TEST(test_keepalive_mux1_clears_bit19);
+    RUN_TEST(test_keepalive_yield_on_native_return);
+    RUN_TEST(test_keepalive_activation_denied_suppresses_mux0);
+    RUN_TEST(test_keepalive_template_expiry_stops);
 
     return UNITY_END();
 }
