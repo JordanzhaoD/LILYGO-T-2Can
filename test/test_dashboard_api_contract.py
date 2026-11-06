@@ -1459,10 +1459,21 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('prefs.putBool("lfsd_aln", dashLegacyAlignModeEnable);', self.dash)
         self.assertIn('dashLegacyAlignModeEnable = prefs.getBool("lfsd_aln", false);', self.dash)
         self.assertIn('legacyFsdDiag.alignModeEnable = dashLegacyAlignModeEnable;', self.dash)
-        self.assertIn('server.hasArg("align")', self.dash)
         self.assertIn('"alignMode"', self.dash)
         self.assertIn('"ride2f8TxOk"', self.dash)
         self.assertIn('"ride2f8LastMs"', self.dash)
+        # BOTH config surfaces must accept the align arg. The /config POST
+        # (handleConfig, whose tail runs dashApplyRuntimeState + dashSavePrefs)
+        # is the one the field uses; the FSD sub-config's guard must also list
+        # align or a solo ?align=1 there is silently dropped (2026-11-07 field
+        # incident: ok:true while alignMode stayed false).
+        cfg = re.search(r"static void handleConfig\(\)\n\{.*?dashApplyRuntimeState\(\);\n    dashSavePrefs\(\);", self.dash, re.S)
+        self.assertIsNotNone(cfg, "handleConfig tail (apply+save) not found")
+        self.assertIn('if (server.hasArg("align"))', cfg.group(0))
+        self.assertIn('dashLegacyAlignModeEnable = v;', cfg.group(0))
+        fsd_cfg = re.search(r"static void handleLegacyFsdConfig\(\)\n\{.*?server\.hasArg\(\"align\"\)", self.dash, re.S)
+        self.assertIsNotNone(fsd_cfg, "handleLegacyFsdConfig guard must include align")
+        self.assertIn('server.hasArg("align")', fsd_cfg.group(0))
 
     def test_legacy_handler_captures_fused_speed_limit_from_921(self) -> None:
         """Legacy/HW0 needs the same fused speed limit input as the 3-mode speed UI."""

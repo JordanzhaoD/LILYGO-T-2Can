@@ -3519,6 +3519,15 @@ static void handleConfig()
             dashLog("[CFG] AP injection gate " + String(v ? "ON" : "OFF"));
         }
     }
+    if (server.hasArg("align"))
+    {
+        bool v = server.arg("align") == "1";
+        if (v != dashLegacyAlignModeEnable)
+        {
+            dashLegacyAlignModeEnable = v;
+            dashLog("[CFG] Legacy align mode " + String(v ? "ON" : "OFF"));
+        }
+    }
     // ("ap_delay_ms" POST param removed in 4.5.0-beta06 with the AP-settle
     // delay feature; old clients sending it are silently ignored.)
     if (server.hasArg("ap_auto_restore"))
@@ -4380,7 +4389,7 @@ static void handleDefenseConfig()
 
 static void handleLegacyFsdConfig()
 {
-    if (server.hasArg("policy") || server.hasArg("mux1") || server.hasArg("profile") || server.hasArg("vision"))
+    if (server.hasArg("policy") || server.hasArg("mux1") || server.hasArg("profile") || server.hasArg("vision") || server.hasArg("align"))
     {
         if (server.hasArg("policy"))
         {
@@ -4414,6 +4423,8 @@ static void handleLegacyFsdConfig()
     j += dashLegacyFsdProfileWriteEnable ? "true" : "false";
     j += ",\"vision\":";
     j += dashLegacyFsdVisionLimitClearEnable ? "true" : "false";
+    j += ",\"align\":";
+    j += dashLegacyAlignModeEnable ? "true" : "false";
     j += "}";
     server.send(200, "application/json", j);
 }
