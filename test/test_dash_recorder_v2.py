@@ -582,12 +582,51 @@ class DashRecorderV2FinalReviewTests(unittest.TestCase):
             "(overflowNow > recV2OverflowAtLock) ||", self.rec2,
             "the pre-fix OR form must be gone")
 
+    def test_full_ring_walk_locks_whole_grid_not_empty(self) -> None:
+        # 2026-11-06 field incident (ka750, fw 0b87bfd): pre_s 300/600 with
+        # FSD traffic (grid retention ~55-60s) — the backward summary walk
+        # visited every block without a hole or an out-of-window age, the
+        # guard exhausted, and startBlk landed on frontier+1 → bbStart ==
+        # bbEnd → size=0 sessions with loss_badge=false. Three silent
+        # total-loss sessions (300/5/mask7, 300/5/mask1, 600/10/mask1).
+        # The full-grid walk must instead lock the WHOLE grid (unambiguous
+        # 0..gridBytes span, never the empty seam) and raise the badge: the
+        # request certainly exceeded retention even when nothing was
+        # evicted since arming.
+        finish_at = self.rec2.index("static void recBBFinishLock()")
+        body = self.rec2[finish_at:finish_at + 6200]
+        self.assertIn(
+            "windowCoversGrid", body,
+            "the walk must detect the guard-exhausted full-ring case")
+        self.assertIn(
+            "guard == kRecBBBlockCount", body,
+            "detection = the guard loop ran to completion without a break")
+        self.assertIn(
+            "bbStart = 0;", body,
+            "full-grid walk emits the unambiguous 0-based span")
+        self.assertIn(
+            "bbEnd = kRecBBBlockCount * kRecBBBlockSize;", body,
+            "full-grid walk end = the whole grid, never bbStart == bbEnd")
+        self.assertRegex(
+            body, r"\|\|\s*windowCoversGrid",
+            "certain loss past retention must raise the badge even without "
+            "an eviction delta since lock")
+        # The normal partial-window path must keep the seam representation
+        # (block-rounded start..frontier+1) — only the exhausted walk may
+        # rewrite the span.
+        self.assertLess(
+            body.index("guard == kRecBBBlockCount"),
+            body.index("recBBMarkRange"),
+            "the full-grid verdict is settled before the range is protected")
+
     def test_flush_reads_badge_inputs_from_scan_snapshot(self) -> None:
         # Blackbox era: recBBFinishLock walks the block summaries — the
         # retention set as the writer sealed it — and never reads a live
         # span that the ingest path is still advancing.
+        # (Window widened 2026-11-06: the full-grid-lock incident comments
+        # pushed the badge computation deeper into the function.)
         finish_at = self.rec2.index("static void recBBFinishLock()")
-        body = self.rec2[finish_at:finish_at + 5600]
+        body = self.rec2[finish_at:finish_at + 7200]
         self.assertIn("recBBSums[", body,
                       "badge and frame counts come from the block summaries")
         self.assertIn("(overflowNow > recV2OverflowAtLock) &&", body,
@@ -762,8 +801,10 @@ class DashRecorderV2CarFieldFixTests(unittest.TestCase):
         lock_body = self.rec2[lock_at:lock_at + 2000]
         self.assertEqual(lock_body.count('putUChar("rv2_flushing", 1)'), 1,
                          "arming start raises the flag exactly once")
+        # Window widened 2900 → 3600 (2026-11-06): the full-grid-lock incident
+        # comments in recBBFinishLock pushed the common tail deeper.
         finish_at = self.rec2.index("static void recBBFinishLock()")
-        finish_body = self.rec2[finish_at:finish_at + 2900]
+        finish_body = self.rec2[finish_at:finish_at + 3600]
         self.assertEqual(finish_body.count('putUChar("rv2_flushing", 0)'), 1,
                          "the finish path clears the flag")
 

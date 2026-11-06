@@ -943,6 +943,13 @@ static void recBBFinishLock()
     uint32_t frontierBlk = 0, startBlk = 0;
     uint32_t overflowNow = 0;
     bool haveFrames = false;
+    // 2026-11-06 field incident (ka750, fw 0b87bfd): pre_s 300/600 with FSD
+    // traffic (retention ~55-60s) covers EVERY block — the backward walk
+    // exhausts its guard, startBlk lands on frontier+1 and the seam
+    // collapses to bbStart == bbEnd: size=0 sessions, loss_badge=false,
+    // three silent total losses (300/5, 300/5, 600/10). The flag corrects
+    // the range and the badge after the walk.
+    bool windowCoversGrid = false;
     portENTER_CRITICAL(&recV2Mux);
     // Frontier = the block the NEXT frame lands in minus one correction: the
     // absolute offset of the newest staged frame (writeOff + undrained
@@ -969,7 +976,8 @@ static void recBBFinishLock()
         uint32_t b = frontierBlk;
         startBlk = frontierBlk;
         oldestTs = lastTs;
-        for (uint32_t guard = 0; guard < kRecBBBlockCount; guard++)
+        uint32_t guard = 0;
+        for (; guard < kRecBBBlockCount; guard++)
         {
             const RecBBBlockSum &s = recBBSums[b];
             // Unsigned age compare is wrap-safe across the 71.6-min tsUs
@@ -988,6 +996,9 @@ static void recBBFinishLock()
             else
                 b--;
         }
+        // Guard exhausted = every block in-window (no hole, no stale age):
+        // the requested window reaches past retention itself.
+        windowCoversGrid = guard == kRecBBBlockCount;
     }
     overflowNow = ringOverflow;
     portEXIT_CRITICAL(&recV2Mux);
@@ -1022,6 +1033,15 @@ static void recBBFinishLock()
     uint32_t bbEnd = (frontierBlk + 1) * kRecBBBlockSize;
     if (bbEnd > kRecBBBlockCount * kRecBBBlockSize)
         bbEnd = kRecBBBlockCount * kRecBBBlockSize;
+    if (windowCoversGrid)
+    {
+        // Full-grid window: honor everything the grid holds instead of the
+        // empty seam (startBlk wrapped onto frontier+1). The plain 0..grid
+        // span keeps size, protection rebuild, delete and the CSV walker
+        // in their s < e paths.
+        bbStart = 0;
+        bbEnd = kRecBBBlockCount * kRecBBBlockSize;
+    }
     recBBMarkRange(bbStart, bbEnd);
     // A protected write pointer right here (partition filled during arming)
     // is the writer's problem to skip, not the lock's.
@@ -1058,9 +1078,13 @@ static void recBBFinishLock()
     meta += String(overflowNow);
     meta += R"JSON(,"ring_overflow_in_window":)JSON";
     // AND semantics preserved from the ring era's final review: drops since
-    // lock AND the window reaching past what this pass retains.
+    // lock AND the window reaching past what this pass retains. A full-grid
+    // walk is a certain loss of its own — raise the badge even with no
+    // eviction delta (2026-11-06: all three size=0 sessions badged
+    // lossless under the AND-only form).
     bool overflowInWindow =
-        (overflowNow > recV2OverflowAtLock) && (windowUs > (uint32_t)(lastTs - oldestTs));
+        ((overflowNow > recV2OverflowAtLock) && (windowUs > (uint32_t)(lastTs - oldestTs))) ||
+        windowCoversGrid;
     meta += String(overflowInWindow ? "true" : "false");
     meta += R"JSON(,"twai_missed_a":)JSON";
     meta += String(recV2TwaiMissedSnapshot[0]);

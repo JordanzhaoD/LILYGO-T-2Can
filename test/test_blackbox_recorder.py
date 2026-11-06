@@ -389,7 +389,9 @@ class BlackboxLockTests(unittest.TestCase):
         self.assertIn("bus_mask", body)
 
     def test_finish_lock_summaries_and_meta(self) -> None:
-        body = self._fn(self.engine, "static void recBBFinishLock()", 5600)
+        # Window widened 5600 → 6800 (2026-11-06): the full-grid-lock incident
+        # comments in recBBFinishLock pushed the meta tail deeper.
+        body = self._fn(self.engine, "static void recBBFinishLock()", 6800)
         keys = ('"seq"', '"boot_ms"', '"trigger"', '"pre_ms_req"',
                 '"pre_ms_act"', '"post_ms"', '"bus_mask"', '"frames"',
                 '"ring_overflow"', '"ring_overflow_in_window"',
