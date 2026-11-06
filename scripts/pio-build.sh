@@ -72,7 +72,7 @@ PREFLIGHT
 
 # Second belt: even if preflight passes, abort within seconds if pio starts
 # downloading anything (catches specs we did not think to pin).
-LOG="$(mktemp /tmp/pio-build.XXXXXX.log)"
+LOG="$(mktemp /tmp/pio-build.XXXXXX)"
 IDF_MAINTAINER=1 "$PIO_BIN" "$@" >"$LOG" 2>&1 &
 PID=$!
 abort() {
@@ -88,8 +88,8 @@ while kill -0 "$PID" 2>/dev/null; do
     fi
     sleep 2
 done
-wait "$PID"
-STATUS=$?
+STATUS=0
+wait "$PID" || STATUS=$?
 cat "$LOG"
 rm -f "$LOG"
 exit $STATUS

@@ -631,6 +631,103 @@ void test_legacy_2f8_limit_change_adopted_after_debounce()
     TEST_ASSERT_EQUAL_UINT8(16, handler.legacySpeedDiag.gpsMppLimitStableRaw);
 }
 
+// --- A3 align mode (2026-11-07): 0x2F8 offset ride + 0x3EE pulse ---
+
+void test_align_mode_2f8_ride_carries_offset_and_preserves_unit_bits()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    handler.legacyFsdDiag.alignModeEnable = true;
+    observeLegacyGpsLimit(12); // cold start 60 kph -> auto bucket +30 kph
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    const CanFrame &ride = mock.sent[0];
+    TEST_ASSERT_EQUAL_UINT32(760, ride.id);
+    // helper presets data[5]=0xC0 (both high bits) -> preserved, low 6 bits
+    // carry (offsetKph + 30) = 60 = 0x3C
+    TEST_ASSERT_EQUAL_HEX8(0xFC, ride.data[5]);
+    TEST_ASSERT_EQUAL_UINT8(12, ride.data[6]); // every other byte stays native
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacySpeedDiag.ride2f8TxOk);
+    TEST_ASSERT_EQUAL_UINT8(30, handler.legacySpeedDiag.lastSentOffsetKph);
+    TEST_ASSERT_EQUAL_STRING("none", handler.legacySpeedDiag.blockedReason);
+}
+
+void test_align_mode_2f8_ride_preserves_car_unit_bits()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    handler.legacyFsdDiag.alignModeEnable = true;
+    CanFrame frame = {.id = 760};
+    frame.bus = CAN_BUS_VEH;
+    frame.data[5] = 0x00; // car sends the field with both high bits clear
+    frame.data[6] = 12;
+    handler.handleMessage(frame, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT8((30U + 30U) & 0x3F, mock.sent[0].data[5]);
+}
+
+void test_align_mode_3ee_silent_without_engagement_edge()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    handler.legacyFsdDiag.alignModeEnable = true;
+    observeLegacyGpsLimit(12);
+    mock.reset();
+    sendLegacySpeedMux0(CAN_BUS_VEH, 1); // native mux0, not triggered
+    TEST_ASSERT_EQUAL(0, mock.sent.size()); // no second writer on 0x3EE
+    TEST_ASSERT_EQUAL(FsdSkipReason::DisabledByPolicy,
+                      handler.legacyFsdDiag.mux0.lastSkip);
+}
+
+void test_align_mode_pulse_ride_sets_bit46_without_offset_bytes()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    handler.legacyFsdDiag.alignModeEnable = true;
+    observeLegacyGpsLimit(12); // limit ready: +30 would be written in fight mode
+    mock.reset();
+    forceActivateRuntime = true; // engagement rising edge opens the pulse
+    sendLegacySpeedMux0(CAN_BUS_VEH, 1);
+    forceActivateRuntime = false;
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    const CanFrame &out = mock.sent[0];
+    TEST_ASSERT_EQUAL_UINT32(1006, out.id);
+    TEST_ASSERT_EQUAL_HEX8(0x40, out.data[5] & 0x40); // bit46 activation rides
+    TEST_ASSERT_EQUAL_UINT8(0x00, out.data[3]);        // offset byte untouched
+    TEST_ASSERT_EQUAL_UINT8(0x00, out.data[7]);        // pct byte untouched
+}
+
+void test_align_mode_silent_after_pulse_expires()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    handler.legacyFsdDiag.alignModeEnable = true;
+    observeLegacyGpsLimit(12);
+    mock.reset();
+    forceActivateRuntime = true; // hold triggered across the probe frames
+    sendLegacySpeedMux0(CAN_BUS_VEH, 1); // edge -> pulse opens, frame rides
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    mock.reset();
+    for (uint32_t i = 0; i < 5200; ++i) // deterministic clock aging: each
+        (void)dashDiagNowMs();          // call is +1ms, 5200 > 5000ms pulse
+    mock.reset();
+    sendLegacySpeedMux0(CAN_BUS_VEH, 2); // still triggered, pulse expired
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    handler.keepAliveTick(mock, dashDiagNowMs()); // silence bridge attempt
+    TEST_ASSERT_EQUAL(0, mock.sent.size());       // align stays silent
+    forceActivateRuntime = false;
+}
+
+void test_align_mode_mux1_mirror_disabled()
+{
+    handler.legacyFsdDiag.alignModeEnable = true;
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::TeslaParity;
+    handler.legacyFsdDiag.mux1Enable = true;
+    forceActivateRuntime = true;
+    CanFrame frame = {.id = 1006};
+    frame.bus = CAN_BUS_VEH;
+    frame.data[0] = 1; // mux page 1
+    handler.handleMessage(frame, mock);
+    forceActivateRuntime = false;
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(FsdSkipReason::DisabledByPolicy,
+                      handler.legacyFsdDiag.mux1.lastSkip);
+}
+
 void test_legacy_3ee_custom_uses_band_percentage()
 {
     configureLegacySmartSpeed(LegacySmartOffsetMode::Custom);
@@ -1386,6 +1483,12 @@ int main()
     RUN_TEST(test_legacy_3ee_auto_uses_2f8_limit);
     RUN_TEST(test_legacy_2f8_limit_flapping_is_stabilized);
     RUN_TEST(test_legacy_2f8_limit_change_adopted_after_debounce);
+    RUN_TEST(test_align_mode_2f8_ride_carries_offset_and_preserves_unit_bits);
+    RUN_TEST(test_align_mode_2f8_ride_preserves_car_unit_bits);
+    RUN_TEST(test_align_mode_3ee_silent_without_engagement_edge);
+    RUN_TEST(test_align_mode_pulse_ride_sets_bit46_without_offset_bytes);
+    RUN_TEST(test_align_mode_silent_after_pulse_expires);
+    RUN_TEST(test_align_mode_mux1_mirror_disabled);
     RUN_TEST(test_legacy_3ee_custom_uses_band_percentage);
     RUN_TEST(test_legacy_3ee_auto_falls_back_to_fresh_fused_limit);
     RUN_TEST(test_legacy_3ee_checkAD_blocks_offset);

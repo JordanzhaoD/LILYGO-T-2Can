@@ -237,6 +237,8 @@ static LegacyFsdPolicy dashLegacyFsdPolicy = LegacyFsdPolicy::Stable;
 static bool dashLegacyFsdMux1Enable = false;
 static bool dashLegacyFsdProfileWriteEnable = false;
 static bool dashLegacyFsdVisionLimitClearEnable = false;
+// A3 align mode (2026-11-07): offset rides 0x2F8, 0x3EE pulsed.
+static bool dashLegacyAlignModeEnable = false;
 static bool dashLegacyHandlerActive();
 
 // HW3 slew limiter constants/state moved to include/dash_hw3_speed.h so
@@ -1860,6 +1862,7 @@ static void dashApplyRuntimeState()
         dashHandler->legacyFsdDiag.mux1Enable = dashLegacyFsdMux1Enable;
         dashHandler->legacyFsdDiag.profileWriteEnable = dashLegacyFsdProfileWriteEnable;
         dashHandler->legacyFsdDiag.visionLimitClearEnable = dashLegacyFsdVisionLimitClearEnable;
+        dashHandler->legacyFsdDiag.alignModeEnable = dashLegacyAlignModeEnable;
         // v1.19 JITTER procedure: armed only when the switch is on AND the AP
         // injection gate is open (the gate is the arm-level precondition).
         // Gate closed -> Inert/"apGateOff": fully passive and the legacy
@@ -1931,6 +1934,7 @@ static void dashSavePrefs()
     prefs.putBool("lfsd_m1", dashLegacyFsdMux1Enable);
     prefs.putBool("lfsd_prof", dashLegacyFsdProfileWriteEnable);
     prefs.putBool("lfsd_vis", dashLegacyFsdVisionLimitClearEnable);
+    prefs.putBool("lfsd_aln", dashLegacyAlignModeEnable);
     prefs.putBool("eprn", dashHandler ? (bool)dashHandler->enablePrint : true);
     prefs.putBool("h3_slw", hw3OffsetSlew);
     prefs.putUChar("h3_srt", hw3SlewRate);
@@ -2199,6 +2203,7 @@ static void dashLoadPrefs()
     dashLegacyFsdMux1Enable = prefs.getBool("lfsd_m1", false);
     dashLegacyFsdProfileWriteEnable = prefs.getBool("lfsd_prof", false);
     dashLegacyFsdVisionLimitClearEnable = prefs.getBool("lfsd_vis", false);
+    dashLegacyAlignModeEnable = prefs.getBool("lfsd_aln", false);
     hw3OffsetSlew = prefs.getBool("h3_slw", false);
     hw3SlewRate = dashLoadHw3SlewRate(prefs.getUChar("h3_srt", kHw3SlewRateDefault));
     // HW3 custom speed-limit boost
@@ -2860,6 +2865,14 @@ static void appendLegacySmartSpeedJson(String &j, unsigned long now)
     j += diag.gpsMppLimitStableRaw;
     j += R"JSON(,"limitHold":)JSON";
     j += diag.result.holdingLimit ? "true" : "false";
+    j += R"JSON(,"alignMode":)JSON";
+    j += dashLegacyAlignModeEnable ? "true" : "false";
+    j += R"JSON(,"ride2f8TxOk":)JSON";
+    j += diag.ride2f8TxOk;
+    j += R"JSON(,"ride2f8TxFail":)JSON";
+    j += diag.ride2f8TxFail;
+    j += R"JSON(,"ride2f8LastMs":)JSON";
+    j += diag.ride2f8LastMs;
     j += R"JSON(,"rawTargetKph":)JSON";
     j += diag.result.rawTargetKph;
     j += R"JSON(,"smoothedTargetKph":)JSON";
@@ -4387,6 +4400,8 @@ static void handleLegacyFsdConfig()
             dashLegacyFsdProfileWriteEnable = server.arg("profile") == "1";
         if (server.hasArg("vision"))
             dashLegacyFsdVisionLimitClearEnable = server.arg("vision") == "1";
+        if (server.hasArg("align"))
+            dashLegacyAlignModeEnable = server.arg("align") == "1";
         dashApplyRuntimeState();
         dashSavePrefs();
     }
@@ -9067,6 +9082,7 @@ static void dashApplyNvsRuntimeSwitches()
         handlerPool[i]->legacyFsdDiag.mux1Enable = dashLegacyFsdMux1Enable;
         handlerPool[i]->legacyFsdDiag.profileWriteEnable = dashLegacyFsdProfileWriteEnable;
         handlerPool[i]->legacyFsdDiag.visionLimitClearEnable = dashLegacyFsdVisionLimitClearEnable;
+        handlerPool[i]->legacyFsdDiag.alignModeEnable = dashLegacyAlignModeEnable;
     }
 }
 

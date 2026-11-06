@@ -11,6 +11,7 @@ DASH = ROOT / "include" / "web" / "mcp2515_dashboard.h"
 GATEWAY = ROOT / "include" / "web" / "dash_gateway.h"
 RUNTIME = ROOT / "src" / "espidf_runtime.cpp"
 HANDLERS = ROOT / "include" / "handlers.h"
+FSD_DIAG = ROOT / "include" / "dash_fsd_diag.h"
 LEGACY_SPEED = ROOT / "include" / "dash_legacy_speed.h"
 LEGACY_SMART_SPEED = ROOT / "include" / "dash_legacy_smart_offset.h"
 MAIN = ROOT / "src" / "main.cpp"
@@ -32,6 +33,7 @@ class DashboardApiContractTests(unittest.TestCase):
         cls.gateway = GATEWAY.read_text(encoding="utf-8")
         cls.runtime = RUNTIME.read_text(encoding="utf-8")
         cls.handlers = HANDLERS.read_text(encoding="utf-8")
+        cls.dash_fsd_diag = FSD_DIAG.read_text(encoding="utf-8")
         cls.legacy_speed = LEGACY_SPEED.read_text(encoding="utf-8")
         cls.legacy_smart_speed = LEGACY_SMART_SPEED.read_text(encoding="utf-8")
         cls.main = MAIN.read_text(encoding="utf-8")
@@ -1376,13 +1378,24 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('dashSyncLegacyShims();', body)
 
     def test_legacy_can760_is_read_only_and_3ee_is_output(self) -> None:
-        """Legacy 0x2F8 is telemetry only; the offset is written on native 0x3EE mux0."""
+        """Legacy 0x2F8 stays telemetry-only in the default fight mode; the
+        offset is written on native 0x3EE mux0.
+
+        A3 re-authorization (2026-11-07, Jordan-approved): in align mode the
+        single allowed TX from this branch is the pure mirror-ride — a copy
+        of the frame the car just sent with only the UI_userSpeedOffset
+        field rewritten (bits 6-7 preserved). Never a free-run originate.
+        """
         can760 = re.search(r"if \(frame\.id == 760\).*?if \(frame\.id == 1080\)", self.handlers, re.S)
         self.assertIsNotNone(can760)
         body = can760.group(0)
         self.assertIn('legacySpeedDiag.gpsUserOffsetRaw = frame.data[5] & 0x3F;', body)
         self.assertIn('legacySpeedDiag.gpsMppLimitRaw = frame.data[6] & 0x1F;', body)
-        self.assertNotIn('driver.send(', body)
+        # The mirror-ride is the ONLY send this branch may ever perform.
+        self.assertEqual(1, body.count("driver.send("))
+        self.assertIn("if (legacyFsdDiag.alignModeEnable)", body)
+        self.assertIn("CanFrame ride = frame;", body)
+        self.assertIn("(frame.data[5] & 0xC0U)", body)
         mux0 = re.search(r"if \(index == 0\).*?else if \(index == 1\)", self.handlers, re.S)
         self.assertIsNotNone(mux0)
         self.assertIn('dashWriteLegacyOffsetTo3eeMux0', mux0.group(0))
@@ -1410,6 +1423,46 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('inline constexpr uint32_t kLegacyLimitHoldMs', self.legacy_smart_speed)
         self.assertIn('struct LegacyLimitStabilizer', self.legacy_smart_speed)
         self.assertIn('bool holdingLimit = false;', self.legacy_smart_speed)
+
+    def test_legacy_align_mode_rides_2f8_and_pulses_3ee(self) -> None:
+        """A3 align mode: the offset rides the native 0x2F8 UI_userSpeedOffset
+        field as a pure mirror-ride (never free-run), and 0x3EE speaks bit46
+        only inside a bounded pulse after the engagement rising edge.
+
+        Field 2026-11-07 root cause (sess_106/107/108): the residual FSD-icon +
+        speed-number flicker survives payload-identical writes — the two-writer
+        fight on 0x3EE itself is the cause, so align mode stops the fight.
+        """
+        can760 = re.search(r"if \(frame\.id == 760\).*?if \(frame\.id == 1080\)", self.handlers, re.S)
+        self.assertIsNotNone(can760)
+        ride = can760.group(0)
+        self.assertIn("legacyFsdDiag.alignModeEnable", ride)
+        self.assertIn("(frame.data[5] & 0xC0U)", ride)
+        self.assertIn("legacySpeedDiag.ride2f8TxOk", ride)
+        self.assertIn("legacySpeedDiag.ride2f8TxFail", ride)
+        # Pure mirror-ride: the TX is a copy of the received frame, one field.
+        self.assertIn("CanFrame ride = frame;", ride)
+        mux0 = re.search(r"if \(frame\.id == 1006\).*?else if \(index == 1\)", self.handlers, re.S)
+        self.assertIsNotNone(mux0)
+        m0 = mux0.group(0)
+        self.assertIn("alignPulseUntilMs = nowMs + kAlignPulseMs", m0)
+        self.assertIn("nowMs >= legacyFsdDiag.alignPulseUntilMs", m0)
+        self.assertIn("(speedAllowed && !alignMode)", m0)
+        # Keep-alive is pulse-gated on mux0 and fully silent on mux1.
+        tick = re.search(r"void keepAliveTick\(CanDriver &drv, uint32_t nowMs\).*?static FsdDiagDriver legacyDiagDriver", self.handlers, re.S)
+        self.assertIsNotNone(tick)
+        self.assertIn("(!alignMode || alignPulseOpen)", tick.group(0))
+        self.assertIn("!alignMode);", tick.group(0))
+        self.assertIn("static constexpr uint32_t kAlignPulseMs = 5000;", self.handlers)
+        self.assertIn("bool alignModeEnable = false;", self.dash_fsd_diag)
+        # Config plumbing: NVS key, HTTP toggle, handler push, status JSON.
+        self.assertIn('prefs.putBool("lfsd_aln", dashLegacyAlignModeEnable);', self.dash)
+        self.assertIn('dashLegacyAlignModeEnable = prefs.getBool("lfsd_aln", false);', self.dash)
+        self.assertIn('legacyFsdDiag.alignModeEnable = dashLegacyAlignModeEnable;', self.dash)
+        self.assertIn('server.hasArg("align")', self.dash)
+        self.assertIn('"alignMode"', self.dash)
+        self.assertIn('"ride2f8TxOk"', self.dash)
+        self.assertIn('"ride2f8LastMs"', self.dash)
 
     def test_legacy_handler_captures_fused_speed_limit_from_921(self) -> None:
         """Legacy/HW0 needs the same fused speed limit input as the 3-mode speed UI."""

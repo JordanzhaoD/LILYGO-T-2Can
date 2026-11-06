@@ -73,6 +73,10 @@ struct LegacySpeedRuntimeDiag
     uint32_t txFail = 0;
     uint32_t offsetOnlyTxOk = 0;
     uint32_t offsetOnlyTxFail = 0;
+    // A3 align mode (2026-11-07): the 0x2F8 UI_userSpeedOffset mirror-ride.
+    uint32_t ride2f8TxOk = 0;
+    uint32_t ride2f8TxFail = 0;
+    uint32_t ride2f8LastMs = 0;
     bool runtimeActive = false;
     const char *blockedReason = "off";
 };
@@ -395,6 +399,13 @@ struct LegacyHandler : public CarManagerBase
     // tick 由 CAN 任务驱动（main.cpp t2can3eeKeepAliveTick）。
     Dash3eeKeepAlive keepAlive3ee{};
 
+    // A3 align mode (2026-11-07): 0x3EE speaks bit46 only for a bounded
+    // pulse after the engagement rising edge; the speed offset moves to the
+    // 0x2F8 UI_userSpeedOffset mirror-ride. Docs:
+    // docs/align-mode-2f8-offset-ride-design-20261107.md
+    static constexpr uint32_t kAlignPulseMs = 5000;
+    bool alignPrevTriggered{false};
+
     static FsdDiagBus legacyDiagBus(const CanFrame &frame)
     {
         return frame.bus == CAN_BUS_PARTY ? FsdDiagBus::CanB : FsdDiagBus::CanA;
@@ -439,10 +450,17 @@ struct LegacyHandler : public CarManagerBase
             legacyFsdDiag.policy != LegacyFsdPolicy::Stable &&
             (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
              (bool)legacyFsdDiag.mux1Enable);
+        // Align mode (2026-11-07): mux0 keep-alive lives only inside the
+        // engagement pulse window; mux1 keep-alive is fully silent (native
+        // mux1 already carries bit19=0).
+        const bool alignMode = legacyFsdDiag.alignModeEnable;
+        const bool alignPulseOpen =
+            alignMode && nowMs < legacyFsdDiag.alignPulseUntilMs;
         const Dash3eeKeepAlive::Action action =
             keepAlive3ee.tick(nowMs,
-                              activationAllowed || speedAllowed,
-                              mux1Allowed && injectionAllowed());
+                              (activationAllowed || speedAllowed) &&
+                                  (!alignMode || alignPulseOpen),
+                              (mux1Allowed && injectionAllowed()) && !alignMode);
         if (action == Dash3eeKeepAlive::Action::None)
             return;
 
@@ -457,7 +475,7 @@ struct LegacyHandler : public CarManagerBase
             if (activationAllowed)
                 setBit(f, 46, true);
             const uint8_t effectiveOffset =
-                speedAllowed ? computeLegacySpeedOffset(nowMs) : 0;
+                (speedAllowed && !alignMode) ? computeLegacySpeedOffset(nowMs) : 0;
             if (effectiveOffset > 0)
                 dashWriteLegacyOffsetTo3eeMux0(f.data, effectiveOffset,
                                                legacySpeedDiag.outputOffsetPct);
@@ -878,7 +896,50 @@ struct LegacyHandler : public CarManagerBase
                 legacySpeedDiag.gpsSpeedPeriodMs = nowMs - legacySpeedDiag.gpsSpeedLastMs;
             legacySpeedDiag.gpsSpeedLastMs = nowMs;
             legacySpeedDiag.gpsSpeedCount++;
-            legacySpeedDiag.blockedReason = "waiting3ee";
+            // A3 align mode (2026-11-07): carry the speed offset on the
+            // native UI_userSpeedOffset field (data[5] bits 0-5, raw =
+            // kph+30) instead of fighting the GTW carrier on 0x3EE. Pure
+            // mirror-ride — one field rewritten on a frame the car just
+            // sent, never a free-run keep-alive, so the stream cadence
+            // stays the car's own ~7Hz. Bits 6-7 preserved (bit7 = the
+            // MPH/KPH unit flag the car itself set).
+            const char *rideBlockedReason = "waiting3ee";
+            if (legacyFsdDiag.alignModeEnable)
+            {
+                const bool rideGatesOpen =
+                    legacySpeedOffsetRequested() && injectionAllowed() &&
+                    abortGuard.allowsInjection() &&
+                    !(jitterInhibit3ee && jitterInhibit3ee());
+                if (rideGatesOpen)
+                {
+                    const uint8_t rideOffsetKph =
+                        computeLegacySpeedOffset(nowMs);
+                    if (rideOffsetKph > 0)
+                    {
+                        CanFrame ride = frame;
+                        ride.data[5] = static_cast<uint8_t>(
+                            (frame.data[5] & 0xC0U) |
+                            static_cast<uint8_t>((rideOffsetKph + 30U) & 0x3FU));
+                        const bool rideOk = driver.send(ride);
+                        if (rideOk)
+                        {
+                            ++legacySpeedDiag.ride2f8TxOk;
+                            legacySpeedDiag.lastSentOffsetKph = rideOffsetKph;
+                            legacySpeedDiag.lastSentOffsetRaw =
+                                static_cast<uint8_t>(rideOffsetKph + 30U);
+                            rideBlockedReason = "none";
+                        }
+                        else
+                        {
+                            ++legacySpeedDiag.ride2f8TxFail;
+                            rideBlockedReason = "rideTxFail";
+                        }
+                        legacySpeedDiag.ride2f8LastMs = nowMs;
+                        legacySpeedDiag.runtimeActive = rideOk;
+                    }
+                }
+            }
+            legacySpeedDiag.blockedReason = rideBlockedReason;
             return;
         }
         // 0x438 (1080) — UI_driverAssistAnonDebugParams: visionSpeedSlider = 100
@@ -962,6 +1023,17 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.forceRuntime = forced;
                 legacyFsdDiag.triggerSource = forced ? FsdTriggerSource::Force : (uiSelected ? FsdTriggerSource::UiBit : FsdTriggerSource::FalseSource);
 
+                // A3 align mode (2026-11-07): arm a bounded bit46 pulse on
+                // the engagement rising edge. Outside that window 0x3EE
+                // stays silent (align gate below the abort guard) — the
+                // 2026-11-07 field captures proved the two-writer fight
+                // itself flickers the FSD icon + speed number even when
+                // our payload bytes equal native (sess_108).
+                const bool alignMode = legacyFsdDiag.alignModeEnable;
+                if (alignMode && (bool)fsdTriggered && !alignPrevTriggered)
+                    legacyFsdDiag.alignPulseUntilMs = nowMs + kAlignPulseMs;
+                alignPrevTriggered = (bool)fsdTriggered;
+
                 // v1.19 JITTER: cache every native mux0 frame BEFORE any gate
                 // below can return — the one-shot template must stay fresh
                 // even when the gates swallow the frame.
@@ -998,6 +1070,16 @@ struct LegacyHandler : public CarManagerBase
                     }
                     if (speedRequested)
                         legacySpeedDiag.blockedReason = "abortGuard";
+                    return;
+                }
+                if (alignMode && nowMs >= legacyFsdDiag.alignPulseUntilMs)
+                {
+                    // Align mode outside the engagement pulse: pass the
+                    // native frame through untouched — no bit46, no offset,
+                    // no second writer on 0x3EE. The offset rides 0x2F8.
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::DisabledByPolicy;
+                    if (speedRequested)
+                        legacySpeedDiag.blockedReason = "alignSilent";
                     return;
                 }
                 // v1.19 JITTER pause (replaces the v1.18 barrier A): while the
@@ -1051,7 +1133,10 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.mux0.recordBefore(frame.data);
                 if (activationAllowed)
                     setBit(frame, 46, true);
-                uint8_t effectiveOffset = speedAllowed ? computeLegacySpeedOffset(nowMs) : 0;
+                // Align mode: the offset rides 0x2F8 (mirror-ride in the 760
+                // branch); 0x3EE mux0 speaks bit46/profile bits only.
+                uint8_t effectiveOffset =
+                    (speedAllowed && !alignMode) ? computeLegacySpeedOffset(nowMs) : 0;
                 if (effectiveOffset > 0)
                     dashWriteLegacyOffsetTo3eeMux0(frame.data,
                                                    effectiveOffset,
@@ -1107,6 +1192,14 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.mux1.recordPath(legacyDiagBus(frame), legacyDiagDriver(frame));
                 // Pre-gate mux1 template cache (see the mux0 branch).
                 keepAlive3ee.observeMux1(frame.data, frame.bus, nowMs);
+                if (legacyFsdDiag.alignModeEnable)
+                {
+                    // Align mode: the native mux1 already carries bit19=0
+                    // (2026-11-07 field capture) — our mirrored duplicates
+                    // added nothing and kept the two-writer fight alive.
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::DisabledByPolicy;
+                    return;
+                }
                 if (legacyFsdDiag.policy == LegacyFsdPolicy::Stable)
                 {
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::DisabledInStable;
