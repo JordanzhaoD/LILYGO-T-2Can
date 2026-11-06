@@ -600,6 +600,37 @@ void test_legacy_3ee_auto_uses_2f8_limit()
     TEST_ASSERT_EQUAL(LegacySpeedLimitSource::Gps2F8, handler.legacySpeedDiag.limitSource);
 }
 
+// Field 2026-11-06: weak-GPS 0x2F8 flaps the limit every few hundred ms and
+// the offset request sawtoothed D4..FA on mux0. The stabilizer must keep the
+// locked value (and the constant offset) through the waltz.
+void test_legacy_2f8_limit_flapping_is_stabilized()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    observeLegacyGpsLimit(12); // cold start: accepted immediately
+    for (int i = 0; i < 8; ++i)
+    {
+        observeLegacyGpsLimit(27); // 135 kph garbage
+        observeLegacyGpsLimit(12);
+        observeLegacyGpsLimit(5); // 25 kph garbage
+    }
+    TEST_ASSERT_EQUAL_UINT8(5, handler.legacySpeedDiag.gpsMppLimitRaw); // raw diag stays honest: last garbage frame
+    TEST_ASSERT_EQUAL_UINT8(12, handler.legacySpeedDiag.gpsMppLimitStableRaw); // consumed value never flapped
+    sendLegacySpeedMux0(CAN_BUS_VEH, 1);
+    sendLegacySpeedMux0(CAN_BUS_VEH, 2);
+    sendLegacySpeedMux0(CAN_BUS_VEH, 3);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(30, handler.legacySpeedDiag.lastSentOffsetKph);
+}
+
+void test_legacy_2f8_limit_change_adopted_after_debounce()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    observeLegacyGpsLimit(12);
+    for (int i = 0; i < 3100; ++i) // native clock advances 1ms per frame
+        observeLegacyGpsLimit(16);
+    TEST_ASSERT_EQUAL_UINT8(16, handler.legacySpeedDiag.gpsMppLimitStableRaw);
+}
+
 void test_legacy_3ee_custom_uses_band_percentage()
 {
     configureLegacySmartSpeed(LegacySmartOffsetMode::Custom);
@@ -1353,6 +1384,8 @@ int main()
     RUN_TEST(test_legacy_can921_captures_fused_speed_limit);
     RUN_TEST(test_legacy_3ee_manual_writes_offset_after_bus_lock);
     RUN_TEST(test_legacy_3ee_auto_uses_2f8_limit);
+    RUN_TEST(test_legacy_2f8_limit_flapping_is_stabilized);
+    RUN_TEST(test_legacy_2f8_limit_change_adopted_after_debounce);
     RUN_TEST(test_legacy_3ee_custom_uses_band_percentage);
     RUN_TEST(test_legacy_3ee_auto_falls_back_to_fresh_fused_limit);
     RUN_TEST(test_legacy_3ee_checkAD_blocks_offset);

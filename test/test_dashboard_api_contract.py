@@ -1388,6 +1388,29 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('dashWriteLegacyOffsetTo3eeMux0', mux0.group(0))
         self.assertIn('legacySpeedBus.accept(frame, nowMs)', mux0.group(0))
 
+    def test_legacy_2f8_limit_is_debounced_and_held_before_use(self) -> None:
+        """Weak-GPS 0x2F8 flapping must be stabilized before the offset engine sees it.
+
+        Field 2026-11-06 root cause: the GPS-fused limit flapped 0/20/25/35/45/135
+        kph and the asymmetric smoother turned that into a mux0 b3 sawtooth.
+        The consumed limit is the stabilized one; the engine also holds the
+        last valid limit through invalid dips instead of clearing the baseline.
+        """
+        can760 = re.search(r"if \(frame\.id == 760\).*?if \(frame\.id == 1080\)", self.handlers, re.S)
+        self.assertIsNotNone(can760)
+        body = can760.group(0)
+        self.assertRegex(body, r"legacySpeedDiag\.gpsMppLimitStableRaw\s*=\s*legacySpeedDiag\.gpsLimitStabilizer\.update\(")
+        compute = re.search(r"uint8_t computeLegacySpeedOffset\(uint32_t nowMs\).*?return offset;\n    }", self.handlers, re.S)
+        self.assertIsNotNone(compute)
+        cbody = compute.group(0)
+        self.assertIn('dashLegacySmartLimitValid(legacySpeedDiag.gpsMppLimitStableRaw)', cbody)
+        self.assertIn('limitRaw = legacySpeedDiag.gpsMppLimitStableRaw;', cbody)
+        self.assertNotIn('limitRaw = legacySpeedDiag.gpsMppLimitRaw;', cbody)
+        self.assertIn('inline constexpr uint32_t kLegacyLimitDebounceMs', self.legacy_smart_speed)
+        self.assertIn('inline constexpr uint32_t kLegacyLimitHoldMs', self.legacy_smart_speed)
+        self.assertIn('struct LegacyLimitStabilizer', self.legacy_smart_speed)
+        self.assertIn('bool holdingLimit = false;', self.legacy_smart_speed)
+
     def test_legacy_handler_captures_fused_speed_limit_from_921(self) -> None:
         """Legacy/HW0 needs the same fused speed limit input as the 3-mode speed UI."""
         can921 = re.search(r"if \(frame\.id == 921\).*?// 0x3EE", self.handlers, re.S)

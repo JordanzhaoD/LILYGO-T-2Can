@@ -56,6 +56,8 @@ struct LegacySpeedRuntimeDiag
     int gpsUserOffsetKph = -30;
     uint8_t gpsMppLimitRaw = 0;
     uint16_t gpsMppLimitKph = 0;
+    LegacyLimitStabilizer gpsLimitStabilizer{};
+    uint8_t gpsMppLimitStableRaw = 0;
     uint32_t fusedLimitLastMs = 0;
     uint8_t lastSentOffsetRaw = 0;
     uint8_t lastSentOffsetKph = 0;
@@ -502,9 +504,9 @@ struct LegacyHandler : public CarManagerBase
                               kLegacyFusedLimitFreshMs;
         uint8_t limitRaw = 0;
         legacySpeedDiag.limitSource = LegacySpeedLimitSource::None;
-        if (legacySpeedDiag.gpsSpeedFresh && dashLegacySmartLimitValid(legacySpeedDiag.gpsMppLimitRaw))
+        if (legacySpeedDiag.gpsSpeedFresh && dashLegacySmartLimitValid(legacySpeedDiag.gpsMppLimitStableRaw))
         {
-            limitRaw = legacySpeedDiag.gpsMppLimitRaw;
+            limitRaw = legacySpeedDiag.gpsMppLimitStableRaw;
             legacySpeedDiag.limitSource = LegacySpeedLimitSource::Gps2F8;
         }
         else if (fusedFresh && dashLegacySmartLimitValid(fusedSpeedLimitRaw))
@@ -868,6 +870,10 @@ struct LegacyHandler : public CarManagerBase
             legacySpeedDiag.gpsUserOffsetKph = static_cast<int>(legacySpeedDiag.gpsUserOffsetRaw) - 30;
             legacySpeedDiag.gpsMppLimitRaw = frame.data[6] & 0x1F;
             legacySpeedDiag.gpsMppLimitKph = static_cast<uint16_t>(legacySpeedDiag.gpsMppLimitRaw) * 5U;
+            // Weak-GPS flapping is stabilized before the offset engine sees it
+            // (field 2026-11-06 sawtooth root cause); gpsMppLimitRaw stays raw.
+            legacySpeedDiag.gpsMppLimitStableRaw =
+                legacySpeedDiag.gpsLimitStabilizer.update(legacySpeedDiag.gpsMppLimitRaw, nowMs);
             if (legacySpeedDiag.gpsSpeedLastMs != 0)
                 legacySpeedDiag.gpsSpeedPeriodMs = nowMs - legacySpeedDiag.gpsSpeedLastMs;
             legacySpeedDiag.gpsSpeedLastMs = nowMs;

@@ -2856,6 +2856,10 @@ static void appendLegacySmartSpeedJson(String &j, unsigned long now)
     j += diag.result.speedLimitRaw;
     j += R"JSON(,"limitKph":)JSON";
     j += diag.result.speedLimitKph;
+    j += R"JSON(,"limitStableRaw":)JSON";
+    j += diag.gpsMppLimitStableRaw;
+    j += R"JSON(,"limitHold":)JSON";
+    j += diag.result.holdingLimit ? "true" : "false";
     j += R"JSON(,"rawTargetKph":)JSON";
     j += diag.result.rawTargetKph;
     j += R"JSON(,"smoothedTargetKph":)JSON";

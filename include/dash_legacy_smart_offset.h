@@ -29,6 +29,13 @@ enum class LegacySpeedBusMode : uint8_t
 inline constexpr uint32_t kLegacyGpsLimitFreshMs = 3000;
 inline constexpr uint32_t kLegacyFusedLimitFreshMs = 1000;
 
+// Field 2026-11-06: weak-GPS 0x2F8 flaps the fused limit every few hundred ms
+// (0/20/25/35/45/135 kph waltz) and the asymmetric smoother turned that into a
+// mux0 b3 offset sawtooth. A new limit only replaces the locked one after it
+// has persisted this long; the engine bridges invalid dips for this long.
+inline constexpr uint32_t kLegacyLimitDebounceMs = 3000;
+inline constexpr uint32_t kLegacyLimitHoldMs = 10000;
+
 struct LegacySmartOffsetConfig
 {
     LegacySmartOffsetMode mode = LegacySmartOffsetMode::Off;
@@ -52,6 +59,7 @@ struct LegacySmartOffsetResult
     uint16_t smoothedTargetKph = 0;
     uint8_t outputOffsetKph = 0;
     bool fallbackUsed = false;
+    bool holdingLimit = false;
     bool smoothingActive = false;
     uint32_t lastUpdateMs = 0;
     const char *blockedReason = "none";
@@ -182,6 +190,49 @@ inline uint16_t dashLegacySmartRoundedTargetKph(uint16_t speedLimitKph, uint8_t 
     return static_cast<uint16_t>(target);
 }
 
+// Weak 0x2F8 sources (garage GPS) flap the fused speed limit every few
+// hundred ms. The stabilizer only swaps in a new limit after it has persisted
+// for kLegacyLimitDebounceMs; the first observation is accepted immediately so
+// cold start keeps its current latency. Invalid (0) is just another value: it
+// must persist too before it replaces a valid lock (hold-last-valid on dip).
+struct LegacyLimitStabilizer
+{
+    uint8_t stableRaw = 0;
+    bool hasStable = false;
+    bool hasCandidate = false;
+    uint8_t candidateRaw = 0;
+    uint32_t candidateFirstMs = 0;
+
+    uint8_t update(uint8_t raw, uint32_t nowMs)
+    {
+        if (!hasStable)
+        {
+            stableRaw = raw;
+            hasStable = true;
+            hasCandidate = false;
+            return stableRaw;
+        }
+        if (raw == stableRaw)
+        {
+            hasCandidate = false;
+            return stableRaw;
+        }
+        if (!hasCandidate || raw != candidateRaw)
+        {
+            candidateRaw = raw;
+            candidateFirstMs = nowMs;
+            hasCandidate = true;
+            return stableRaw;
+        }
+        if (nowMs - candidateFirstMs >= kLegacyLimitDebounceMs)
+        {
+            stableRaw = candidateRaw;
+            hasCandidate = false;
+        }
+        return stableRaw;
+    }
+};
+
 class LegacySmartOffsetEngine
 {
 public:
@@ -202,8 +253,24 @@ public:
             syncSmoothing(0, nowMs);
             return result;
         }
-        if (dashLegacySmartLimitValid(speedLimitRaw))
-            result.speedLimitKph = static_cast<uint16_t>(speedLimitRaw) * 5U;
+        // Hold the last accepted limit through an invalid dip (silent or zeroed
+        // 0x2F8): clearing the smoothing baseline here is what produced the
+        // 3-4s offset sawtooth on the instrument cluster.
+        uint8_t effectiveRaw = speedLimitRaw;
+        if (dashLegacySmartLimitValid(effectiveRaw))
+        {
+            heldLimitRaw_ = effectiveRaw;
+            heldLimitMs_ = nowMs;
+            hasHeldLimit_ = true;
+        }
+        else if (hasHeldLimit_ &&
+                 static_cast<uint32_t>(nowMs - heldLimitMs_) <= kLegacyLimitHoldMs)
+        {
+            effectiveRaw = heldLimitRaw_;
+            result.holdingLimit = true;
+        }
+        if (dashLegacySmartLimitValid(effectiveRaw))
+            result.speedLimitKph = static_cast<uint16_t>(effectiveRaw) * 5U;
 
         if (result.mode == LegacySmartOffsetMode::Manual)
         {
@@ -213,7 +280,7 @@ public:
             syncSmoothing(result.smoothedTargetKph, nowMs);
             return result;
         }
-        if (!dashLegacySmartLimitValid(speedLimitRaw))
+        if (!dashLegacySmartLimitValid(effectiveRaw))
         {
             result.fallbackUsed = true;
             result.blockedReason = "speedLimitUnknown";
@@ -291,6 +358,9 @@ private:
     bool hasSmoothedTarget_ = false;
     uint16_t lastSmoothedTargetKph_ = 0;
     uint32_t lastUpdateMs_ = 0;
+    bool hasHeldLimit_ = false;
+    uint8_t heldLimitRaw_ = 0;
+    uint32_t heldLimitMs_ = 0;
 };
 
 struct DashLegacySpeedBusLock

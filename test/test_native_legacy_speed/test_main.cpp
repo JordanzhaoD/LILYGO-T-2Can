@@ -88,6 +88,79 @@ void test_speed_down_smooths_at_five_kph_per_second()
     TEST_ASSERT_TRUE(low.smoothingActive);
 }
 
+// --- 0x2F8 limit stabilizer (field 2026-11-06: weak-GPS limit flapping sawtooth) ---
+
+static LegacyLimitStabilizer stab;
+
+void test_stabilizer_accepts_first_observation_immediately()
+{
+    stab = LegacyLimitStabilizer{};
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(9, 1000));
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(9, 1500));
+}
+
+void test_stabilizer_rejects_sub_three_second_flapping()
+{
+    stab = LegacyLimitStabilizer{};
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(9, 1000));
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(27, 1700)); // 135 kph garbage (raw<31 counts valid)
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(9, 2300));
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(5, 2900));  // 25 kph garbage
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(27, 3500));
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(9, 4100));
+}
+
+void test_stabilizer_adopts_change_after_full_debounce_window()
+{
+    stab = LegacyLimitStabilizer{};
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(9, 1000));
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(12, 2000));
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(12, 4999));
+    TEST_ASSERT_EQUAL_UINT8(12, stab.update(12, 5000));
+}
+
+void test_stabilizer_holds_valid_through_brief_invalid_dip()
+{
+    stab = LegacyLimitStabilizer{};
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(9, 1000));
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(0, 2000));
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(0, 3500));
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(9, 4000));
+}
+
+void test_stabilizer_lets_prolonged_invalid_through()
+{
+    stab = LegacyLimitStabilizer{};
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(9, 1000));
+    TEST_ASSERT_EQUAL_UINT8(9, stab.update(0, 2000));
+    TEST_ASSERT_EQUAL_UINT8(0, stab.update(0, 5000));
+}
+
+// --- engine hold: a silent/zeroed limit must not clear the smoothing baseline ---
+
+void test_invalid_limit_holds_last_valid_within_hold_window()
+{
+    cfg.mode = LegacySmartOffsetMode::Auto;
+    LegacySmartOffsetResult ok = compute(12, 1000);
+    TEST_ASSERT_EQUAL_UINT8(30, ok.outputOffsetKph);
+    LegacySmartOffsetResult held = compute(0, 8000);
+    TEST_ASSERT_EQUAL_UINT8(30, held.outputOffsetKph);
+    TEST_ASSERT_EQUAL_UINT16(60, held.speedLimitKph);
+    TEST_ASSERT_TRUE(held.holdingLimit);
+    TEST_ASSERT_FALSE(held.fallbackUsed);
+}
+
+void test_invalid_limit_fails_closed_after_hold_expires()
+{
+    cfg.mode = LegacySmartOffsetMode::Auto;
+    TEST_ASSERT_EQUAL_UINT8(30, compute(12, 1000).outputOffsetKph);
+    LegacySmartOffsetResult expired = compute(0, 11001);
+    TEST_ASSERT_EQUAL_UINT8(0, expired.outputOffsetKph);
+    TEST_ASSERT_TRUE(expired.fallbackUsed);
+    TEST_ASSERT_FALSE(expired.holdingLimit);
+    TEST_ASSERT_EQUAL_STRING("speedLimitUnknown", expired.blockedReason);
+}
+
 static CanFrame routeFrame(uint8_t bus, uint8_t value)
 {
     CanFrame frame = {.id = 1006};
@@ -142,6 +215,13 @@ int main()
     RUN_TEST(test_auto_reference_points);
     RUN_TEST(test_custom_bands_and_pct_clamp);
     RUN_TEST(test_speed_down_smooths_at_five_kph_per_second);
+    RUN_TEST(test_stabilizer_accepts_first_observation_immediately);
+    RUN_TEST(test_stabilizer_rejects_sub_three_second_flapping);
+    RUN_TEST(test_stabilizer_adopts_change_after_full_debounce_window);
+    RUN_TEST(test_stabilizer_holds_valid_through_brief_invalid_dip);
+    RUN_TEST(test_stabilizer_lets_prolonged_invalid_through);
+    RUN_TEST(test_invalid_limit_holds_last_valid_within_hold_window);
+    RUN_TEST(test_invalid_limit_fails_closed_after_hold_expires);
     RUN_TEST(test_bus_lock_requires_three_consistent_samples);
     RUN_TEST(test_bus_lock_blocks_mirrored_frames);
     RUN_TEST(test_manual_bus_override_is_immediate);
