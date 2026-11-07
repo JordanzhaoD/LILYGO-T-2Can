@@ -1,20 +1,35 @@
 #pragma once
 
-// Auto gear shift (Legacy Intel Model X) — engine core.
+// Auto gear shift (Legacy Intel Model X) — engine core, v2.
 //
 // Platform-free C++: no Arduino/ESP includes, so the native harness
 // (test/test_native_autoshift_main.cpp) compiles this header directly
 // with -DDRIVER_P4_3CAN. All vehicle-facing wiring (CAN drains, NVS,
-// DIAG, TX queue) lives in later tasks and stays outside this core.
+// DIAG, TX queue) lives outside this core.
 //
-// Protocol facts (2026-11-04 dictionary + sess_64 verification, see
-// docs/superpowers/specs/2026-11-04-autoshift-recon-and-v1-design.md):
-//   SBW_RQ_SCCM = CanC 0x228, DLC4, ~98 Hz.
-//   b0/b1 = stalk state pair (static P idle observed as 40 C0),
-//   b2 high nibble = MsgTxmtId (16-count), b3 = CRC8 SAE J1850
-//   (poly 0x1D, init 0xFF, xorout 0xFF) over b0..b2 — 16/16 vectors.
-//   The live SCCM stream keeps its own counter; a composed frame always
-//   takes source counter + 1, never a locally rolling count.
+// Protocol facts (2026-11-04 dictionary + sess_64, upgraded 2026-11-07 by
+// the ka750 field round — see
+// docs/superpowers/specs/2026-11-07-autoshift-v2-evidence-upgrade-design.md):
+//   SBW_RQ_SCCM = CanC 0x228, DLC4, ~100 Hz idle (b1=0xC0) stream.
+//   b0/b1 = stalk state pair (idle 40 C0), b2 high nibble = MsgTxmtId
+//   (16-count) walking +1 per frame ACROSS idle and command frames,
+//   b3 = CRC8 SAE J1850 (poly 0x1D, init 0xFF, xorout 0xFF) over b0..b2
+//   — 16/16 static vectors. Shift commands are multi-frame PHASES at a
+//   10 ms cadence inside the gateway-owned stream (ka750 sess_s4_gears):
+//   P->N = C4, N->D = C8, D->N = C2, N->R = C2 then C1 (two-phase),
+//   ->P = D0; a continuous P->D sweep is C4 x4 then C8 x26 with no gap.
+//   Gear feedback = CanA 0x118 b3>>4 (1P/2R/3N/4D), flipping 0-30 ms
+//   after burst start (worst observed 520 ms).
+//   Speed = CanC 0x106 b5:b6 big-endian, 4 mm/s per tick (3-point
+//   calibrated). Brake = CanC 0x116 b1 bit7. Wheel gestures = CanB
+//   0x514 (left) / 0x51B (right) event pages, b0 = 0x10 press / 0x11
+//   release, arriving as pairs.
+//
+// v2 posture (Jordan 2026-11-07): trigger = left-wheel press pair,
+// P<->D only — both TX sequences field-proven end to end. Angle scale
+// and obstacle maps stay sentinel (their evidence is still pending),
+// which fails those gates CLOSED. A composed frame always rides the
+// live SCCM counter (+1), never a locally rolling count.
 
 #include <cstddef>
 #include <cstdint>
@@ -46,86 +61,93 @@ inline uint8_t dashAsGearFromDi(uint8_t diGear)
     }
 }
 
+// DI codes for the submit/confirm path. The stalk-end P button requests
+// P (DI 1); N keeps its code for completeness. 0xFF = invalid index.
+inline uint8_t dashAsGearToDi(uint8_t gear)
+{
+    switch (gear) {
+    case kAsGearP:
+    case kAsGearPBtn: return 1;
+    case kAsGearR: return 2;
+    case kAsGearN: return 3;
+    case kAsGearD: return 4;
+    default: return 0xFF;
+    }
+}
+
 struct DashAutoshiftProfile
 {
-    // SBW compose (Task 3)
-    uint8_t stalkB0[kAsGearCount];  // per-gear stalk-state byte 0
-    uint8_t stalkB1[kAsGearCount];  // per-gear stalk-state byte 1
-    uint32_t sbwSrcFreshMs;         // max age of a 0x228 source frame
-    // Gate chain (Task 4)
-    uint8_t speedLimitKph;          // shift only at or below this speed
-    uint32_t cooldownMs;            // between accepted requests
-    uint32_t confirmTimeoutMs;      // DI_gear confirm deadline
-    uint8_t retryMax;               // in-flight retries before abandon
-    uint8_t shiftCountMax;          // per-session shift request limit
-    // 0x118 DI_torque2 field map (Task 5)
-    uint32_t t2FreshMs;             // 0x118 freshness budget
-    uint8_t t2BrakeByte;            // 0xFF = unknown -> brake undecodable
-    uint8_t t2BrakeMask;            // applied when (d[b] & mask) != 0
-    uint8_t t2SpeedByte;            // 0xFF = unknown -> speed undecodable
-    uint8_t t2SpeedScaleH;          // hundredths of kph per LSB; 0 = unknown
-    // 0x00E STW_ANGLHP_STAT map (Task 5): 16-bit big-endian at bytes 0-1
-    int16_t angleScaleT10;          // deci-deg per LSB; 0 = unknown
-    int16_t angleOffsetT10;         // deci-deg offset
-    uint32_t obstacleFreshMs;       // 0x23E/0x20E freshness budget
-    uint8_t oocBlockByte;           // 0x23E oocStatus; 0xFF = unknown
-    uint8_t oocBlockMask;           // blocked when (d[b] & mask) != 0
-    uint8_t sdiBlockByte;           // 0x20E sdiFront; 0xFF = unknown
+    // SBW sequence (FROZEN 2026-11-07 from ka750 sess_s4_gears).
+    uint8_t pdLeadCode;         // P->D phase 1 code (exit P)
+    uint8_t pdLeadFrames;       // P->D phase 1 frame count
+    uint8_t pdMainCode;         // P->D phase 2 code (enter D)
+    uint8_t pdMainFrames;       // P->D phase 2 frame count
+    uint8_t dpCode;             // D->P code
+    uint8_t dpFrames;           // D->P frame count
+    uint32_t frameCadenceMs;    // native burst cadence (10 ms)
+    uint32_t sbwSrcFreshMs;     // max age of a 0x228 source frame
+    // Gate chain
+    uint8_t speedLimitKph;      // shift only at or below this speed
+    uint32_t cooldownMs;        // between accepted requests
+    uint32_t confirmTimeoutMs;  // gear-confirm deadline (from burst end)
+    uint8_t retryMax;           // in-flight retries before abandon
+    uint8_t shiftCountMax;      // per-session shift request limit
+    // Sensor freshness budgets (all streams ~100 Hz)
+    uint32_t t2FreshMs;         // 0x118 gear/vehicle anchor
+    uint32_t speedFreshMs;      // 0x106 speed
+    uint32_t brakeFreshMs;      // 0x116 brake
+    // 0x00E STW_ANGLHP_STAT map: 16-bit big-endian at bytes 0-1.
+    int16_t angleScaleT10;      // deci-deg per LSB; 0 = unknown [sentinel]
+    int16_t angleOffsetT10;     // deci-deg offset
+    uint32_t obstacleFreshMs;   // 0x23E/0x20E freshness budget
+    uint8_t oocBlockByte;       // 0x23E oocStatus; 0xFF = unknown [sentinel]
+    uint8_t oocBlockMask;       // blocked when (d[b] & mask) != 0
+    uint8_t sdiBlockByte;       // 0x20E sdiFront; 0xFF = unknown [sentinel]
     uint8_t sdiBlockMask;
-    // 0x045 STW_ACTN_RQ wheel map (Task 5); 0xFF = unknown
-    uint8_t w45SideByte;            // byte carrying wheel identity
-    uint8_t w45SideL;               // value meaning left wheel
-    uint8_t w45SideR;               // value meaning right wheel
-    uint8_t w45DirByte;             // byte carrying scroll direction
-    uint8_t w45DirPos;              // value meaning positive scroll
-    uint8_t w45DirNeg;              // value meaning negative scroll
     // Trigger thresholds (policy defaults, Albert reference)
-    uint8_t steerParkDeg;           // P/N steering threshold
-    uint8_t steerDriveReverseDeg;   // D/R toggle threshold
-    uint8_t steerRearmDeg;          // hysteresis re-arm margin
-    uint32_t scrollEpisodeGapMs;    // gap closing a scroll episode
+    uint8_t steerParkDeg;       // P/N steering threshold
+    uint8_t steerDriveReverseDeg; // D/R toggle threshold
+    uint8_t steerRearmDeg;      // hysteresis re-arm margin
+    uint32_t wheelPressTimeoutMs; // release must complete within this
 };
 
-// PROFILE UNFROZEN — everything marked [sentinel] awaits the Task-2 field
-// freeze; swapping values in is a constants-only change. Sentinel maps
-// (0xFF / 0) DISABLE the corresponding decode, which fails CLOSED through
-// the gates: undecoded brake/speed never passes, absent obstacle telemetry
-// never reads clear. Policy defaults (Albert reference) are not sentinels.
+// FROZEN 2026-11-07 (ka750 evidence round). Angle scale and obstacle
+// maps remain sentinel — those DISABLE the corresponding decode, which
+// fails CLOSED through the gates: unfrozen steering never triggers and
+// absent obstacle telemetry never reads clear. Policy defaults (Albert
+// reference) are not sentinels.
 static const DashAutoshiftProfile kAsProfile = {
-    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF},  // stalkB0  [sentinel: Task 2]
-    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF},  // stalkB1  [sentinel: Task 2]
-    100,    // sbwSrcFreshMs   [sentinel: Task 2 = max 0x228 gap x 4]
-    8,      // speedLimitKph   (Albert default)
-    1000,   // cooldownMs      (Albert default)
-    1000,   // confirmTimeoutMs [sentinel: Task 2 DI_gear observed latency]
-    2,      // retryMax        (default, per plan Task 4)
-    20,     // shiftCountMax   (policy default, per-session)
-    300,    // t2FreshMs       (0x118 @100Hz; policy default)
-    0xFF,   // t2BrakeByte     [sentinel: Task 2]
-    0x00,   // t2BrakeMask     [sentinel: Task 2]
-    0xFF,   // t2SpeedByte     [sentinel: Task 2]
-    0,      // t2SpeedScaleH   [sentinel: Task 2]
-    0,      // angleScaleT10   [sentinel: Task 2]
-    0,      // angleOffsetT10  [sentinel: Task 2]
+    0xC4,   // pdLeadCode     (P->N / sweep lead-in, s4 @181.000/@209.789)
+    4,      // pdLeadFrames   (one-sweep observation; standalone x8-12)
+    0xC8,   // pdMainCode     (enter D, s4 @181.080/@209.829)
+    25,     // pdMainFrames   (observed 13/25/26)
+    0xD0,   // dpCode         (enter P, stalk + P-button, s4 + recon2)
+    12,     // dpFrames       (observed 12/12)
+    10,     // frameCadenceMs (native burst cadence, 100 Hz stream)
+    100,    // sbwSrcFreshMs  (native 10 ms cadence -> 10 frames)
+    8,      // speedLimitKph  (Albert default)
+    1000,   // cooldownMs     (Albert default)
+    1000,   // confirmTimeoutMs (300 ms burst + 520 ms worst observed lag)
+    2,      // retryMax       (default, per plan Task 4)
+    20,     // shiftCountMax  (policy default, per-session)
+    300,    // t2FreshMs      (0x118 @100Hz; policy default)
+    300,    // speedFreshMs   (0x106 @100Hz)
+    300,    // brakeFreshMs   (0x116 @100Hz)
+    0,      // angleScaleT10  [sentinel: video calibration pending]
+    0,      // angleOffsetT10 [sentinel]
     500,    // obstacleFreshMs (suite ~8-12Hz; policy default)
-    0xFF,   // oocBlockByte    [sentinel: Task 2]
-    0x00,   // oocBlockMask    [sentinel: Task 2]
-    0xFF,   // sdiBlockByte    [sentinel: Task 2]
-    0x00,   // sdiBlockMask    [sentinel: Task 2]
-    0xFF,   // w45SideByte     [sentinel: Task 2]
-    0xFF,   // w45SideL        [sentinel: Task 2]
-    0xFF,   // w45SideR        [sentinel: Task 2]
-    0xFF,   // w45DirByte      [sentinel: Task 2]
-    0xFF,   // w45DirPos       [sentinel: Task 2]
-    0xFF,   // w45DirNeg       [sentinel: Task 2]
-    30,     // steerParkDeg    (Albert default)
+    0xFF,   // oocBlockByte   [sentinel: box-push adjudication pending]
+    0x00,   // oocBlockMask   [sentinel]
+    0xFF,   // sdiBlockByte   [sentinel]
+    0x00,   // sdiBlockMask   [sentinel]
+    30,     // steerParkDeg   (Albert default)
     60,     // steerDriveReverseDeg (Albert default)
-    10,     // steerRearmDeg   (policy default)
-    150,    // scrollEpisodeGapMs (policy default)
+    10,     // steerRearmDeg  (policy default)
+    2000,   // wheelPressTimeoutMs (press+release pairs are sub-second)
 };
 
 // Runtime copy: decoders/triggers/gates read this instance so tests can
-// simulate the Task-2 freeze by mutating it; kAsProfile stays the frozen
+// simulate later freezes by mutating it; kAsProfile stays the frozen
 // initializer.
 inline DashAutoshiftProfile dashAsProfile = kAsProfile;
 
@@ -144,38 +166,6 @@ inline uint8_t dashAsCrc8J1850(const uint8_t *d, size_t n)
     return static_cast<uint8_t>(crc ^ 0xFFu);
 }
 
-// Compose a gear-request 0x228 frame from the freshest source frame.
-//
-// Writes the frozen stalk-state pair for `gear` (DashAsGear index),
-// advances the MsgTxmtId nibble from the SOURCE frame (+1 mod 16, the
-// live SCCM stream owns the sequence), preserves the b2 low nibble,
-// and recomputes the J1850 CRC over b0..b2.
-//
-// Returns false (out untouched) when `gear` is out of range or the
-// source frame is older than the freshness budget — never inject a
-// modified copy of a stale stream.
-inline bool dashAsSbwCompose(const uint8_t src[4], uint32_t srcAgeMs,
-                             uint8_t gear, uint8_t out[4])
-{
-    if (gear >= kAsGearCount) {
-        return false;
-    }
-    if (srcAgeMs > dashAsProfile.sbwSrcFreshMs) {
-        return false;
-    }
-    if (dashAsProfile.stalkB0[gear] == 0xFF
-        || dashAsProfile.stalkB1[gear] == 0xFF) {
-        return false;  // unfrozen stalk table — never TX sentinel bytes
-    }
-    out[0] = dashAsProfile.stalkB0[gear];
-    out[1] = dashAsProfile.stalkB1[gear];
-    const uint8_t counter =
-        static_cast<uint8_t>(((src[2] >> 4) + 1u) & 0x0Fu);
-    out[2] = static_cast<uint8_t>((counter << 4) | (src[2] & 0x0F));
-    out[3] = dashAsCrc8J1850(out, 3);
-    return true;
-}
-
 // ---------------------------------------------------------------------------
 // Gate chain (fail-closed, single in-flight, exact-code confirm)
 // ---------------------------------------------------------------------------
@@ -185,7 +175,9 @@ enum DashAsVerdict : uint8_t
     AS_SUBMIT = 0,
     AS_BLOCK_MASTER,
     AS_BLOCK_STALE_118,
+    AS_BLOCK_STALE_SPEED,   // v2: 0x106 absent/stale/undecoded
     AS_BLOCK_SPEED,
+    AS_BLOCK_STALE_BRAKE,   // v2: 0x116 absent/stale/undecoded
     AS_BLOCK_BRAKE,
     AS_BLOCK_OBSTACLE,
     AS_BLOCK_COOLDOWN,
@@ -197,9 +189,11 @@ enum DashAsVerdict : uint8_t
 struct DashAsInputs
 {
     bool master;                // NVS master switch
-    bool torque2Fresh;          // 0x118 DI_torque2 inside freshness budget
-    uint8_t speedKph;           // DI_vehicleSpeed
-    bool brakeApplied;          // DI_brakePedal
+    bool torque2Fresh;          // 0x118 inside freshness budget
+    bool speedFresh;            // v2: 0x106 inside freshness budget
+    uint8_t speedKph;           // v2: decoded from 0x106 (4 mm/s ticks)
+    bool brakeFresh;            // v2: 0x116 inside freshness budget
+    bool brakeApplied;          // v2: 0x116 b1 bit7
     uint8_t gearNow;            // DI_gear code (1=P 2=R 3=N 4=D)
     uint8_t gearTarget;         // DashAsGear index of the request
     bool obstacleFreshAndClear; // fresh 0x23E/0x20E AND no obstacle
@@ -210,16 +204,15 @@ struct DashAsInputs
 enum DashAsConfirm : uint8_t
 {
     AS_CONFIRM_IDLE = 0,      // no pending request
-    AS_CONFIRM_WAIT,          // pending, not confirmed, inside deadline
+    AS_CONFIRM_WAIT,          // pending, not confirmed
     AS_CONFIRM_COMPLETE,      // DI_gear reached the exact target code
-    AS_CONFIRM_RETRY,         // deadline expired, retry budget remains
-    AS_CONFIRM_ABANDONED,     // deadline expired, retry budget exhausted
 };
 
 enum DashAsAbandonReason : uint8_t
 {
     kAsAbandonNone = 0,
     kAsAbandonRetryExhausted = 1,
+    kAsAbandonStaleSource = 2,  // v2: no fresh 0x228 to ride at retry
 };
 
 struct DashAsGateState
@@ -232,8 +225,8 @@ struct DashAsGateState
 
 inline DashAsGateState dashAsGateState = {};
 
-// Session runtime + stats (Task 6): what the DIAG status JSON and the Web
-// status read. lastShiftMs/shiftCount are the caller-maintained gate inputs
+// Session runtime + stats: what the DIAG status JSON and the Web status
+// read. lastShiftMs/shiftCount are the caller-maintained gate inputs
 // (cooldown anchor / session count), updated by the confirm path itself.
 struct DashAsStats
 {
@@ -267,9 +260,11 @@ inline uint8_t dashAsLastAbandonReason()
     return dashAsGateState.lastAbandonReason;
 }
 
-// Evaluation order is contract-pinned (master -> stale -> speed -> brake
-// -> cooldown -> count -> obstacle -> pending -> target -> submit); every
-// freshness input fails CLOSED.
+// Evaluation order is contract-pinned (master -> stale 0x118 -> stale
+// speed -> speed -> stale brake -> brake -> cooldown -> count ->
+// obstacle -> pending -> target -> submit); every freshness input fails
+// CLOSED — an undecoded sensor is never fresh, an absent stream is
+// never clear.
 inline DashAsVerdict dashAsGateEval(uint32_t nowMs, const DashAsInputs &in)
 {
     if (!in.master) {
@@ -278,8 +273,14 @@ inline DashAsVerdict dashAsGateEval(uint32_t nowMs, const DashAsInputs &in)
     if (!in.torque2Fresh) {
         return AS_BLOCK_STALE_118;
     }
+    if (!in.speedFresh) {
+        return AS_BLOCK_STALE_SPEED;
+    }
     if (in.speedKph > dashAsProfile.speedLimitKph) {
         return AS_BLOCK_SPEED;
+    }
+    if (!in.brakeFresh) {
+        return AS_BLOCK_STALE_BRAKE;
     }
     if (!in.brakeApplied) {
         return AS_BLOCK_BRAKE;
@@ -303,76 +304,83 @@ inline DashAsVerdict dashAsGateEval(uint32_t nowMs, const DashAsInputs &in)
     return AS_SUBMIT;
 }
 
-// Record a submission (caller invokes ONLY on AS_SUBMIT). Single
-// in-flight: refuses while a request is pending. targetDi is a DI code.
-inline bool dashAsSubmit(uint8_t targetDi, uint32_t nowMs)
+// ---------------------------------------------------------------------------
+// Engine state (the single owner of an in-flight shift request)
+// ---------------------------------------------------------------------------
+
+enum DashAsEngineSt : uint8_t
 {
-    if (targetDi < 1 || targetDi > 4) {
-        return false;
-    }
-    if (dashAsGateState.pendingTargetDi != 0) {
-        return false;
-    }
-    dashAsGateState.pendingTargetDi = targetDi;
-    dashAsGateState.pendingDeadlineMs = nowMs + dashAsProfile.confirmTimeoutMs;
-    return true;
+    kAsEngIdle = 0,
+    kAsEngBurst,
+    kAsEngConfirm,
+};
+
+struct DashAsEngine
+{
+    uint8_t st = kAsEngIdle;
+    uint8_t targetGear = 0xFF;  // DashAsGear index
+    uint16_t seqIdx = 0;        // frames emitted this burst
+    uint16_t framesTotal = 0;   // burst length from the frozen profile
+    uint8_t lastCounter = 0;    // MsgTxmtId nibble of the last TX frame
+    uint32_t lastFrameMs = 0;   // cadence pacer
+    uint8_t retries = 0;        // confirm expiries this request
+    uint32_t deadlineMs = 0;    // confirm deadline (absolute)
+};
+inline DashAsEngine dashAsEngine = {};
+
+inline uint8_t dashAsEngineState()
+{
+    return dashAsEngine.st;
+}
+
+inline void dashAsEngineReset()
+{
+    dashAsEngine = DashAsEngine{};
 }
 
 // Close the loop from each fresh 0x118. COMPLETE only on the EXACT DI
 // target code and only for codes in {1,2,4} (0 INVALID / 7 SNA never
-// confirm; N is not a confirmable v1 target). Deadline expiry past the
-// retry cap abandons the request with a recorded reason.
+// confirm). Deadline/retry/abandon are owned by the engine tick, not
+// here — one owner per lifecycle transition.
 inline DashAsConfirm dashAsConfirmGear(uint8_t gearNow, uint32_t nowMs)
 {
+    (void)nowMs;
     DashAsGateState &s = dashAsGateState;
     if (s.pendingTargetDi == 0) {
         return AS_CONFIRM_IDLE;
     }
     const bool exact = gearNow == s.pendingTargetDi
                        && (gearNow == 1 || gearNow == 2 || gearNow == 4);
-    if (exact) {
-        s.pendingTargetDi = 0;
-        s.pendingDeadlineMs = 0;
-        s.retries = 0;
-        s.lastAbandonReason = kAsAbandonNone;
-        dashAsRuntime.lastShiftMs = nowMs ? nowMs : 1;
-        ++dashAsRuntime.shiftCount;
-        ++dashAsStats.confirmed;
-        return AS_CONFIRM_COMPLETE;
+    if (!exact) {
+        return AS_CONFIRM_WAIT;
     }
-    if (nowMs > s.pendingDeadlineMs) {
-        ++s.retries;
-        const bool exhausted = s.retries >= dashAsProfile.retryMax;
-        if (exhausted) {
-            s.lastAbandonReason = kAsAbandonRetryExhausted;
-            s.retries = 0;
-            ++dashAsStats.abandoned;
-        } else {
-            ++dashAsStats.retried;
-        }
-        s.pendingTargetDi = 0;
-        s.pendingDeadlineMs = 0;
-        return exhausted ? AS_CONFIRM_ABANDONED : AS_CONFIRM_RETRY;
-    }
-    return AS_CONFIRM_WAIT;
+    s.pendingTargetDi = 0;
+    s.pendingDeadlineMs = 0;
+    s.retries = 0;
+    s.lastAbandonReason = kAsAbandonNone;
+    dashAsRuntime.lastShiftMs = nowMs ? nowMs : 1;
+    ++dashAsRuntime.shiftCount;
+    ++dashAsStats.confirmed;
+    dashAsEngineReset();  // a mid-burst confirm cancels the burst
+    return AS_CONFIRM_COMPLETE;
 }
 
 // ---------------------------------------------------------------------------
-// Decoders, triggers, close-loop wiring (Task 5)
+// Decoders, triggers
 // ---------------------------------------------------------------------------
 
 enum DashAsTriggerType : uint8_t
 {
     kAsTrigNone = 0,
-    kAsTrigScroll,
-    kAsTrigSteer,
+    kAsTrigScroll,   // v2: left-wheel press+release pair
+    kAsTrigSteer,    // frozen-out until the angle scale lands
 };
 
 struct DashAsTrigger
 {
     uint8_t type = kAsTrigNone;
     uint8_t side = 0;   // scroll: 0 = left wheel, 1 = right wheel
-    int8_t dir = 0;     // scroll: +1/-1; steer: sign of the angle
+    int8_t dir = 0;     // steer: sign of the angle
     uint8_t gear = 0;   // DashAsGear target for the request
 };
 
@@ -380,16 +388,19 @@ struct DashAsSensor
 {
     uint32_t lastTorque2Ms = 0;    // 0 = never seen
     uint8_t gearNow = 0;           // DI code from 0x118 b3>>4 (proven)
+    uint32_t lastSpeedMs = 0;      // 0x106 (v2)
+    uint16_t speedTick = 0xFFFF;   // raw 4 mm/s ticks; 0xFFFF = undecoded
+    uint8_t speedKph = 0xFF;       // rounded kph; 0xFF = undecoded
+    uint32_t lastMirrorMs = 0;     // 0x116 (v2)
     uint8_t brake = 0xFF;          // 0/1; 0xFF = undecoded (fail-closed)
-    uint8_t speedKph = 0xFF;       // decoded kph; 0xFF = undecoded
     uint32_t lastAngleMs = 0;
     int16_t angleDegT10 = 0x7FFF;  // deci-degrees; 0x7FFF = invalid
     uint32_t lastOocMs = 0;        // 0x23E oocStatus
     uint32_t lastSdiMs = 0;        // 0x20E sdiFront
     bool oocBlocked = true;        // conservative until a decoded clear
     bool sdiBlocked = true;
-    uint32_t lastWheelMs = 0;      // 0x045 episode tracking
-    DashAsTrigger pending = {};    // one-shot trigger slot (scroll)
+    uint32_t wheelPressMs = 0;     // 0x514 press latch (0 = none) (v2)
+    DashAsTrigger pending = {};    // one-shot trigger slot
     DashAsConfirm lastConfirm = AS_CONFIRM_IDLE;
     bool steerArmed = true;        // steering one-shot latch
 };
@@ -402,30 +413,53 @@ inline bool dashAsTorque2Fresh(uint32_t nowMs)
         && (nowMs - dashAsSensor.lastTorque2Ms) <= dashAsProfile.t2FreshMs;
 }
 
+inline bool dashAsSpeedFresh(uint32_t nowMs)
+{
+    return dashAsSensor.lastSpeedMs != 0
+        && (nowMs - dashAsSensor.lastSpeedMs) <= dashAsProfile.speedFreshMs;
+}
+
+inline bool dashAsBrakeFresh(uint32_t nowMs)
+{
+    return dashAsSensor.lastMirrorMs != 0
+        && (nowMs - dashAsSensor.lastMirrorMs) <= dashAsProfile.brakeFreshMs;
+}
+
 // DI_torque2 (CanA 0x118, DLC8, ~100 Hz). Gear position is field-proven
-// b3>>4; brake/speed ride the frozen map (sentinel = undecoded, and the
-// gates read undecoded as blocked). The close loop runs on every fresh
-// 0x118: pending requests confirm or age out here.
+// b3>>4. v2 removed the 0x118 brake/speed maps (disproven by the ka750
+// round): brake/speed live on 0x116/0x106 and stay undecoded here. The
+// close loop runs on every fresh 0x118: a pending request confirms on
+// the exact target code.
 inline void dashAsOnTorque2(const uint8_t d[8], uint32_t nowMs)
 {
     DashAsSensor &s = dashAsSensor;
     s.lastTorque2Ms = nowMs ? nowMs : 1;
     s.gearNow = static_cast<uint8_t>((d[3] >> 4) & 0x0F);
-    if (dashAsProfile.t2BrakeByte < 8 && dashAsProfile.t2BrakeMask != 0) {
-        s.brake = (d[dashAsProfile.t2BrakeByte]
-                   & dashAsProfile.t2BrakeMask) != 0 ? 1 : 0;
-    }
-    if (dashAsProfile.t2SpeedByte < 8 && dashAsProfile.t2SpeedScaleH != 0) {
-        // hundredths of kph per LSB: the Tesla vehicle-speed signal is
-        // sub-unit (~0.07 kph/bit), which an integer scale cannot express
-        const uint32_t ch = static_cast<uint32_t>(
-            d[dashAsProfile.t2SpeedByte]) * dashAsProfile.t2SpeedScaleH;
-        const uint32_t kph = (ch + 50) / 100;  // round to nearest
-        s.speedKph = kph < 255 ? static_cast<uint8_t>(kph) : 255;
-    }
     if (dashAsGateState.pendingTargetDi != 0) {
         s.lastConfirm = dashAsConfirmGear(s.gearNow, nowMs);
     }
+}
+
+// PT speed (CanC 0x106, ~100 Hz): b5:b6 big-endian, 4 mm/s per tick.
+// 3-point calibrated 2026-11-07: 797/1354/2104 tick = 11.5/19.5/30.3
+// km/h. kph = tick * 144 / 10000, rounded to nearest.
+inline void dashAsOnSpeed106(const uint8_t d[8], uint32_t nowMs)
+{
+    DashAsSensor &s = dashAsSensor;
+    s.speedTick = static_cast<uint16_t>((d[5] << 8) | d[6]);
+    const uint32_t kph = (static_cast<uint32_t>(s.speedTick) * 144u + 5000u)
+                       / 10000u;
+    s.speedKph = kph < 255 ? static_cast<uint8_t>(kph) : 255;
+    s.lastSpeedMs = nowMs ? nowMs : 1;
+}
+
+// DI mirror (CanC 0x116, ~100 Hz): b1 bit7 = brake applied (ka750 s4:
+// one continuous 41.8 s hold across the whole shifting test).
+inline void dashAsOnMirror116(const uint8_t d[8], uint32_t nowMs)
+{
+    DashAsSensor &s = dashAsSensor;
+    s.brake = (d[1] & 0x80u) != 0 ? 1 : 0;
+    s.lastMirrorMs = nowMs ? nowMs : 1;
 }
 
 // STW_ANGLHP_STAT (CanC 0x00E, ~100 Hz). Raw = 16-bit big-endian at
@@ -449,9 +483,9 @@ inline void dashAsOnAngle00E(const uint8_t d[8], uint32_t nowMs)
     dashAsSensor.lastAngleMs = nowMs ? nowMs : 1;
 }
 
-// Obstacle suite (busmask-5 posture: blocker-only, Jordan 2026-11-05):
-// 0x23E oocStatus + 0x20E sdiFront on CanC. CanB-only frames (0x22E
-// sdiRear) are ignored by design — rear coverage is accepted weaker.
+// Obstacle suite (blocker-only posture, Jordan 2026-11-05): 0x23E
+// oocStatus + 0x20E sdiFront on CanC. CanB-only frames (0x22E sdiRear)
+// are ignored by design — rear coverage is accepted weaker.
 inline void dashAsOnObstacle(uint32_t id, const uint8_t d[8], uint32_t nowMs)
 {
     DashAsSensor &s = dashAsSensor;
@@ -485,64 +519,52 @@ inline bool dashAsObstacleFreshAndClear(uint32_t nowMs)
     return !s.oocBlocked && !s.sdiBlocked;
 }
 
-// STW_ACTN_RQ (CanA 0x045): scroll gesture episodes. A physical roll
-// emits a burst of motion frames; the FIRST frame of an episode (after
-// the episode gap) arms ONE pending trigger — later frames of the same
-// burst never re-fire, and a pending slot is never overwritten.
-// Default mappings (Albert reference): left+ = D, left- = R,
-// right+ = P button, right- = D/R toggle.
-inline void dashAsOnWheel045(const uint8_t d[8], uint32_t nowMs)
+// Wheel event pages (CanB 0x514 left / 0x51B right, ka750 s3): b0=0x10
+// press / 0x11 release arriving as pairs. v2 consumes the LEFT page
+// only; a completed press+release pair arms ONE pending trigger whose
+// target maps from the CURRENT 0x118 gear (P->D, D->P; anything else
+// drops — v2 never composes an unobserved sequence). A pending slot is
+// never overwritten; a release without a fresh press latch is ignored.
+inline void dashAsOnWheelEvent(uint16_t id, const uint8_t d[8], uint32_t nowMs)
 {
-    const DashAutoshiftProfile &p = dashAsProfile;
-    if (p.w45SideByte >= 8 || p.w45DirByte >= 8) {
-        return;  // map unfrozen
-    }
-    if (p.w45SideL == p.w45SideR || p.w45DirPos == p.w45DirNeg) {
-        return;  // degenerate map (sentinel equalities)
-    }
-    uint8_t side;
-    const uint8_t sideVal = d[p.w45SideByte];
-    if (sideVal == p.w45SideL) {
-        side = 0;
-    } else if (sideVal == p.w45SideR) {
-        side = 1;
-    } else {
-        return;  // not a motion frame we decode
-    }
-    int8_t dir;
-    const uint8_t dirVal = d[p.w45DirByte];
-    if (dirVal == p.w45DirPos) {
-        dir = 1;
-    } else if (dirVal == p.w45DirNeg) {
-        dir = -1;
-    } else {
-        return;
+    if (id != 0x514) {
+        return;  // right page (0x51B) has no v2 mapping
     }
     DashAsSensor &s = dashAsSensor;
-    const bool episodeStart = s.lastWheelMs == 0
-        || (nowMs - s.lastWheelMs) > p.scrollEpisodeGapMs;
-    s.lastWheelMs = nowMs ? nowMs : 1;
-    if (!episodeStart || s.pending.type != kAsTrigNone) {
+    if (d[0] == 0x10) {
+        s.wheelPressMs = nowMs ? nowMs : 1;  // latch the press
         return;
     }
-    uint8_t gear;
-    if (side == 0) {
-        gear = (dir > 0) ? kAsGearD : kAsGearR;
-    } else if (dir > 0) {
-        gear = kAsGearPBtn;
+    if (d[0] != 0x11 || s.wheelPressMs == 0) {
+        return;
+    }
+    const uint32_t pressMs = s.wheelPressMs;
+    s.wheelPressMs = 0;  // consumed either way
+    if (nowMs < pressMs
+        || (nowMs - pressMs) > dashAsProfile.wheelPressTimeoutMs) {
+        return;  // stale pair — dropped
+    }
+    if (s.pending.type != kAsTrigNone) {
+        return;  // never overwrite a pending gesture
+    }
+    uint8_t gear = 0xFF;
+    if (s.gearNow == 1) {
+        gear = kAsGearD;      // P -> D
+    } else if (s.gearNow == 4) {
+        gear = kAsGearP;      // D -> P
     } else {
-        gear = (s.gearNow == 4) ? kAsGearR : kAsGearD;
+        return;               // N/R/invalid: no v2 target
     }
     s.pending.type = kAsTrigScroll;
-    s.pending.side = side;
-    s.pending.dir = dir;
+    s.pending.side = 0;
+    s.pending.dir = 0;
     s.pending.gear = gear;
 }
 
-// Consume the pending trigger. Scroll wins over steering (a hand on the
-// wheel is the deliberate gesture). Steering is edge-triggered with a
-// hysteresis re-arm: fires once when |angle| crosses the gear-dependent
-// threshold, re-arms only after returning inside threshold minus margin.
+// Consume the pending trigger. Scroll wins over steering (a deliberate
+// wheel gesture outranks a possibly-transient angle). Steering stays
+// edge-triggered with hysteresis re-arm but is frozen out (sentinel
+// scale) until its calibration evidence lands.
 inline DashAsTrigger dashAsPollTrigger(uint32_t nowMs)
 {
     (void)nowMs;
@@ -582,15 +604,15 @@ inline DashAsTrigger dashAsPollTrigger(uint32_t nowMs)
     t.type = kAsTrigSteer;
     t.dir = s.angleDegT10 >= 0 ? 1 : -1;
     if (s.gearNow == 1 || s.gearNow == 3) {
-        t.gear = (t.dir > 0) ? kAsGearD : kAsGearR;  // infer from sign
+        t.gear = (t.dir > 0) ? kAsGearD : kAsGearR;
     } else {
-        t.gear = (s.gearNow == 4) ? kAsGearR : kAsGearD;  // D/R toggle
+        t.gear = (s.gearNow == 4) ? kAsGearR : kAsGearD;
     }
     return t;
 }
 
 // ---------------------------------------------------------------------------
-// Permit gate, 0x228 source snapshot (Task 6)
+// Permit gate, 0x228 source snapshot
 // ---------------------------------------------------------------------------
 
 // Two-step arm house pattern: the first arm request only OPENS a confirm
@@ -614,14 +636,14 @@ enum DashAsArmResult : uint8_t
 
 struct DashAsPermit
 {
-    bool master = false;             // NVS "autoshift_master"
-    bool armed = false;              // NVS "autoshift_armed" intent
+    bool master = false;             // NVS "as_master"
+    bool armed = false;              // NVS "as_armed" intent
     uint32_t armPendingSinceMs = 0;  // 0 = no confirm window open
 };
 
 inline DashAsPermit dashAsPermit = {};
 
-// Invalidate latched trigger state on every permit transition: a scroll
+// Invalidate latched trigger state on every permit transition: a wheel
 // gesture recorded while disarmed (or a steering angle already past the
 // threshold at arm time) must never fire on the first armed poll — the
 // driver re-earns the trigger by making a fresh gesture/edge.
@@ -629,6 +651,7 @@ inline void dashAsInvalidateTriggers()
 {
     dashAsSensor.pending = DashAsTrigger{};
     dashAsSensor.steerArmed = false;  // require a fresh edge after (re)arm
+    dashAsSensor.wheelPressMs = 0;    // a half-gesture never survives
 }
 
 inline DashAsArmResult dashAsArmRequest(uint32_t nowMs)
@@ -661,7 +684,8 @@ inline void dashAsDisarm()
 {
     dashAsPermit.armed = false;
     dashAsPermit.armPendingSinceMs = 0;
-    dashAsGateReset();  // no in-flight request survives a disarm
+    dashAsGateReset();           // no in-flight request survives a disarm
+    dashAsEngineReset();         // nor a running burst
     dashAsInvalidateTriggers();  // no latched gesture survives it either
 }
 
@@ -699,19 +723,164 @@ inline void dashAsOnSbw0228(const uint8_t d[4], uint32_t nowMs)
     src.seen = true;
 }
 
-// DI codes for the submit/confirm path (close loop works in DI codes).
-// The stalk-end P button requests P (DI 1); N is not a confirmable v1
-// target but keeps its code for completeness. 0xFF = invalid index.
-inline uint8_t dashAsGearToDi(uint8_t gear)
+// ---------------------------------------------------------------------------
+// Engine implementation — burst sequence player riding the live counter
+// ---------------------------------------------------------------------------
+
+// Burst code for frame index i of the frozen sequence for `target`.
+inline uint8_t dashAsBurstCode(uint8_t target, uint16_t i)
 {
-    switch (gear) {
-    case kAsGearP:
-    case kAsGearPBtn: return 1;
-    case kAsGearR: return 2;
-    case kAsGearN: return 3;
-    case kAsGearD: return 4;
-    default: return 0xFF;
+    if (target == kAsGearD) {
+        return i < dashAsProfile.pdLeadFrames ? dashAsProfile.pdLeadCode
+                                              : dashAsProfile.pdMainCode;
     }
+    return dashAsProfile.dpCode;
+}
+
+inline uint16_t dashAsBurstFrames(uint8_t target)
+{
+    if (target == kAsGearD) {
+        return static_cast<uint16_t>(dashAsProfile.pdLeadFrames)
+             + dashAsProfile.pdMainFrames;
+    }
+    return dashAsProfile.dpFrames;
+}
+
+// Compose one burst frame: {0x40, code, counter<<4 | srcLowNibble, crc}.
+inline void dashAsComposeFrame(uint8_t code, uint8_t counterNibble,
+                               uint8_t out[4])
+{
+    out[0] = 0x40;
+    out[1] = code;
+    out[2] = static_cast<uint8_t>((counterNibble << 4)
+                                  | (dashAsSbwSource.data[2] & 0x0F));
+    out[3] = dashAsCrc8J1850(out, 3);
+}
+
+inline void dashAsEngineAbandon(uint8_t reason)
+{
+    dashAsGateState.lastAbandonReason = reason;
+    dashAsGateState.retries = 0;
+    dashAsGateState.pendingTargetDi = 0;
+    dashAsGateState.pendingDeadlineMs = 0;
+    ++dashAsStats.abandoned;
+    dashAsEngineReset();
+}
+
+// Request a shift. Valid only for the two field-proven transitions
+// (P->D, D->P) from a decoded 0x118 gear, with a fresh 0x228 source to
+// ride, and only when idle. Never composes an unobserved sequence.
+inline bool dashAsRequestShift(uint8_t gear /* DashAsGear */, uint32_t nowMs)
+{
+    if (dashAsEngine.st != kAsEngIdle) {
+        return false;  // single in-flight
+    }
+    if (gear != kAsGearD && gear != kAsGearP) {
+        return false;  // v2 targets only
+    }
+    const uint8_t cur = dashAsGearFromDi(dashAsSensor.gearNow);
+    const bool pd = cur == kAsGearP && gear == kAsGearD;
+    const bool dp = cur == kAsGearD && gear == kAsGearP;
+    if (!pd && !dp) {
+        return false;  // unobserved / same-gear transition
+    }
+    if (!dashAsSbwSource.seen
+        || (nowMs - dashAsSbwSource.ms) > dashAsProfile.sbwSrcFreshMs) {
+        return false;  // nothing fresh to ride — fail closed
+    }
+    const uint8_t targetDi = dashAsGearToDi(gear);
+    if (targetDi != 1 && targetDi != 4) {
+        return false;
+    }
+    dashAsEngine.targetGear = gear;
+    dashAsEngine.seqIdx = 0;
+    dashAsEngine.framesTotal = dashAsBurstFrames(gear);
+    dashAsEngine.lastCounter = 0;
+    dashAsEngine.lastFrameMs = 0;
+    dashAsEngine.retries = 0;
+    dashAsEngine.deadlineMs = 0;
+    dashAsEngine.st = kAsEngBurst;
+    dashAsGateState.pendingTargetDi = targetDi;
+    dashAsGateState.pendingDeadlineMs = 0;
+    ++dashAsStats.submitted;
+    return true;
+}
+
+// Engine pump. Returns true and fills out[4] when a frame should be
+// transmitted NOW; the caller sends it and, if the driver refuses,
+// reports dashAsEngineTxFail() to cancel cleanly (nothing pending).
+inline bool dashAsEngineTick(uint32_t nowMs, uint8_t out[4])
+{
+    DashAsEngine &e = dashAsEngine;
+    if (e.st == kAsEngIdle) {
+        return false;
+    }
+    if (dashAsGateState.pendingTargetDi == 0) {
+        // confirmed via the 0x118 path (dashAsConfirmGear resets the
+        // engine too — this is the belt-and-braces reconciliation)
+        dashAsEngineReset();
+        return false;
+    }
+    if (e.st == kAsEngConfirm) {
+        if (nowMs <= e.deadlineMs) {
+            return false;  // still waiting for the exact gear
+        }
+        // Confirm deadline expired: budget first (out of budget ->
+        // exhausted regardless of source), then a FRESH source to ride
+        // or abandon (fail-closed).
+        ++e.retries;
+        if (e.retries >= dashAsProfile.retryMax) {
+            dashAsEngineAbandon(kAsAbandonRetryExhausted);
+            return false;
+        }
+        if (!dashAsSbwSource.seen
+            || (nowMs - dashAsSbwSource.ms) > dashAsProfile.sbwSrcFreshMs) {
+            dashAsEngineAbandon(kAsAbandonStaleSource);
+            return false;
+        }
+        ++dashAsStats.retried;
+        e.seqIdx = 0;
+        e.lastFrameMs = 0;
+        e.st = kAsEngBurst;
+        // fall through: the retry's first frame goes out immediately
+    }
+    // kAsEngBurst
+    if (e.seqIdx > 0
+        && (nowMs - e.lastFrameMs) < dashAsProfile.frameCadenceMs) {
+        return false;  // pacing
+    }
+    uint8_t counter;
+    if (e.seqIdx == 0) {
+        counter = static_cast<uint8_t>(
+            ((dashAsSbwSource.data[2] >> 4) + 1u) & 0x0Fu);
+    } else {
+        counter = static_cast<uint8_t>((e.lastCounter + 1u) & 0x0Fu);
+    }
+    const uint8_t code = dashAsBurstCode(e.targetGear, e.seqIdx);
+    dashAsComposeFrame(code, counter, out);
+    e.lastCounter = counter;
+    e.lastFrameMs = nowMs;
+    dashAsLastSbwTxMs = nowMs;  // open the own-echo suppression window
+    ++e.seqIdx;
+    ++dashAsStats.txOk;
+    if (e.seqIdx >= e.framesTotal) {
+        e.st = kAsEngConfirm;
+        e.deadlineMs = nowMs + dashAsProfile.confirmTimeoutMs;
+        dashAsGateState.pendingDeadlineMs = e.deadlineMs;
+    }
+    return true;
+}
+
+// The emitted frame never hit the bus: cancel the request with no
+// pending state (a failed send is not a retry — v1 semantics).
+inline void dashAsEngineTxFail()
+{
+    if (dashAsEngine.st == kAsEngIdle) {
+        return;
+    }
+    ++dashAsStats.txFail;
+    dashAsGateReset();
+    dashAsEngineReset();
 }
 
 #endif  // defined(DRIVER_P4_3CAN)

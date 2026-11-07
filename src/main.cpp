@@ -427,6 +427,20 @@ static void t2canAutoshiftTick()
     if (!dashAsPermit.master || !dashAsPermit.armed)
         return;
     const uint32_t nowMs = (uint32_t)millis();
+
+    // v2 engine pump (P1 direct driver send, no dashboard queue hop): the
+    // engine owns pacing (10 ms), counter ride, confirm and the retry
+    // lifecycle. A driver refusal cancels the in-flight request cleanly.
+    uint8_t out[4];
+    if (dashAsEngineTick(nowMs, out))
+    {
+        if (!t2canAutoshiftSendCan3(out))
+            dashAsEngineTxFail();
+        return;  // one frame per tick keeps the P1 path short
+    }
+
+    // Engine idle: consume a fresh gesture, evaluate the gates, and only
+    // then start a request — the burst begins on the NEXT tick's pump.
     const DashAsTrigger trig = dashAsPollTrigger(nowMs);
     if (trig.type == kAsTrigNone)
         return;
@@ -435,7 +449,9 @@ static void t2canAutoshiftTick()
     DashAsInputs in = {};
     in.master = dashAsPermit.master;
     in.torque2Fresh = dashAsTorque2Fresh(nowMs);
+    in.speedFresh = dashAsSpeedFresh(nowMs);
     in.speedKph = dashAsSensor.speedKph;
+    in.brakeFresh = dashAsBrakeFresh(nowMs);
     in.brakeApplied = dashAsSensor.brake == 1;  // 0xFF sentinel = blocked
     in.gearNow = dashAsSensor.gearNow;
     in.gearTarget = trig.gear;
@@ -451,31 +467,8 @@ static void t2canAutoshiftTick()
         ++dashAsStats.blocked;
         return;
     }
-
-    uint8_t out[4];
-    const uint32_t srcAgeMs = dashAsSbwSource.seen
-                                  ? nowMs - dashAsSbwSource.ms
-                                  : 0xFFFFFFFFu;
-    if (!dashAsSbwCompose(dashAsSbwSource.data, srcAgeMs, trig.gear, out))
-    {
-        ++dashAsStats.blocked;  // stale/absent 0x228 source — no injection
-        return;
-    }
-    const uint8_t targetDi = dashAsGearToDi(trig.gear);
-    if (!dashAsSubmit(targetDi, nowMs))
-    {
-        ++dashAsStats.blocked;
-        return;
-    }
-    if (!t2canAutoshiftSendCan3(out))
-    {
-        dashAsGateReset();  // the frame never hit the bus — nothing pending
-        ++dashAsStats.txFail;
-        return;
-    }
-    dashAsLastSbwTxMs = nowMs;  // open the own-echo suppression window
-    ++dashAsStats.txOk;
-    ++dashAsStats.submitted;
+    if (!dashAsRequestShift(trig.gear, nowMs))
+        ++dashAsStats.blocked;  // stale 0x228 source / busy — fail closed
 }
 #endif
 
@@ -569,6 +562,9 @@ static void t2canRecordBus2(const CanFrame &f)
 
 // Accessors used by the dashboard /bus2_ids handler.
 uint16_t t2canBus2IdCount(void) { return g_bus2IdCount; }
+// v2 autoshift status: is the CanB lane up this boot? (Wheel trigger
+// pages 0x514/0x51B live there; lane construction is boot-only.)
+bool t2canCan2Up(void) { return appDriverSecondary != nullptr; }
 uint32_t t2canBus2RxCount(void) { return t2canSecondaryRxCount; }
 uint32_t t2canBus2TxCount(void) { return t2canSecondaryTxCount; }
 uint32_t t2canBus2TxErrCount(void) { return t2canSecondaryTxErrCount; }
@@ -1133,7 +1129,16 @@ static void app_main_setup()
     // lane never installs its TWAI ISR — the interrupt regime equals the
     // field-proven T2CAN 1-bus setup. All later consumers null-guard, and
     // the heap-guard slot stays null-from-boot = stable.
-    const uint8_t appBusEnable = t2canBusEnableGet();
+    // Jordan 2026-11-07: a persisted autoshift master auto-enables CanB RX
+    // (the wheel trigger pages 0x514/0x51B live there). Pure boot-time OR
+    // into the effective lane mask — the operator's stored busmask is
+    // never rewritten; with master off the next boot returns to the
+    // operator's own posture. Lane construction stays boot-only (the
+    // 2026-11-03 stability baseline: no runtime hot-plug/teardown), so a
+    // master toggled ON at runtime without CanB up simply has no wheel
+    // triggers until the next boot (status reports can2Up:false).
+    const uint8_t appBusEnable = t2canBusEnableGet()
+        | (t2canAutoshiftMasterGet() != 0 ? 0x02 : 0);
     Serial.printf("[BUS] bus_enable=0x%x (bit1=CanB bit2=CanC)\n", appBusEnable);
     if (appBusEnable & 0x02)
         t2canSetupSecondary();

@@ -1145,15 +1145,20 @@ static void mcpDashSniffCan3(const CanFrame &f)
     dashRecV2Submit(tagged, kRecV2BusC, 'R');
 #endif
 #if defined(DRIVER_P4_3CAN)
-    // Auto-shift sensors on the PT bus: steering angle 0x00E and the
-    // obstacle pair 0x23E/0x20E (blocker-only posture; 0x22E sdiRear is
-    // CanB-only and accepted absent per Jordan's 2026-11-05 decision).
+    // Auto-shift sensors on the PT bus: steering angle 0x00E, the obstacle
+    // pair 0x23E/0x20E (blocker-only posture; 0x22E sdiRear is CanB-only
+    // and accepted absent per Jordan's 2026-11-05 decision), and the v2
+    // sentinels 0x106 speed / 0x116 brake (ka750 3-point calibration).
     // 0x228 is the SBW compose SOURCE snapshot (own echoes suppressed
     // inside dashAsOnSbw0228).
     if (tagged.id == 0x00E && tagged.dlc >= 2)
         dashAsOnAngle00E(tagged.data, millis());
     else if ((tagged.id == 0x23E || tagged.id == 0x20E) && tagged.dlc >= 1)
         dashAsOnObstacle(tagged.id, tagged.data, millis());
+    else if (tagged.id == 0x106 && tagged.dlc >= 7)
+        dashAsOnSpeed106(tagged.data, millis());
+    else if (tagged.id == 0x116 && tagged.dlc >= 2)
+        dashAsOnMirror116(tagged.data, millis());
     else if (tagged.id == 0x228 && tagged.dlc >= 4)
         dashAsOnSbw0228(tagged.data, millis());
 #endif
@@ -1269,14 +1274,17 @@ static void mcpDashOnFrame(const CanFrame &f)
                                                        static_cast<uint32_t>(now));
 #if defined(DRIVER_P4_3CAN)
     // Auto-shift sensors on the vehicle bus (CanA): DI_torque2 0x118 gates
-    // + close loop, STW_ACTN_RQ 0x045 scroll episodes. VEH-only, never the
-    // PARTY mirror.
+    // + close loop. VEH-only, never the PARTY mirror. The v1 0x045 wheel
+    // decoder is gone (ka750: 0x045 decodes neither press nor page).
     if (f.id == 0x118 && f.dlc >= 8 &&
         (f.bus == CAN_BUS_CH || f.bus == CAN_BUS_VEH))
         dashAsOnTorque2(f.data, static_cast<uint32_t>(now));
-    else if (f.id == 0x045 && f.dlc >= 8 &&
-             (f.bus == CAN_BUS_CH || f.bus == CAN_BUS_VEH))
-        dashAsOnWheel045(f.data, static_cast<uint32_t>(now));
+    // v2 wheel trigger pages on CanB (ka750 s3): 0x514 left / 0x51B right,
+    // b0=0x10 press / 0x11 release pairs. PARTY-only; the decoder consumes
+    // the left page and ignores the right one by design.
+    else if ((f.id == 0x514 || f.id == 0x51B) && f.dlc >= 3 &&
+             f.bus == CAN_BUS_PARTY)
+        dashAsOnWheelEvent(f.id, f.data, static_cast<uint32_t>(now));
 #endif
     // v1.19 JITTER procedure: raw 0x045 stream feeds the carrier-lock cache
     // (the pump only transmits riding behind a <47 ms old native frame).
@@ -4857,6 +4865,7 @@ static void handleRecStatus()
 void t2canSetServiceMode(bool on);
 bool t2canGetServiceMode(void);
 uint16_t t2canBus2IdCount(void);
+bool t2canCan2Up(void);  // P4-3CAN: CanB lane constructed this boot
 uint32_t t2canBus2RxCount(void);
 uint32_t t2canBus2TxCount(void);
 uint32_t t2canBus2TxErrCount(void);
@@ -6768,6 +6777,20 @@ static String mcpDashAutoshiftStatusJson()
     s += String((unsigned)dashAsGateState.retries);
     s += ",\"gearNow\":";
     s += String((unsigned)dashAsSensor.gearNow);
+    s += ",\"engineState\":";
+    s += String((unsigned)dashAsEngineState());
+    s += ",\"speedKph\":";
+    s += dashAsSensor.speedKph == 0xFF ? String("-1")
+                                       : String((unsigned)dashAsSensor.speedKph);
+    s += ",\"speedFresh\":";
+    s += dashAsSpeedFresh(now) ? "true" : "false";
+    s += ",\"brake\":";
+    s += dashAsSensor.brake == 0xFF ? String("-1")
+                                    : String((unsigned)dashAsSensor.brake);
+    s += ",\"brakeFresh\":";
+    s += dashAsBrakeFresh(now) ? "true" : "false";
+    s += ",\"can2Up\":";
+    s += t2canCan2Up() ? "true" : "false";
     s += ",\"sourceAgeMs\":";
     s += dashAsSbwSource.seen
              ? String((unsigned)(now - dashAsSbwSource.ms))
@@ -6792,9 +6815,10 @@ static String mcpDashAutoshiftStatusJson()
     return s;
 }
 
-// Compose a gear-request 0x228 from the freshest snapshot and PRINT it —
-// the bench verification of the composer against hand-computed vectors.
-// NEVER transmits: this function has no send path on purpose.
+// Compose the FIRST burst frame for a target gear from the freshest
+// snapshot and PRINT it — the bench verification of the v2 sequence
+// player against hand-computed vectors (rides source counter +1 exactly
+// like a real frame 0). NEVER transmits: no send path on purpose.
 static void mcpDashAutoshiftTestFrame(const char *arg)
 {
     uint8_t gear = kAsGearD;
@@ -6808,11 +6832,14 @@ static void mcpDashAutoshiftTestFrame(const char *arg)
     const uint32_t now = millis();
     const uint32_t age = dashAsSbwSource.seen ? now - dashAsSbwSource.ms
                                               : 0xFFFFFFFFu;
-    if (!dashAsSbwCompose(dashAsSbwSource.data, age, gear, out))
+    if (!dashAsSbwSource.seen || age > dashAsProfile.sbwSrcFreshMs)
     {
-        Serial.println("[as_test] compose refused (source stale/absent or gear invalid)");
+        Serial.println("[as_test] compose refused (source stale/absent)");
         return;
     }
+    const uint8_t counter =
+        (uint8_t)(((dashAsSbwSource.data[2] >> 4) + 1u) & 0x0Fu);
+    dashAsComposeFrame(dashAsBurstCode(gear, 0), counter, out);
     Serial.printf("[as_test] gear=%u src_age=%lums frame=%02X %02X %02X %02X (never transmitted)\n",
                   (unsigned)gear,
                   dashAsSbwSource.seen ? (unsigned long)age : 0UL,

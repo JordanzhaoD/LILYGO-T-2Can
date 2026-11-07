@@ -33,13 +33,16 @@ class AutoshiftContractTests(unittest.TestCase):
         source = HEADER.read_text()
         self.assertIn("#if defined(DRIVER_P4_3CAN)", source)
 
-    def test_profile_carries_unfrozen_sentinel_until_task2(self):
-        """While Task 2 (field freeze) has not landed, the profile must
-        advertise itself: sentinel marker in the header, 0xFF stalk bytes
-        (pinned by the native run). When the freeze lands this test is
-        replaced by frozen-value assertions in the same RED->GREEN."""
+    def test_profile_is_frozen_with_sentinel_gaps(self):
+        """ka750 (2026-11-07) froze the sequence/sensor profile; the
+        freeze must advertise its anchor date, and the two evidence gaps
+        that remain (steering-angle scale, obstacle map) must stay
+        visibly sentinel — 0xFF bytes pinned by the native run."""
         source = HEADER.read_text()
-        self.assertIn("PROFILE UNFROZEN", source)
+        self.assertIn("FROZEN 2026-11-07", source)
+        self.assertNotIn("PROFILE UNFROZEN", source)
+        for sentinel in ("angleScaleT10  [sentinel", "oocBlockByte   [sentinel"):
+            self.assertIn(sentinel, source)
 
     def test_native_main_pins_all_16_crc_vectors(self):
         source = NATIVE_MAIN.read_text()
@@ -62,10 +65,11 @@ class AutoshiftContractTests(unittest.TestCase):
             self.assertIn("ALL PASS", run.stdout)
 
     def test_gate_eval_order_is_pinned(self):
-        """The gate chain evaluates master -> stale -> speed -> brake ->
-        cooldown -> count -> obstacle -> pending -> target -> submit.
-        Pinned by source ordering inside dashAsGateEval's body (scoped
-        extraction: the enum declaration lists the same tokens)."""
+        """v2 gate chain: master -> stale 0x118 -> stale speed -> speed ->
+        stale brake -> brake -> cooldown -> count -> obstacle -> pending
+        -> target -> submit. Pinned by source ordering inside
+        dashAsGateEval's body. (AS_BLOCK_SPEED is NOT a substring of
+        AS_BLOCK_STALE_SPEED, so the finds are unambiguous.)"""
         import re
 
         source = HEADER.read_text()
@@ -74,8 +78,10 @@ class AutoshiftContractTests(unittest.TestCase):
             source, re.DOTALL)
         self.assertIsNotNone(match, "dashAsGateEval body not found")
         body = match.group(0)
-        tokens = ["AS_BLOCK_MASTER", "AS_BLOCK_STALE_118", "AS_BLOCK_SPEED",
-                  "AS_BLOCK_BRAKE", "AS_BLOCK_COOLDOWN", "AS_BLOCK_COUNT",
+        tokens = ["AS_BLOCK_MASTER", "AS_BLOCK_STALE_118",
+                  "AS_BLOCK_STALE_SPEED", "AS_BLOCK_SPEED",
+                  "AS_BLOCK_STALE_BRAKE", "AS_BLOCK_BRAKE",
+                  "AS_BLOCK_COOLDOWN", "AS_BLOCK_COUNT",
                   "AS_BLOCK_OBSTACLE", "AS_BLOCK_PENDING", "AS_ALREADY_TARGET",
                   "AS_SUBMIT"]
         positions = [body.find(tok) for tok in tokens]
@@ -86,7 +92,8 @@ class AutoshiftContractTests(unittest.TestCase):
 
     def test_gate_inputs_struct_fields(self):
         source = HEADER.read_text()
-        for field in ("bool master;", "bool torque2Fresh;", "uint8_t speedKph;",
+        for field in ("bool master;", "bool torque2Fresh;", "bool speedFresh;",
+                      "uint8_t speedKph;", "bool brakeFresh;",
                       "bool brakeApplied;", "uint8_t gearNow;",
                       "uint8_t gearTarget;", "bool obstacleFreshAndClear;",
                       "uint32_t lastShiftMs;", "uint32_t nowCount;"):
@@ -98,11 +105,15 @@ class AutoshiftContractTests(unittest.TestCase):
 
     def test_native_main_covers_gate_matrix_and_close_loop(self):
         source = NATIVE_MAIN.read_text()
-        for token in ("AS_BLOCK_MASTER", "AS_BLOCK_STALE_118", "AS_BLOCK_SPEED",
-                      "AS_BLOCK_BRAKE", "AS_BLOCK_OBSTACLE", "AS_BLOCK_COOLDOWN",
+        for token in ("AS_BLOCK_MASTER", "AS_BLOCK_STALE_118",
+                      "AS_BLOCK_STALE_SPEED", "AS_BLOCK_SPEED",
+                      "AS_BLOCK_STALE_BRAKE", "AS_BLOCK_BRAKE",
+                      "AS_BLOCK_OBSTACLE", "AS_BLOCK_COOLDOWN",
                       "AS_BLOCK_COUNT", "AS_BLOCK_PENDING", "AS_ALREADY_TARGET",
-                      "AS_CONFIRM_COMPLETE", "AS_CONFIRM_RETRY",
-                      "AS_CONFIRM_ABANDONED", "dashAsLastAbandonReason"):
+                      "AS_CONFIRM_COMPLETE", "AS_CONFIRM_WAIT",
+                      "kAsAbandonRetryExhausted", "kAsAbandonStaleSource",
+                      "dashAsEngineTick", "dashAsRequestShift",
+                      "dashAsLastAbandonReason"):
             self.assertIn(token, source)
 
     DASH_HEADER = ROOT / "include" / "web" / "mcp2515_dashboard.h"
@@ -112,10 +123,11 @@ class AutoshiftContractTests(unittest.TestCase):
         source = self.DASH_HEADER.read_text()
         self.assertIn('#include "dash_autoshift.h"', source)
 
-    def test_cana_drain_feeds_autoshift_decoders(self):
-        """mcpDashOnFrame (the CanA/CanB RX path) feeds 0x118 torque2 and
-        0x045 wheel decoders inside a DRIVER_P4_3CAN guard, on the
-        vehicle-bus (never the PARTY mirror)."""
+    def test_drains_feed_autoshift_vehicle_and_party_decoders(self):
+        """mcpDashOnFrame (the CanA/CanB RX path) feeds 0x118 torque2 on
+        the vehicle bus and the v2 wheel pages 0x514/0x51B on the PARTY
+        (CanB) bus inside a DRIVER_P4_3CAN guard. The dead 0x045 wheel
+        decoder (ka750: decodes neither press nor page) must be gone."""
         import re
 
         source = self.DASH_HEADER.read_text()
@@ -127,13 +139,17 @@ class AutoshiftContractTests(unittest.TestCase):
         self.assertIn("#if defined(DRIVER_P4_3CAN)", body)
         self.assertIn("f.id == 0x118", body)
         self.assertIn("dashAsOnTorque2(", body)
-        self.assertIn("f.id == 0x045", body)
-        self.assertIn("dashAsOnWheel045(", body)
+        self.assertIn("0x514", body)
+        self.assertIn("0x51B", body)
+        self.assertIn("dashAsOnWheelEvent(", body)
+        self.assertIn("CAN_BUS_PARTY", body)
+        self.assertNotIn("dashAsOnWheel045(", body,
+                         "the disproven 0x045 wheel decoder must be removed")
 
     def test_canc_drain_feeds_angle_and_obstacle_decoders(self):
         """mcpDashSniffCan3 (the CanC/PT RX path) feeds the 0x00E angle
-        decoder and the 0x23E/0x20E obstacle decoder inside a
-        DRIVER_P4_3CAN guard."""
+        decoder, the 0x23E/0x20E obstacle decoder, and the v2 0x106
+        speed / 0x116 brake decoders inside a DRIVER_P4_3CAN guard."""
         import re
 
         source = self.DASH_HEADER.read_text()
@@ -148,6 +164,10 @@ class AutoshiftContractTests(unittest.TestCase):
         self.assertIn("dashAsOnObstacle(", body)
         self.assertIn("0x23E", body)
         self.assertIn("0x20E", body)
+        self.assertIn("0x106", body)
+        self.assertIn("dashAsOnSpeed106(", body)
+        self.assertIn("0x116", body)
+        self.assertIn("dashAsOnMirror116(", body)
 
     # ---- Task 6: permit gate, authorized submit, DIAG, NVS ----
 
@@ -164,10 +184,12 @@ class AutoshiftContractTests(unittest.TestCase):
         self.assertIn("kAsArmWindowMs = 5000", source)
         self.assertIn("kAsOwnEchoWindowMs = 30", source)
 
-    def test_tick_submits_only_inside_permit_and_submit_verdict(self):
-        """t2canAutoshiftTick is the ONLY submit site: the send call must
-        sit after BOTH the master/armed guard and the AS_SUBMIT verdict
-        (source-pin, order-pinned, single occurrence)."""
+    def test_tick_engine_pump_is_the_single_tx_site(self):
+        """v2: t2canAutoshiftTick is the engine pump. The ONLY send call
+        must sit inside the master/armed guard and be fed exclusively by
+        dashAsEngineTick's composed frame; a driver refusal routes to
+        dashAsEngineTxFail. The only way the engine ever starts a request
+        is dashAsRequestShift, called after the AS_SUBMIT verdict."""
         import re
 
         source = self.MAIN_SRC.read_text()
@@ -176,16 +198,23 @@ class AutoshiftContractTests(unittest.TestCase):
         self.assertIsNotNone(match, "t2canAutoshiftTick body not found")
         body = match.group(0)
         guard = body.find("dashAsPermit.master")
-        verdict = body.find("AS_SUBMIT")
+        pump = body.find("dashAsEngineTick(")
         send = body.find("t2canAutoshiftSendCan3(")
         for name, pos in (("master/armed guard", guard),
-                          ("AS_SUBMIT check", verdict),
+                          ("engine pump", pump),
                           ("send call", send)):
             self.assertGreater(pos, -1, f"{name} missing from tick body")
         self.assertLess(guard, send, "send must sit inside the permit guard")
-        self.assertLess(verdict, send, "send must follow the AS_SUBMIT verdict")
+        self.assertLess(pump, send,
+                        "send must consume dashAsEngineTick's output only")
         self.assertEqual(body.count("t2canAutoshiftSendCan3("), 1,
-                         "the tick must have exactly one submit site")
+                         "the tick must have exactly one send site")
+        self.assertIn("dashAsEngineTxFail()", body)
+        self.assertLess(body.find("AS_SUBMIT"),
+                        body.find("dashAsRequestShift("),
+                        "a request may only start after the AS_SUBMIT verdict")
+        self.assertNotIn("dashAsSbwCompose", body,
+                         "the v1 one-shot composer is gone")
 
     def test_autoshift_test_command_composes_without_transmit(self):
         import re
@@ -195,7 +224,7 @@ class AutoshiftContractTests(unittest.TestCase):
                           source, re.DOTALL)
         self.assertIsNotNone(match, "mcpDashAutoshiftTestFrame not found")
         body = match.group(0)
-        self.assertIn("dashAsSbwCompose(", body)
+        self.assertIn("dashAsComposeFrame(", body)
         for banned in ("->send(", "t2canAutoshiftSendCan3",
                        "t2canSendSecondary"):
             self.assertNotIn(banned, body,
@@ -329,8 +358,37 @@ class AutoshiftContractTests(unittest.TestCase):
                           source, re.DOTALL)
         self.assertIsNotNone(match, "mcpDashAutoshiftStatusJson not found")
         body = match.group(0)
-        for token in ("sourceAgeMs", "lastBlock", "verdict", "pending"):
+        for token in ("sourceAgeMs", "lastBlock", "verdict", "pending",
+                      "engineState", "speedKph", "speedFresh",
+                      "brakeFresh", "can2Up"):
             self.assertIn(token, body)
+
+    def test_boot_busmask_ors_canb_with_persisted_master(self):
+        """Jordan 2026-11-07: master ON auto-enables CanB RX. Implemented
+        as a BOOT-time OR into the effective lane mask (the 2026-11-03
+        stability baseline pins lane construction to boot — no runtime
+        hot-plug, no teardown). The operator's stored mask is never
+        rewritten by this path; the web master endpoint must not touch
+        lane setup either."""
+        import re
+
+        source = self.MAIN_SRC.read_text()
+        match = re.search(
+            r"const uint8_t appBusEnable = t2canBusEnableGet\(\).*?;",
+            source, re.DOTALL)
+        self.assertIsNotNone(match, "boot busmask read not found")
+        or_line = match.group(0)
+        self.assertIn("t2canAutoshiftMasterGet() != 0 ? 0x02 : 0", or_line)
+        # no runtime hot-plug: only the boot setup may construct CanB
+        self.assertEqual(source.count("t2canSetupSecondary();"), 2,
+                         "CanB construction sites must stay boot-only "
+                         "(P4 branch + T2CAN_DUAL)")
+        dash = self.DASH_HEADER.read_text()
+        master_ep = re.search(r"static void handleAutoshiftMaster\(\).*?\n\}",
+                              dash, re.DOTALL)
+        self.assertIsNotNone(master_ep)
+        self.assertNotIn("t2canSetupSecondary", master_ep.group(0),
+                         "the web master endpoint must never hot-plug CanB")
 
     def test_dashboard_conditionals_balance(self):
         """The dashboard header's #if/#endif tree must balance to zero.
