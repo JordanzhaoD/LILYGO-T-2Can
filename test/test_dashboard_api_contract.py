@@ -1445,7 +1445,6 @@ class DashboardApiContractTests(unittest.TestCase):
         mux0 = re.search(r"if \(frame\.id == 1006\).*?else if \(index == 1\)", self.handlers, re.S)
         self.assertIsNotNone(mux0)
         m0 = mux0.group(0)
-        self.assertIn("alignPulseUntilMs = nowMs + kAlignPulseMs", m0)
         self.assertIn("nowMs >= legacyFsdDiag.alignPulseUntilMs", m0)
         self.assertIn("(speedAllowed && !alignMode)", m0)
         # Keep-alive is pulse-gated on mux0 and fully silent on mux1.
@@ -1474,6 +1473,38 @@ class DashboardApiContractTests(unittest.TestCase):
         fsd_cfg = re.search(r"static void handleLegacyFsdConfig\(\)\n\{.*?server\.hasArg\(\"align\"\)", self.dash, re.S)
         self.assertIsNotNone(fsd_cfg, "handleLegacyFsdConfig guard must include align")
         self.assertIn('server.hasArg("align")', fsd_cfg.group(0))
+
+    def test_legacy_align_mode_pulse_arms_on_399_state3(self) -> None:
+        """A3.1 (2026-11-08 P0, sess_109/110): the align bit46 pulse must arm
+        from the car's own 0x399 state-3 recognition window.
+
+        The A3 fsdTriggered rising-edge trigger was dead in the field:
+        fsdActivation=ON holds forceActivateRuntime constantly high (at most
+        one edge per boot) and the uiSelected mux0 bit never asserts on this
+        car (0/31 evidence sessions) — 77s of driving recorded zero 0x3EE TX
+        and FSD failed to activate on every attempt.
+        """
+        # Arming lives in the 0x399 (921) handler: every state-3 frame
+        # renews the pulse window (held recognition windows + retries).
+        das = re.search(r"if \(frame\.id == 921\)\n        \{.*?return;\n        \}", self.handlers, re.S)
+        self.assertIsNotNone(das, "0x399 handler block not found")
+        arm = das.group(0)
+        self.assertIn("legacyFsdDiag.alignModeEnable && apState == 3", arm)
+        self.assertIn("legacyFsdDiag.alignPulseUntilMs = nowMs + kAlignPulseMs", arm)
+        # The dead field trigger must stay gone: no fsdTriggered-edge arming
+        # and no once-per-boot latch member anywhere in handlers.h.
+        self.assertNotIn("alignPrevTriggered", self.handlers)
+        self.assertNotIn("(bool)fsdTriggered && !alignPrevTriggered", self.handlers)
+        # Field verification needs pulse observability in /status: the live
+        # window state, its deadline, and the 0x399 state that arms it
+        # (sess_109/110 postmortem: zero 0x3EE TX was only provable offline).
+        smart = re.search(r"static void appendLegacySmartSpeedJson\(String &j, unsigned long now\)", self.dash)
+        self.assertIsNotNone(smart)
+        self.assertIn('"alignPulseOpen"', self.dash)
+        self.assertIn('"alignPulseUntilMs"', self.dash)
+        self.assertIn('"alignApState"', self.dash)
+        self.assertIn("dashHandler->legacyFsdDiag.alignPulseUntilMs", self.dash)
+        self.assertIn("legacyNagDiag((uint32_t)now).apState", self.dash)
 
     def test_legacy_handler_captures_fused_speed_limit_from_921(self) -> None:
         """Legacy/HW0 needs the same fused speed limit input as the 3-mode speed UI."""

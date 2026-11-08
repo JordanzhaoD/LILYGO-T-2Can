@@ -552,6 +552,13 @@ static void configureLegacySmartSpeed(LegacySmartOffsetMode mode)
     handler.legacySmartOffsetConfig.customPctVeryHigh = 10;
 }
 
+// A3.1: feed a 0x399 DAS frame with the given AP state (low nibble of b0).
+static void sendLegacyDasState(uint8_t apState)
+{
+    CanFrame frame = makeLegacyNagDas(apState, 0);
+    handler.handleMessage(frame, mock);
+}
+
 void test_legacy_can760_is_read_only()
 {
     configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
@@ -681,7 +688,12 @@ void test_align_mode_pulse_ride_sets_bit46_without_offset_bytes()
     handler.legacyFsdDiag.alignModeEnable = true;
     observeLegacyGpsLimit(12); // limit ready: +30 would be written in fight mode
     mock.reset();
-    forceActivateRuntime = true; // engagement rising edge opens the pulse
+    forceActivateRuntime = true; // field standing config: fsdActivation=ON
+    // A3.1 (2026-11-08): the pulse arms on the 0x399 state-3 recognition
+    // window, not on the fsdTriggered edge (sess_109/110: forced stays
+    // constantly high, so the edge fired at most once per boot and 0x3EE
+    // went silent -> FSD could not activate).
+    sendLegacyDasState(3);
     sendLegacySpeedMux0(CAN_BUS_VEH, 1);
     forceActivateRuntime = false;
     TEST_ASSERT_EQUAL(1, mock.sent.size());
@@ -699,16 +711,111 @@ void test_align_mode_silent_after_pulse_expires()
     observeLegacyGpsLimit(12);
     mock.reset();
     forceActivateRuntime = true; // hold triggered across the probe frames
-    sendLegacySpeedMux0(CAN_BUS_VEH, 1); // edge -> pulse opens, frame rides
+    sendLegacyDasState(3); // arm via state 3
+    sendLegacySpeedMux0(CAN_BUS_VEH, 1); // pulse opens, frame rides
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     mock.reset();
     for (uint32_t i = 0; i < 5200; ++i) // deterministic clock aging: each
         (void)dashDiagNowMs();          // call is +1ms, 5200 > 5000ms pulse
-    mock.reset();
     sendLegacySpeedMux0(CAN_BUS_VEH, 2); // still triggered, pulse expired
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     handler.keepAliveTick(mock, dashDiagNowMs()); // silence bridge attempt
     TEST_ASSERT_EQUAL(0, mock.sent.size());       // align stays silent
+    forceActivateRuntime = false;
+}
+
+// A3.1 field regression (2026-11-08 P0, sess_109/110): with fsdActivation
+// constantly ON the A3 fsdTriggered rising edge fired at most once per boot,
+// and the uiSelected bit never asserts on this car (0/31 evidence sessions)
+// — 0x3EE stayed silent through every activation attempt. The pulse must
+// arm from the car's own 0x399 state-3 recognition window, and must re-arm
+// for every later attempt (failed activation drops back to state 2).
+void test_align_mode_pulse_arms_on_state3_despite_constant_forced()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    handler.legacyFsdDiag.alignModeEnable = true;
+    observeLegacyGpsLimit(12);
+    mock.reset();
+    forceActivateRuntime = true; // constantly high: no rising edge exists
+    sendLegacySpeedMux0(CAN_BUS_VEH, 1); // pre-gesture: nothing arms
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    sendLegacyDasState(3); // gesture window
+    sendLegacySpeedMux0(CAN_BUS_VEH, 2);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1006, mock.sent[0].id);
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40); // bit46 rides
+    forceActivateRuntime = false;
+}
+
+void test_align_mode_pulse_rearms_on_retry_after_decay()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    handler.legacyFsdDiag.alignModeEnable = true;
+    observeLegacyGpsLimit(12);
+    mock.reset();
+    forceActivateRuntime = true;
+    sendLegacyDasState(3); // attempt #1
+    sendLegacySpeedMux0(CAN_BUS_VEH, 1);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    for (uint32_t i = 0; i < 5200; ++i) // pulse decays, car fell to state 2
+        (void)dashDiagNowMs();
+    mock.reset();
+    sendLegacyDasState(2); // refused: state 2
+    sendLegacySpeedMux0(CAN_BUS_VEH, 2);
+    TEST_ASSERT_EQUAL(0, mock.sent.size()); // silent between attempts
+    sendLegacyDasState(3); // driver retries
+    sendLegacySpeedMux0(CAN_BUS_VEH, 3);
+    TEST_ASSERT_EQUAL(1, mock.sent.size()); // pulse re-arms
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
+    forceActivateRuntime = false;
+}
+
+void test_align_mode_pulse_renews_while_state3_holds()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    handler.legacyFsdDiag.alignModeEnable = true;
+    observeLegacyGpsLimit(12);
+    mock.reset();
+    forceActivateRuntime = true;
+    sendLegacyDasState(3);
+    // recognition window held >5s total: each state-3 frame renews the
+    // pulse so the classifier window never starves (0x399 ~2.5Hz in field)
+    for (int round = 0; round < 6; ++round)
+    {
+        for (uint32_t i = 0; i < 1200; ++i)
+            (void)dashDiagNowMs();
+        sendLegacyDasState(3);
+    }
+    mock.reset();
+    sendLegacySpeedMux0(CAN_BUS_VEH, 1); // >7s since first state 3
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40);
+    forceActivateRuntime = false;
+}
+
+void test_align_mode_silent_during_state6_active_drive()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    handler.legacyFsdDiag.alignModeEnable = true;
+    observeLegacyGpsLimit(12);
+    mock.reset();
+    forceActivateRuntime = true;
+    sendLegacyDasState(3); // activation moment
+    for (uint32_t i = 0; i < 5200; ++i) // pulse fully decayed
+        (void)dashDiagNowMs();
+    mock.reset();
+    // active FSD cruise (captures: status 6 throughout) must NOT re-arm —
+    // steady-drive silence is the A3 anti-flicker goal
+    for (int i = 0; i < 5; ++i)
+    {
+        sendLegacyDasState(6);
+        for (uint32_t k = 0; k < 900; ++k)
+            (void)dashDiagNowMs();
+    }
+    sendLegacySpeedMux0(CAN_BUS_VEH, 1);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    handler.keepAliveTick(mock, dashDiagNowMs());
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
     forceActivateRuntime = false;
 }
 
@@ -1488,6 +1595,10 @@ int main()
     RUN_TEST(test_align_mode_3ee_silent_without_engagement_edge);
     RUN_TEST(test_align_mode_pulse_ride_sets_bit46_without_offset_bytes);
     RUN_TEST(test_align_mode_silent_after_pulse_expires);
+    RUN_TEST(test_align_mode_pulse_arms_on_state3_despite_constant_forced);
+    RUN_TEST(test_align_mode_pulse_rearms_on_retry_after_decay);
+    RUN_TEST(test_align_mode_pulse_renews_while_state3_holds);
+    RUN_TEST(test_align_mode_silent_during_state6_active_drive);
     RUN_TEST(test_align_mode_mux1_mirror_disabled);
     RUN_TEST(test_legacy_3ee_custom_uses_band_percentage);
     RUN_TEST(test_legacy_3ee_auto_falls_back_to_fresh_fused_limit);

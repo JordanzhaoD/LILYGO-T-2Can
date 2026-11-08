@@ -403,8 +403,9 @@ struct LegacyHandler : public CarManagerBase
     // pulse after the engagement rising edge; the speed offset moves to the
     // 0x2F8 UI_userSpeedOffset mirror-ride. Docs:
     // docs/align-mode-2f8-offset-ride-design-20261107.md
+    // A3.1 (2026-11-08): the pulse edge source is the 0x399 state-3
+    // recognition window (armed in the 921 handler), not fsdTriggered.
     static constexpr uint32_t kAlignPulseMs = 5000;
-    bool alignPrevTriggered{false};
 
     static FsdDiagBus legacyDiagBus(const CanFrame &frame)
     {
@@ -981,6 +982,20 @@ struct LegacyHandler : public CarManagerBase
             APActive = legacyNagApContextActive(apState);
             legacyNagState.apState = apState;
             legacyNagState.lastContextMs = nowMs;
+            // A3.1 (2026-11-08, sess_109/110 P0): arm/renew the align bit46
+            // pulse while the car sits in the 0x399 state-3 FSD recognition
+            // window — the classifier needs bit46 present inside that window
+            // (state3-window law). The original A3 trigger (fsdTriggered
+            // rising edge) is dead in the field: fsdActivation=ON holds
+            // forceActivateRuntime constantly high (at most one edge per
+            // boot) and the uiSelected mux0 bit never asserts on this car
+            // (0/31 evidence sessions), so the pulse never reopened and FSD
+            // could not activate. Every state-3 frame renews the window
+            // (held recognition windows, driver retries); leaving state 3
+            // lets it decay after kAlignPulseMs so steady driving (state 6)
+            // stays silent per the A3 anti-flicker goal.
+            if (legacyFsdDiag.alignModeEnable && apState == 3)
+                legacyFsdDiag.alignPulseUntilMs = nowMs + kAlignPulseMs;
             if (frame.dlc >= 2)
             {
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
@@ -1023,16 +1038,13 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.forceRuntime = forced;
                 legacyFsdDiag.triggerSource = forced ? FsdTriggerSource::Force : (uiSelected ? FsdTriggerSource::UiBit : FsdTriggerSource::FalseSource);
 
-                // A3 align mode (2026-11-07): arm a bounded bit46 pulse on
-                // the engagement rising edge. Outside that window 0x3EE
-                // stays silent (align gate below the abort guard) — the
-                // 2026-11-07 field captures proved the two-writer fight
-                // itself flickers the FSD icon + speed number even when
-                // our payload bytes equal native (sess_108).
+                // A3.1 (2026-11-08): the align pulse window is armed in the
+                // 0x399 handler on the state-3 recognition window (see the
+                // A3.1 note there). The former fsdTriggered rising-edge
+                // arming lived here and never reopened in the field —
+                // sess_109/110 recorded zero 0x3EE TX and FSD failed to
+                // activate on every attempt.
                 const bool alignMode = legacyFsdDiag.alignModeEnable;
-                if (alignMode && (bool)fsdTriggered && !alignPrevTriggered)
-                    legacyFsdDiag.alignPulseUntilMs = nowMs + kAlignPulseMs;
-                alignPrevTriggered = (bool)fsdTriggered;
 
                 // v1.19 JITTER: cache every native mux0 frame BEFORE any gate
                 // below can return — the one-shot template must stay fresh

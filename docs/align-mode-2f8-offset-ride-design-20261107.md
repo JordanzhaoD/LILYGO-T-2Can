@@ -68,3 +68,31 @@ pct 都=0),只剩 bit46(激活位)与源标记不同——**仍然在闪**。
 - 不动方案 A 的防抖管线(继续工作);
 - 不做 0x438 视觉限速滑杆(controller 有,本车未验证语义);
 - UI 不加开关页(简约,curl/配置端点可操作,需要时下版再加)。
+
+## 七、A3.1 修正（2026-11-08，P0 田野事故 sess_109/110）
+
+**事故**：A3 上板次日实车 FSD 无法激活。两段抓录（77s）0x3EE 我方 TX=0，
+mux0 全程冻结 `00 00 00 D0 20 00 02 80`，bit46 全程缺席。
+
+**根因**（四条证据闭合）：
+1. A3 脉冲只认 `fsdTriggered` **上升沿**（handlers.h 原 1033 行）；
+2. 田野配置 fsdActivation=ON → `forceActivateRuntime` 常高 → 上升沿**每次开机至多一条**，
+   5s 窗在开机瞬间烧完，之后 0x3EE 永久沉默；
+3. 即便 forced=OFF：触发源 `isFSDSelectedInUI`（mux0 b4 bit6）在**全部 31 个历史会话
+   （含多次 FSD 成功激活时段）从未置位**——tesla-controller 架构的该前提在本车不成立；
+4. bit46 在本车唯一来源=我方 TX（历史所有 bit46>0 会话全为我方帧）→ 脉冲不开
+   = 激活分类器在 state3 识别窗口内永远看不到 bit46 = FSD 无法激活。
+
+**修正**：脉冲触发源改为车自身真信号——**0x399 进入 state 3（识别窗口）逐帧续期**
+`alignPulseUntilMs = nowMs + 5000`；离开 state3 自然衰减（识别窗口 + 5s 尾巴）；
+state 6（FSD 活跃巡航）不续期=稳态驾驶保持静默（A3 防闪目标不破）；
+失败重试（回落 state2 再进 3）自动重新武装。原 `alignPrevTriggered` 闩锁删除。
+
+**可观测性**：/status `legacySmartSpeed` 新增 `alignPulseOpen` / `alignPulseUntilMs` /
+`alignApState`——田野判读不再依赖离线 CSV。
+
+**紧急止损**（本修正 OTA 前）：`POST /config?align=0` 远程回退现行模式，立即恢复 FSD。
+
+**测试**：native 新增 4（田野回归=forced 常高下 state3 武装/重试再武装/续期/state6 静默）
++ 改写 2（原 forced 边沿武装改为 state3 武装）+ 合约钉（921 处武装源、闩锁移除、
+status 三字段）。native 矩阵 25 env 795 用例、pytest 495+754、双 ESP 构建全绿。
