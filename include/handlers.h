@@ -399,13 +399,18 @@ struct LegacyHandler : public CarManagerBase
     // tick 由 CAN 任务驱动（main.cpp t2can3eeKeepAliveTick）。
     Dash3eeKeepAlive keepAlive3ee{};
 
-    // A3 align mode (2026-11-07): 0x3EE speaks bit46 only for a bounded
-    // pulse after the engagement rising edge; the speed offset moves to the
-    // 0x2F8 UI_userSpeedOffset mirror-ride. Docs:
-    // docs/align-mode-2f8-offset-ride-design-20261107.md
-    // A3.1 (2026-11-08): the pulse edge source is the 0x399 state-3
-    // recognition window (armed in the 921 handler), not fsdTriggered.
-    static constexpr uint32_t kAlignPulseMs = 5000;
+    // A3 align mode (2026-11-07) -> A3.2 (2026-11-08, sess_111/112): the
+    // 0x3EE mux0 ride (bit46 + the offset request bytes) is ALWAYS on in
+    // align mode — open from boot, through every 0x399 state, keep-alives
+    // included. The A3/A3.1 selective silence starved two field-proven
+    // consumers: SR rendering + the offset display never came up with AP
+    // off (states 1/2 never open a state-3 pulse), and the car-side
+    // consumer ages out the offset, so state-6 silence killed the
+    // four-gear strategy while FSD drove at limit+offset. The offset
+    // request rides the verified 0x3EE b3/b5/b7 channel again ("reads
+    // 0x2F8, writes 0x3EE"); the 0x2F8 mirror-ride stays as a harmless
+    // second copy; mux1 stays fully silent (native carries bit19=0).
+    // Docs: docs/align-mode-2f8-offset-ride-design-20261107.md
 
     static FsdDiagBus legacyDiagBus(const CanFrame &frame)
     {
@@ -451,16 +456,14 @@ struct LegacyHandler : public CarManagerBase
             legacyFsdDiag.policy != LegacyFsdPolicy::Stable &&
             (legacyFsdDiag.policy == LegacyFsdPolicy::TeslaParity ||
              (bool)legacyFsdDiag.mux1Enable);
-        // Align mode (2026-11-07): mux0 keep-alive lives only inside the
-        // engagement pulse window; mux1 keep-alive is fully silent (native
-        // mux1 already carries bit19=0).
+        // A3.2 align mode: the mux0 keep-alive rides like the RX path —
+        // always on, carrying bit46 + the offset request (the consumer
+        // ages both out). mux1 keep-alive stays fully silent (native mux1
+        // already carries bit19=0).
         const bool alignMode = legacyFsdDiag.alignModeEnable;
-        const bool alignPulseOpen =
-            alignMode && nowMs < legacyFsdDiag.alignPulseUntilMs;
         const Dash3eeKeepAlive::Action action =
             keepAlive3ee.tick(nowMs,
-                              (activationAllowed || speedAllowed) &&
-                                  (!alignMode || alignPulseOpen),
+                              (activationAllowed || speedAllowed),
                               (mux1Allowed && injectionAllowed()) && !alignMode);
         if (action == Dash3eeKeepAlive::Action::None)
             return;
@@ -476,7 +479,7 @@ struct LegacyHandler : public CarManagerBase
             if (activationAllowed)
                 setBit(f, 46, true);
             const uint8_t effectiveOffset =
-                (speedAllowed && !alignMode) ? computeLegacySpeedOffset(nowMs) : 0;
+                speedAllowed ? computeLegacySpeedOffset(nowMs) : 0;
             if (effectiveOffset > 0)
                 dashWriteLegacyOffsetTo3eeMux0(f.data, effectiveOffset,
                                                legacySpeedDiag.outputOffsetPct);
@@ -982,20 +985,10 @@ struct LegacyHandler : public CarManagerBase
             APActive = legacyNagApContextActive(apState);
             legacyNagState.apState = apState;
             legacyNagState.lastContextMs = nowMs;
-            // A3.1 (2026-11-08, sess_109/110 P0): arm/renew the align bit46
-            // pulse while the car sits in the 0x399 state-3 FSD recognition
-            // window — the classifier needs bit46 present inside that window
-            // (state3-window law). The original A3 trigger (fsdTriggered
-            // rising edge) is dead in the field: fsdActivation=ON holds
-            // forceActivateRuntime constantly high (at most one edge per
-            // boot) and the uiSelected mux0 bit never asserts on this car
-            // (0/31 evidence sessions), so the pulse never reopened and FSD
-            // could not activate. Every state-3 frame renews the window
-            // (held recognition windows, driver retries); leaving state 3
-            // lets it decay after kAlignPulseMs so steady driving (state 6)
-            // stays silent per the A3 anti-flicker goal.
-            if (legacyFsdDiag.alignModeEnable && apState == 3)
-                legacyFsdDiag.alignPulseUntilMs = nowMs + kAlignPulseMs;
+            // A3.2 (2026-11-08): no 0x399 coupling here anymore. The align
+            // ride is always on (see the class-level A3.2 note) — the A3.1
+            // state-3 pulse arming below starved SR rendering and the
+            // four-gear offset strategy in the field (sess_111/112).
             if (frame.dlc >= 2)
             {
                 fusedSpeedLimitRaw = static_cast<uint8_t>(frame.data[1] & 0x1F);
@@ -1038,13 +1031,10 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.forceRuntime = forced;
                 legacyFsdDiag.triggerSource = forced ? FsdTriggerSource::Force : (uiSelected ? FsdTriggerSource::UiBit : FsdTriggerSource::FalseSource);
 
-                // A3.1 (2026-11-08): the align pulse window is armed in the
-                // 0x399 handler on the state-3 recognition window (see the
-                // A3.1 note there). The former fsdTriggered rising-edge
-                // arming lived here and never reopened in the field —
-                // sess_109/110 recorded zero 0x3EE TX and FSD failed to
-                // activate on every attempt.
-                const bool alignMode = legacyFsdDiag.alignModeEnable;
+                // A3.2 (2026-11-08): no pulse window here. The align ride
+                // is always on — the state-3 arming + silence gate below
+                // starved SR rendering (AP off never visits state 3) and
+                // the offset consumer in the field (sess_111/112).
 
                 // v1.19 JITTER: cache every native mux0 frame BEFORE any gate
                 // below can return — the one-shot template must stay fresh
@@ -1084,16 +1074,11 @@ struct LegacyHandler : public CarManagerBase
                         legacySpeedDiag.blockedReason = "abortGuard";
                     return;
                 }
-                if (alignMode && nowMs >= legacyFsdDiag.alignPulseUntilMs)
-                {
-                    // Align mode outside the engagement pulse: pass the
-                    // native frame through untouched — no bit46, no offset,
-                    // no second writer on 0x3EE. The offset rides 0x2F8.
-                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::DisabledByPolicy;
-                    if (speedRequested)
-                        legacySpeedDiag.blockedReason = "alignSilent";
-                    return;
-                }
+                // (A3.2: the former align silence gate lived here — outside
+                // the state-3 pulse the native frame passed through with no
+                // bit46 and no offset. sess_111: with AP off the car never
+                // leaves states 1/2, so SR rendering and the offset display
+                // never came up. The ride now flows unconditionally.)
                 // v1.19 JITTER pause (replaces the v1.18 barrier A): while the
                 // procedure runs, ALL device 0x3EE mux0 writes stop — the
                 // one-shot owns bit46. The vehicle's own frame passes untouched.
@@ -1145,10 +1130,13 @@ struct LegacyHandler : public CarManagerBase
                 legacyFsdDiag.mux0.recordBefore(frame.data);
                 if (activationAllowed)
                     setBit(frame, 46, true);
-                // Align mode: the offset rides 0x2F8 (mirror-ride in the 760
-                // branch); 0x3EE mux0 speaks bit46/profile bits only.
+                // A3.2: the offset request is back on the verified 0x3EE
+                // b3/b5/b7 channel (the 0x2F8 field alone never reached the
+                // consumer — sess_111/112 four-gear field death). The 0x2F8
+                // mirror-ride still fires in the 760 branch as a second
+                // copy.
                 uint8_t effectiveOffset =
-                    (speedAllowed && !alignMode) ? computeLegacySpeedOffset(nowMs) : 0;
+                    speedAllowed ? computeLegacySpeedOffset(nowMs) : 0;
                 if (effectiveOffset > 0)
                     dashWriteLegacyOffsetTo3eeMux0(frame.data,
                                                    effectiveOffset,

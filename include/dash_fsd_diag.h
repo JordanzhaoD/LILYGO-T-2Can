@@ -278,11 +278,10 @@ struct LegacyFsdDiag
     bool mux1Enable = false;
     bool profileWriteEnable = false;
     bool visionLimitClearEnable = false;
-    // A3 align mode (2026-11-07): the speed offset rides the native 0x2F8
-    // UI_userSpeedOffset field and 0x3EE speaks only inside a bounded pulse
-    // after the engagement rising edge (see handlers.h LegacyHandler).
+    // A3 align mode (2026-11-07) -> A3.2 (2026-11-08): the 0x3EE mux0 ride
+    // (bit46 + the offset request bytes) is always on while enabled — no
+    // pulse window, no 0x399 coupling (see handlers.h LegacyHandler).
     bool alignModeEnable = false;
-    uint32_t alignPulseUntilMs = 0;
     bool triggered = false;
     bool forceRuntime = false;
     FsdTriggerSource triggerSource = FsdTriggerSource::Unknown;

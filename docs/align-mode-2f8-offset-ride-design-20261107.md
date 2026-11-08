@@ -96,3 +96,52 @@ state 6（FSD 活跃巡航）不续期=稳态驾驶保持静默（A3 防闪目�
 **测试**：native 新增 4（田野回归=forced 常高下 state3 武装/重试再武装/续期/state6 静默）
 + 改写 2（原 forced 边沿武装改为 state3 武装）+ 合约钉（921 处武装源、闩锁移除、
 status 三字段）。native 矩阵 25 env 795 用例、pytest 495+754、双 ESP 构建全绿。
+
+---
+
+## 八、A3.2（2026-11-08 晚，sess_111/112）：选择性静默整体放弃——全程骑载
+
+### 田野判决（两段新证据 + Jordan 反馈）
+
+**sess_111（不开 AP，59s）**：0x399 全程只在 state 1/2 徘徊，**state 3 从未出现**
+→ A3.1 脉冲窗永不开 → 0x3EE TX=0。症状：无 SR 渲染、速度偏移无显示。
+关键反证：0x2F8 镜像骑载 36/36 全对、偏移位全程在场（b5 E8→EE）——**数据在发，
+车不显示**。结论：IC 只在 SR 渲染（bit46 语境）里显示偏移；两个症状同一根。
+
+**sess_112（开 AP，58s）**：state 3 出现 0.2s（3.8s）→ 窗开 → 8 帧 0x3EE（4.0-8.7s）
+→ FSD 激活成功进 state 6 → 窗烧完静默。激活路径 ✓。但随后 Jordan 反馈
+"速度策略四档完全无效"。
+
+### 机制复核（dash_legacy_smart_offset.h 实锤）
+
+- **四档 = Custom 模式四段百分比**（customPctLow/Mid/High/VeryHigh；Auto 也有分段表）；
+- 头文件原话：*"The verified Legacy path **reads 0x2F8 but writes its request on
+  0x3EE mux 0**"*——偏移请求（kph→b3、0x03 旗标→b5、百分比档→b7）的**验证过的
+  唯一写入通道是 0x3EE**。A3 把偏移搬到 0x2F8 data[5] 是未验证假设，田野判死；
+- keep-alive 注释原话：*"the car-side consumer **ages out** bit46 + the speed
+  offset"*——消费端会老化，静默=饿死。state 6 静默恰恰在最需要的时候（FSD 按
+  限速+偏移巡航）杀死四档策略。
+
+### A3.2 修正（触发反转的终局：去掉一切 0x399 耦合）
+
+| 通道 | A3/A3.1 | A3.2 |
+|---|---|---|
+| 0x3EE mux0 bit46 | 只在 state3 窗内 | **全程骑载（上车即开，含 state 6）** |
+| 0x3EE mux0 偏移 b3/b5/b7 | 搬去 0x2F8（失效） | **写回验证过的通道** |
+| 0x3EE mux1 | 静默 | 静默（原生已带 bit19=0） |
+| 0x2F8 偏移骑载 | 有 | 保留（无害第二副本） |
+| 0x399 耦合 | state3 开门/state6 关门 | **完全删除**（kAlignPulseMs、alignPulseUntilMs、921 武装块全拆） |
+
+/state 的 alignPulseOpen/alignPulseUntilMs 随窗一起删除，alignApState 保留作田野语境。
+
+**已知代价**：state 6 里恢复骑载=与车机自写者双写 b3/b7，闪烁有回归风险（A3 的初衷）。
+功能优先（Jordan 判决）；保留的减闪手段=值同步骑载+原生静默桥接+平滑引擎。
+
+**测试**：native 改写为 9 个 A3.2 语义用例（boot 即骑载零 0x399/state1-2 全程骑载/
+state3 窗内 bit46 在场/state6 持续骑载+keep-alive 桥接/偏移-only 骑载/bit46+偏移
+同帧四件套/mux1 静默/0x2F8 双骑）+ 合约钉反转（m0 无静默门、无 `speedAllowed &&
+!alignMode`、921 块零 align 耦合、status 无窗字段）。RED=5 失败精确复刻田野
+（"Expected N Was 0"）。门禁：native 25 env 769 用例、pytest 495+754、双 ESP 构建全绿。
+
+**田野判读（下次开车三看）**：①上车即 SR 渲染+偏移显示（不开 AP）；②FSD 激活
+（开 AP）；③FSD 行驶中四档偏移生效 + 观察闪烁是否回归。

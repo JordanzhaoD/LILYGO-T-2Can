@@ -2845,16 +2845,14 @@ static void appendLegacySmartSpeedJson(String &j, unsigned long now)
     LegacySpeedRuntimeDiag diag{};
     DashLegacySpeedBusLock route{};
     LegacySmartOffsetConfig config{};
-    uint32_t alignPulseUntil = 0;
     uint8_t alignApState = 0;
     if (dashHandler)
     {
         diag = dashHandler->legacySpeedDiag;
         route = dashHandler->legacySpeedBus;
         config = dashHandler->legacySmartOffsetConfig;
-        // A3.1 field observability: the align pulse window + the 0x399
-        // state that arms it (sess_109/110 postmortem).
-        alignPulseUntil = dashHandler->legacyFsdDiag.alignPulseUntilMs;
+        // A3.2 field observability: the 0x399 AP state for context (the
+        // ride itself is unconditional in align mode — sess_111/112).
         alignApState = dashHandler->legacyNagDiag((uint32_t)now).apState;
     }
     uint8_t effectiveHw = hwMode == 3 ? DASH_DEFAULT_HW : hwMode;
@@ -2881,10 +2879,6 @@ static void appendLegacySmartSpeedJson(String &j, unsigned long now)
     j += diag.result.holdingLimit ? "true" : "false";
     j += R"JSON(,"alignMode":)JSON";
     j += dashLegacyAlignModeEnable ? "true" : "false";
-    j += R"JSON(,"alignPulseOpen":)JSON";
-    j += (dashLegacyAlignModeEnable && now < alignPulseUntil) ? "true" : "false";
-    j += R"JSON(,"alignPulseUntilMs":)JSON";
-    j += alignPulseUntil;
     j += R"JSON(,"alignApState":)JSON";
     j += alignApState;
     j += R"JSON(,"ride2f8TxOk":)JSON";

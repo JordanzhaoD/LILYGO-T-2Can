@@ -1425,13 +1425,17 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn('bool holdingLimit = false;', self.legacy_smart_speed)
 
     def test_legacy_align_mode_rides_2f8_and_pulses_3ee(self) -> None:
-        """A3 align mode: the offset rides the native 0x2F8 UI_userSpeedOffset
-        field as a pure mirror-ride (never free-run), and 0x3EE speaks bit46
-        only inside a bounded pulse after the engagement rising edge.
+        """A3.2 align mode (2026-11-08, sess_111/112): the 0x3EE mux0 ride
+        (bit46 + the verified offset request bytes b3/b5/b7) is ALWAYS on in
+        align mode — open from boot, through every 0x399 state, keep-alives
+        included — and the offset also rides the native 0x2F8 field as a
+        pure mirror-ride.
 
-        Field 2026-11-07 root cause (sess_106/107/108): the residual FSD-icon +
-        speed-number flicker survives payload-identical writes — the two-writer
-        fight on 0x3EE itself is the cause, so align mode stops the fight.
+        The A3/A3.1 selective silence starved two field-proven consumers:
+        with AP off the car never leaves 0x399 states 1/2 (a state-3 pulse
+        never opened: no SR rendering, no offset display), and the car-side
+        consumer ages out the offset, so state-6 silence killed the
+        four-gear strategy while FSD drove at limit+offset.
         """
         can760 = re.search(r"if \(frame\.id == 760\).*?if \(frame\.id == 1080\)", self.handlers, re.S)
         self.assertIsNotNone(can760)
@@ -1445,14 +1449,21 @@ class DashboardApiContractTests(unittest.TestCase):
         mux0 = re.search(r"if \(frame\.id == 1006\).*?else if \(index == 1\)", self.handlers, re.S)
         self.assertIsNotNone(mux0)
         m0 = mux0.group(0)
-        self.assertIn("nowMs >= legacyFsdDiag.alignPulseUntilMs", m0)
-        self.assertIn("(speedAllowed && !alignMode)", m0)
-        # Keep-alive is pulse-gated on mux0 and fully silent on mux1.
+        # A3.2: NO silence gate and NO offset stripping in the mux0 path —
+        # the verified write channel ("reads 0x2F8, writes 0x3EE") carries
+        # the four-gear request on every ride.
+        self.assertNotIn("alignPulseUntilMs", m0)
+        self.assertNotIn("alignSilent", m0)
+        self.assertNotIn("(speedAllowed && !alignMode)", self.handlers)
+        self.assertIn("speedAllowed ? computeLegacySpeedOffset(nowMs) : 0", m0)
+        self.assertIn("dashWriteLegacyOffsetTo3eeMux0", m0)
+        # Keep-alive rides unconditionally on mux0, fully silent on mux1.
         tick = re.search(r"void keepAliveTick\(CanDriver &drv, uint32_t nowMs\).*?static FsdDiagDriver legacyDiagDriver", self.handlers, re.S)
         self.assertIsNotNone(tick)
-        self.assertIn("(!alignMode || alignPulseOpen)", tick.group(0))
+        self.assertIn("(activationAllowed || speedAllowed),", tick.group(0))
         self.assertIn("!alignMode);", tick.group(0))
-        self.assertIn("static constexpr uint32_t kAlignPulseMs = 5000;", self.handlers)
+        self.assertNotIn("kAlignPulseMs", self.handlers)
+        self.assertNotIn("alignPulseUntilMs", self.handlers)
         self.assertIn("bool alignModeEnable = false;", self.dash_fsd_diag)
         # Config plumbing: NVS key, HTTP toggle, handler push, status JSON.
         self.assertIn('prefs.putBool("lfsd_aln", dashLegacyAlignModeEnable);', self.dash)
@@ -1474,36 +1485,33 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIsNotNone(fsd_cfg, "handleLegacyFsdConfig guard must include align")
         self.assertIn('server.hasArg("align")', fsd_cfg.group(0))
 
-    def test_legacy_align_mode_pulse_arms_on_399_state3(self) -> None:
-        """A3.1 (2026-11-08 P0, sess_109/110): the align bit46 pulse must arm
-        from the car's own 0x399 state-3 recognition window.
+    def test_legacy_align_mode_rides_unconditionally_no_399_coupling(self) -> None:
+        """A3.2 (2026-11-08, sess_111/112): align mode must NOT couple 0x3EE
+        to the 0x399 stream at all.
 
-        The A3 fsdTriggered rising-edge trigger was dead in the field:
-        fsdActivation=ON holds forceActivateRuntime constantly high (at most
-        one edge per boot) and the uiSelected mux0 bit never asserts on this
-        car (0/31 evidence sessions) — 77s of driving recorded zero 0x3EE TX
-        and FSD failed to activate on every attempt.
+        A3.1 armed the ride on the state-3 recognition window. Field: with
+        AP off the car walks states 1/2 only, the window never opened, and
+        SR rendering + the offset display died from car entry; state-6
+        silence starved the offset consumer mid-FSD (four-gear strategy
+        dead). The ride is unconditional; only the AP state stays in
+        /status as context.
         """
-        # Arming lives in the 0x399 (921) handler: every state-3 frame
-        # renews the pulse window (held recognition windows + retries).
         das = re.search(r"if \(frame\.id == 921\)\n        \{.*?return;\n        \}", self.handlers, re.S)
         self.assertIsNotNone(das, "0x399 handler block not found")
         arm = das.group(0)
-        self.assertIn("legacyFsdDiag.alignModeEnable && apState == 3", arm)
-        self.assertIn("legacyFsdDiag.alignPulseUntilMs = nowMs + kAlignPulseMs", arm)
+        self.assertNotIn("alignModeEnable", arm)
+        self.assertNotIn("alignPulse", arm)
         # The dead field trigger must stay gone: no fsdTriggered-edge arming
         # and no once-per-boot latch member anywhere in handlers.h.
         self.assertNotIn("alignPrevTriggered", self.handlers)
         self.assertNotIn("(bool)fsdTriggered && !alignPrevTriggered", self.handlers)
-        # Field verification needs pulse observability in /status: the live
-        # window state, its deadline, and the 0x399 state that arms it
-        # (sess_109/110 postmortem: zero 0x3EE TX was only provable offline).
+        # /status keeps the AP state for field context; the pulse-window
+        # fields are gone with the window itself.
         smart = re.search(r"static void appendLegacySmartSpeedJson\(String &j, unsigned long now\)", self.dash)
         self.assertIsNotNone(smart)
-        self.assertIn('"alignPulseOpen"', self.dash)
-        self.assertIn('"alignPulseUntilMs"', self.dash)
+        self.assertNotIn('"alignPulseOpen"', self.dash)
+        self.assertNotIn('"alignPulseUntilMs"', self.dash)
         self.assertIn('"alignApState"', self.dash)
-        self.assertIn("dashHandler->legacyFsdDiag.alignPulseUntilMs", self.dash)
         self.assertIn("legacyNagDiag((uint32_t)now).apState", self.dash)
 
     def test_legacy_handler_captures_fused_speed_limit_from_921(self) -> None:
