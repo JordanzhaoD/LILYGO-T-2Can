@@ -879,8 +879,10 @@ class DashRecorderV2SpacePressureTests(unittest.TestCase):
     The reserve/pacing machinery itself died with the flush engine in
     6.0.0-beta11 (blackbox grid: one 64KB partition write per staging
     buffer, writer paced by its own 250ms tick — no multi-MB SPIFFS flush
-    exists to starve anything). The crash-dump prerequisites it motivated
-    survive below.
+    exists to starve anything). beta12 sub-chunked that write into 4KB
+    guard windows (the sess_113/114 chip-wide freeze) — the pacing story
+    lives on in test_blackbox_recorder.py. The crash-dump prerequisites
+    the round-4 findings motivated survive below.
     """
 
     @classmethod

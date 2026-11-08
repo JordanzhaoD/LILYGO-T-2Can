@@ -76,6 +76,16 @@ static constexpr uint32_t kRecBBBlockCount = 144u;  // 144 * 64KB = 9MB
 // budget; the yield between sub-erases lets ticks run.
 static constexpr uint32_t kRecBBEraseChunk = 4096u;
 
+// Field P0 (sess_113/114, 2026-11-08): one monolithic 64KB
+// esp_partition_write held the flash guard ~450-700ms with the cache
+// suspended chip-wide, freezing core 0's CAN ingest with it (three-bus
+// 0x106 capture gaps, one per flush, ~50% session duty). Our 0x3EE
+// rides/keep-alives went silent while the car's native frames kept
+// flowing — the offset consumer dropped every few seconds (96->80
+// flicker + FSD decel jerk). Partition writes are sub-chunked like the
+// erases so no guard window exceeds one 4KB chunk.
+static constexpr uint32_t kRecBBWriteChunk = 4096u;
+
 struct RecBBHeader
 {
     char magic[4];
@@ -111,6 +121,25 @@ static bool recBBEraseRangeSafe(uint32_t off, uint32_t len)
             vTaskDelay(pdMS_TO_TICKS(1)); // let ticks/interrupts breathe
     }
     return true;
+}
+
+// Program `len` bytes at `off` as 4KB sub-chunks with a yield between guard
+// windows (see kRecBBWriteChunk — the sess_113/114 monolithic-write freeze).
+// Returns the byte count actually programmed (<= len; stops at the first
+// failed chunk). Never called with recV2Mux held — the yield sleeps.
+static uint32_t recBBWriteRangeSafe(uint32_t off, const uint8_t *src, uint32_t len)
+{
+    uint32_t written = 0;
+    while (written < len)
+    {
+        uint32_t chunk = len - written < kRecBBWriteChunk ? len - written : kRecBBWriteChunk;
+        if (esp_partition_write(recBBPart, off + written, src + written, chunk) != ESP_OK)
+            break;
+        written += chunk;
+        if (written < len)
+            vTaskDelay(pdMS_TO_TICKS(1)); // let ticks/interrupts breathe
+    }
+    return written;
 }
 
 // Stamp the 32B partition header. Called by init's fresh path AND by the
@@ -466,11 +495,21 @@ static void recBBFlushBuffer(uint8_t di)
         }
         recBBErasedSet(b);
     }
-    if (esp_partition_write(recBBPart, off, recBBStage[di], lenEff) != ESP_OK)
-    {
-        recBBPaused = true; // write error: retry on the next tick
+    // Sub-chunked program (sess_113/114 field P0): the monolithic 64KB
+    // esp_partition_write froze the whole chip inside its flash guard for
+    // ~450-700ms every ~1.27s while the car kept sending offset-OFF 0x3EE,
+    // dropping our injected offset mid-drive (the 96→80 flicker). The 4KB
+    // writer bounds every guard window; a partial failure floors the
+    // committed prefix to whole frames — a chunk boundary can split an 18B
+    // frame, and that torn tail must stay staged (never re-programmed
+    // dirty), with the paused flag surfacing the error for the next-tick
+    // retry.
+    uint32_t written = recBBWriteRangeSafe(off, recBBStage[di], lenEff);
+    written -= written % sizeof(RecRingFrame);
+    if (written < lenEff)
+        recBBPaused = true; // flash error (or torn tail): retry next tick
+    if (written == 0)
         return;
-    }
     // The erase bit does NOT retire here: a mid-block ending leaves the
     // unwritten tail of the erased block programmable, and clearing now
     // let the SAME buffer's next flush re-erase the entry block over the
@@ -478,16 +517,16 @@ static void recBBFlushBuffer(uint8_t di)
     // block). Retirement happens below, only for blocks the pointer
     // actually left this flush.
     portENTER_CRITICAL(&recV2Mux);
-    if (lenEff == len)
+    if (written == len)
     {
         recBBStageLen[di] = 0;
     }
     else
     {
-        memmove(recBBStage[di], recBBStage[di] + lenEff, len - lenEff);
-        recBBStageLen[di] = len - lenEff;
+        memmove(recBBStage[di], recBBStage[di] + written, len - written);
+        recBBStageLen[di] = len - written;
     }
-    recBBWriteOff = off + lenEff;
+    recBBWriteOff = off + written;
     // Wrap at the wall (task-7 crash #2): the end clamp can park the pointer
     // at recBBPart->size exactly, and /64K then names block 144 — a value
     // the mod-144 live pointer can never reach, so the close loop below

@@ -145,11 +145,37 @@ class BlackboxWriterTests(unittest.TestCase):
         self.assertIn("recBBWptrSave();", cadence[: cadence.index("}") + 1])
 
     def test_pacing_and_yield(self) -> None:
-        # One esp_partition_write per staging buffer — never per-frame flash
-        # calls. The task-2 header stamp is the only other partition write.
+        # The flush programs through the sub-chunked writer — never one
+        # monolithic 64KB esp_partition_write, never per-frame flash calls.
+        # The task-2 header stamp is the only other partition write.
         region = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
-        self.assertEqual(region.count("esp_partition_write(recBBPart"), 1)
+        self.assertIn("recBBWriteRangeSafe(", region)
+        self.assertNotIn("esp_partition_write(recBBPart", region)
         self.assertNotIn("for (uint32_t f = 0", region)  # no per-frame loop
+
+    def test_write_subchunked_under_int_wdt(self) -> None:
+        # Field P0 (sess_113/114, 2026-11-08): the monolithic 64KB
+        # esp_partition_write held the flash guard ~450-700ms with the cache
+        # suspended chip-wide — core 0's CAN ingest froze with it (three-bus
+        # 0x106 gaps once per flush, ~50% session duty), our 0x3EE
+        # rides/keep-alives went silent while the car's native
+        # "offset off" frames kept flowing, and the consumer dropped the
+        # offset every few seconds (96->80 flicker + FSD decel jerk). Every
+        # partition write from the flush goes through the sub-chunk helper:
+        # 4KB chunks with a yield between guard windows, mirroring the erase
+        # discipline pinned by test_erase_subchunked_under_int_wdt.
+        self.assertIn("kRecBBWriteChunk = 4096u", self.engine)
+        helper = self._fn(self.engine, "static uint32_t recBBWriteRangeSafe(", 1600)
+        self.assertIn("kRecBBWriteChunk", helper)
+        self.assertIn("vTaskDelay(pdMS_TO_TICKS(1))", helper,
+                      "a yield between sub-writes lets ticks run")
+        self.assertIn("esp_partition_write(recBBPart", helper)
+        # A mid-write flash failure must commit only whole frames already
+        # programmed — retrying the whole buffer would re-program dirty
+        # bytes over the same span and corrupt the grid.
+        flush = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        self.assertIn("written % sizeof(RecRingFrame)", flush)
+        self.assertIn("recBBPaused = true", flush)  # error surfaced for retry
 
     def test_erase_subchunked_under_int_wdt(self) -> None:
         # Task-7 bench hygiene (boots #21/#23, 2026-11-01): each erase runs
@@ -186,9 +212,9 @@ class BlackboxWriterTests(unittest.TestCase):
         # such run. The flush must wrap the pointer back to the grid start.
         self.assertEqual(0x900000 // 0x10000, 144)  # nb without the wrap
         self.assertEqual((143 + 1) % 144, 0)  # liveBlk cycles mod 144, never 144
-        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
-        self.assertIn("recBBWriteOff = off + lenEff;", body)
-        wrap = body[body.index("recBBWriteOff = off + lenEff;"):]
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 7600)
+        self.assertIn("recBBWriteOff = off + written;", body)
+        wrap = body[body.index("recBBWriteOff = off + written;"):]
         self.assertIn("if (recBBWriteOff >= recBBPart->size)", wrap)
         self.assertIn("recBBWriteOff = kRecBBHeaderSize;", wrap,
                       "pointer wraps to the grid anchor, never the size")
@@ -286,7 +312,7 @@ class BlackboxWriterTests(unittest.TestCase):
         self.assertIn("static volatile uint32_t recBBNewestTsUs", self.engine)
         self.assertIn("kRecBBAheadGraceUs", self.engine)
         self.assertEqual(60000000, 60000000)  # grace: 60s > any ahead-gap
-        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 7600)
         close = body[body.index("while (recBBLiveBlk != nb)"):]
         self.assertIn("recBBNewestTsUs - recBBSums[recBBLiveBlk].lastTsUs",
                       close, "the age the guard tests is anchor minus slot")
@@ -360,8 +386,8 @@ class BlackboxWriterTests(unittest.TestCase):
         # consumer (decoder, torn-frame resume, session download) loses the
         # 32+k*18 contract. Park on the next grid anchor instead: a ≤17-byte
         # dead pad at each block head, frames stay at 32+k*18 forever.
-        body = self._fn(self.engine, "static void recBBFlushBuffer(", 6500)
-        writeback = body[body.index("recBBWriteOff = off + lenEff") :]
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 7600)
+        writeback = body[body.index("recBBWriteOff = off + written") :]
         self.assertIn("recBBGridSnap(", writeback,
                       "boundary parks re-anchor on the grid")
 

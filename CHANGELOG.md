@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [6.0.0-beta12] - 2026-11-08
+
+### Fixed (P4)
+
+- **P4: blackbox flush froze the whole chip — the speed-offset flicker's
+  root cause.** The recorder drained each 64KB staging buffer with ONE
+  `esp_partition_write`, and on ESP32 the flash guard suspends the cache
+  chip-wide, not just the calling task: CAN ingest froze for ~450-700ms
+  every ~1.27s plus 25-150ms erase windows — ~50% of every recorded
+  session since beta11. During each freeze the injected 0x3EE
+  offset/keep-alive frames vanished from the bus while the car's own
+  offset-OFF frames kept flowing, so the consumer aged the offset out:
+  the field's 96→80 km/h flicker with FSD decel jerks (sess_113/114: 46
+  stalls in 59s, median 512ms; the same stall signature is present in
+  every session back to 106). Flush writes now go through
+  `recBBWriteRangeSafe` in 4KB chunks with a yield between guard windows,
+  mirroring the task-7 erase discipline; a partial flash failure commits
+  only the whole-frame prefix and leaves the torn tail staged for the
+  next-tick retry. Longest injection silence drops from ~700ms to one 4KB
+  window, below the consumer's aging threshold — and the recorder itself
+  stops losing ~half its frames to the freezes it caused.
+
 ## [6.0.0-beta11] - 2026-11-01
 
 ### Changed (P4)
