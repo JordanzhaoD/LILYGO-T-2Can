@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [6.0.0-beta15] - 2026-11-12
+
+### Added (P4 only: Ban Shield X — 0x368 tier-mask forge experiment)
+
+- **Ban Shield X on the FSD defense page (default off).**
+  Passive tripwire always on: every non-template 0x368 payload on the PT
+  bus is counted and logged (`[BANFORGE] tripwire hit`), even with the
+  preference off, giving a field channel for GTW_carConfig tier changes
+  with zero injection risk. The forge experiment itself is fail-closed:
+  enabling the toggle only arms the selected arm; each arm injects at
+  most 3 forged frames (or 600ms from the first injection attempt,
+  whichever comes first), then auto-disarms and restores TWAI2 to
+  listen-only; explicit disarm with attempts spent enters the same 30s
+  inter-arm cooldown. Arms B1-B5 rewrite one of the five observed
+  tier-bit candidate fields from 3 (SELF_DRIVING) to 2 (ENHANCED — the
+  harmless direction); B6 adds an additive checksum byte over B1; B7 is
+  a full-byte probe. Preference persists in NVS (t2can namespace);
+  armed state never survives a reboot.
+- UI: Ban Shield toggle + experiment-arm selector (8 options) +
+  four status chips (state / active arm / injected / tripwire hits) fed
+  by the new `banForgeDiag` block in `/status`; bilingual copy included.
+- `wantTx` is now an OR: autoshift permit OR forge active — the forge
+  owns its own fail-closed TX gate (forge-only gate ruling), so Stage-B
+  evidence never depends on autoshift arming.
+
+### Fixed (P4 only: recorder v2 evidence correctness)
+
+- v2 blackbox TX rows on the PT bus were mis-tagged as bus A. The v2
+  submit path now maps CAN_BUS_PT to bus C before the PARTY/A fallback,
+  matching the v1 CSV export's 3-way mapping — required for trustworthy
+  Stage-B evidence (which arm ran, which bus carried the injection).
+
 ## [6.0.0-beta14] - 2026-11-11
 
 ### Fixed (Legacy wheel DND, both P4 and T2CAN)
