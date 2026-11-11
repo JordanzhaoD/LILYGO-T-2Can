@@ -45,6 +45,34 @@ class BanForgeContractTests(unittest.TestCase):
             "v2 TX submit does not map CAN_BUS_PT to kRecV2BusC — "
             "CanC TX rows are mis-tagged as bus A")
 
+    def test_header_is_gated_by_p4_guard(self):
+        """The core lives inside the DRIVER_P4_3CAN guard so non-P4
+        builds stay byte-identical (T2CAN red line); the guard test
+        also proves the header exists and has content."""
+        source = HEADER.read_text()
+        self.assertIn("#if defined(DRIVER_P4_3CAN)", source)
+        self.assertIn("#endif", source)
+
+    def test_native_main_compiles_and_passes_with_p4_define(self):
+        """Real native compile-and-run of the full state machine:
+        template check, seven transforms, budget/wallclock/cooldown,
+        echo-muted tripwire, pref fail-closed. -DDRIVER_P4_3CAN is
+        mandatory — without it the header preprocesses to nothing and
+        every assertion would pass vacuously."""
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "banforge_native"
+            result = subprocess.run(
+                [CLANG, "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                 "-DDRIVER_P4_3CAN", "-I", str(ROOT / "include"),
+                 str(NATIVE_MAIN), "-o", str(binary)],
+                capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0,
+                             "compile failed:\n" + result.stderr)
+            run = subprocess.run([str(binary)], capture_output=True,
+                                 text=True, timeout=30)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            self.assertIn("ALL PASS", run.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
