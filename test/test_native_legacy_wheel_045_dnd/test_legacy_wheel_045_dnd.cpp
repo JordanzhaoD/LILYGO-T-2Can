@@ -410,6 +410,129 @@ void test_reset_runtime_restarts_alternation_from_positive()
     TEST_ASSERT_EQUAL(DashLegacyWheel045State::Idle, dnd.diag.state);
 }
 
+// sess_119 ep1 field fingerprint: the confirm native frame after our TX was
+// lost to a capture/rx gap, ReleaseTimeout latched Aborted, and the machine
+// stayed dead for the rest of a multi-second warning episode. Transient
+// aborts must re-arm through the retry cooldown while budget remains.
+void test_release_timeout_recovers_within_same_episode()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8] = {};
+    arm(dnd);
+    seedAndWarn(dnd);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
+    dnd.recordTxResult(true, 1000);
+    TEST_ASSERT_FALSE(dnd.nextFrame(1301, out));
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::ReleaseTimeout, dnd.diag.blocked);
+
+    // Fresh native + live warning context after the merge-window cooldown.
+    feedNative(dnd, 0x0D, 1850);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1850);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1851, out));
+    // Same episode keeps the same direction (Plan D).
+    TEST_ASSERT_EQUAL_HEX16(0x0040, DashLegacyWheel045Dnd::switchWord(out));
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.recoveries);
+    dnd.recordTxResult(true, 1851);
+    TEST_ASSERT_EQUAL_UINT32(2, dnd.diag.positiveTx);
+    TEST_ASSERT_EQUAL_UINT8(2, dnd.diag.txAttemptsThisEpisode);
+}
+
+void test_recovery_waits_out_merge_window_cooldown()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8] = {};
+    arm(dnd);
+    seedAndWarn(dnd);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
+    dnd.recordTxResult(true, 1000);
+    TEST_ASSERT_FALSE(dnd.nextFrame(1301, out));
+    // Re-send too soon after the lost confirm would merge with the previous
+    // tick in the car's same-direction window: stay quiet inside kRetryDelayMs.
+    feedNative(dnd, 0x0D, 1400);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1400);
+    TEST_ASSERT_FALSE(dnd.nextFrame(1401, out));
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::ReleaseTimeout, dnd.diag.blocked);
+    TEST_ASSERT_EQUAL_UINT32(0, dnd.diag.recoveries);
+}
+
+void test_recovery_budget_caps_unconfirmed_attempts()
+{
+    // sess_118-type long episode where confirms never arrive: emitted
+    // attempts (not confirmed frames) bound the episode at beta02's drift
+    // scale — no free-running retry loop through a 6s nag.
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8] = {};
+    arm(dnd);
+    seedAndWarn(dnd);
+    uint8_t nativeCounter = 0x0C;
+    uint32_t now = 1000;
+
+    for (uint8_t attempt = 0; attempt < DashLegacyWheel045Dnd::kMaxFramesPerEpisode; ++attempt)
+    {
+        TEST_ASSERT_TRUE(dnd.nextFrame(now, out));
+        dnd.recordTxResult(true, now); // delivered, confirm never arrives
+        now += DashLegacyWheel045Dnd::kReleaseTimeoutMs + 1;
+        TEST_ASSERT_FALSE(dnd.nextFrame(now, out)); // ReleaseTimeout abort
+        now += DashLegacyWheel045Dnd::kRetryDelayMs - DashLegacyWheel045Dnd::kReleaseTimeoutMs - 1 + 50;
+        nativeCounter = static_cast<uint8_t>((nativeCounter + 1) & 0x0F);
+        feedNative(dnd, nativeCounter, now);
+        dnd.onDasStatus(6, 3, CAN_BUS_VEH, now);
+    }
+    TEST_ASSERT_EQUAL_UINT8(3, dnd.diag.txAttemptsThisEpisode);
+    TEST_ASSERT_EQUAL_UINT8(0, dnd.diag.framesThisEpisode); // confirms never landed
+    TEST_ASSERT_TRUE(dnd.nextFrame(now + 1, out) == false);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::EpisodeLimit, dnd.diag.blocked);
+    TEST_ASSERT_EQUAL_UINT32(2, dnd.diag.recoveries);
+    TEST_ASSERT_EQUAL_UINT32(3, dnd.diag.positiveTx);
+}
+
+void test_physical_input_abort_stays_terminal_for_episode()
+{
+    // The human scrolled: the rest of the episode belongs to them.
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8] = {};
+    arm(dnd);
+    seedAndWarn(dnd);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
+    dnd.recordTxResult(true, 1000);
+
+    uint8_t physical[8];
+    memcpy(physical, kIdleC, 8);
+    DashLegacyWheel045Dnd::encodeTick(physical, 0x0F);
+    physical[7] = DashLegacyWheel045Dnd::crc8J1850(physical, 7);
+    dnd.onCan1Frame(physical, 8, 1050);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::PhysicalInput, dnd.diag.blocked);
+
+    feedNative(dnd, 0x0D, 2000);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 2000);
+    TEST_ASSERT_FALSE(dnd.nextFrame(2001, out));
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::PhysicalInput, dnd.diag.blocked);
+    TEST_ASSERT_EQUAL_UINT32(0, dnd.diag.recoveries);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.positiveTx);
+}
+
+void test_counter_conflict_recovers_on_refreshed_native()
+{
+    // A capture gap makes the car's counter jump past our expectation right
+    // after a TX. The conflicting frame is still the freshest native clone
+    // source: re-arm and generate from it, not from the stale pre-TX copy.
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8] = {};
+    arm(dnd);
+    seedAndWarn(dnd);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
+    dnd.recordTxResult(true, 1000);
+    feedNative(dnd, 0x02, 1100); // jump: neither 0x0D nor 0x0E
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::CounterConflict, dnd.diag.blocked);
+
+    feedNative(dnd, 0x03, 2000);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 2000);
+    TEST_ASSERT_TRUE(dnd.nextFrame(2001, out));
+    TEST_ASSERT_EQUAL_HEX8(0x04, (out[6] >> 4) & 0x0F); // clone 3 -> generate 4
+    TEST_ASSERT_TRUE(DashLegacyWheel045Dnd::validFrame(out));
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.recoveries);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -432,6 +555,11 @@ int main()
     RUN_TEST(test_gateway_mirror_is_diagnostic_only);
     RUN_TEST(test_release_timeout_aborts_without_free_running_send);
     RUN_TEST(test_release_timeout_ceiling_protects_fsd_activation_window);
+    RUN_TEST(test_release_timeout_recovers_within_same_episode);
+    RUN_TEST(test_recovery_waits_out_merge_window_cooldown);
+    RUN_TEST(test_recovery_budget_caps_unconfirmed_attempts);
+    RUN_TEST(test_physical_input_abort_stays_terminal_for_episode);
+    RUN_TEST(test_counter_conflict_recovers_on_refreshed_native);
     RUN_TEST(test_reset_runtime_restarts_alternation_from_positive);
     return UNITY_END();
 }

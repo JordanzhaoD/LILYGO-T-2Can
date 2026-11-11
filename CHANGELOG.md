@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [6.0.0-beta14] - 2026-11-11
+
+### Fixed (Legacy wheel DND, both P4 and T2CAN)
+
+- **Legacy left-scroll-wheel DND no longer dies for the rest of a warning
+  episode after a transient abort.** Field sessions 118/119 (captured on
+  beta13) showed the two failure fingerprints of the "occasionally dead"
+  DND: sess_119's retry landed during a recorder drop window, the native
+  confirm never arrived, and the ReleaseTimeout abort latched `Aborted`
+  until the warning fully cleared; sess_118's episode edge predates the
+  capture, so the machine had already latched and sent nothing for the
+  entire 6.3s nag (the tick=F native at t=7.17s is the driver scrolling
+  manually). Root cause: `abort()` has no in-episode recovery path — any
+  transient setback (confirm lost to a capture/rx gap, counter jump after
+  a gap, one-off send failure) killed the feature until the next warning
+  edge, and hands-nag episodes run for seconds.
+- Transient aborts (ReleaseTimeout, CounterConflict, TxFailed, runtime
+  blocks, invalid native) now re-arm to WaitingSource after the standard
+  kRetryDelayMs cooldown while attempt budget remains. PhysicalInput
+  stays terminal for the episode (never race the human scroll) and
+  AutoDisarmed keeps its two-strike latch.
+- Per-episode budget now counts emitted attempts (`txAttemptsThisEpisode`)
+  instead of confirmed frames, so the recovery loop stays capped at the
+  beta02 drift scale (3) even when confirm frames are lost.
+- Diagnostics: `wheelDndDiag` gains `txAttemptsThisEpisode` and
+  `recoveries` for field adjudication.
+
 ## [6.0.0-beta13] - 2026-11-11
 
 ### Changed (P4)

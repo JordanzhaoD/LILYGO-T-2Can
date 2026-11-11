@@ -2762,6 +2762,10 @@ static void appendWheelDndDiagJson(String &j, unsigned long now)
     j += d.positiveTx + d.negativeTx;
     j += R"JSON(,"actionsThisEpisode":)JSON";
     j += d.framesThisEpisode;
+    j += R"JSON(,"txAttemptsThisEpisode":)JSON";
+    j += d.txAttemptsThisEpisode;
+    j += R"JSON(,"recoveries":)JSON";
+    j += d.recoveries;
     j += R"JSON(,"directionPositive":)JSON";
     j += d.directionPositive ? "true" : "false";
     j += R"JSON(,"nextDirectionPositive":)JSON";

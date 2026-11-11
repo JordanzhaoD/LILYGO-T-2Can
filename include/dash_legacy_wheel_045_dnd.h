@@ -145,6 +145,7 @@ struct DashLegacyWheel045Diag
     uint8_t generatedCounter = 0;
     uint8_t generatedCrc = 0;
     uint8_t framesThisEpisode = 0;
+    uint8_t txAttemptsThisEpisode = 0;
     uint8_t consecutiveTxFailures = 0;
     uint32_t dasStatusMs = 0;
     uint32_t nativeMs = 0;
@@ -153,6 +154,7 @@ struct DashLegacyWheel045Diag
     uint32_t nativeInvalid = 0;
     uint32_t physicalInputRx = 0;
     uint32_t warningEpisodes = 0;
+    uint32_t recoveries = 0;
     uint32_t positiveTx = 0;
     uint32_t negativeTx = 0;
     uint32_t txFailed = 0;
@@ -364,13 +366,13 @@ struct DashLegacyWheel045Dnd
             if (framesThisEpisode_ < 0xFF)
                 framesThisEpisode_++;
             syncEpisodeDiag();
-            if (warningActive_ && episodeActive_ && framesThisEpisode_ < kMaxFramesPerEpisode)
+            if (warningActive_ && episodeActive_ && txAttemptsThisEpisode_ < kMaxFramesPerEpisode)
             {
                 retryAtMs_ = nowMs + kRetryDelayMs;
                 diag.retryAtMs = retryAtMs_;
                 setState(DashLegacyWheel045State::RetryWait, DashLegacyWheel045Block::None);
             }
-            else if (warningActive_ && framesThisEpisode_ >= kMaxFramesPerEpisode)
+            else if (warningActive_ && txAttemptsThisEpisode_ >= kMaxFramesPerEpisode)
                 setState(DashLegacyWheel045State::Idle, DashLegacyWheel045Block::EpisodeLimit);
             else
                 setState(DashLegacyWheel045State::Idle, DashLegacyWheel045Block::WarningClear);
@@ -406,13 +408,40 @@ struct DashLegacyWheel045Dnd
             setState(DashLegacyWheel045State::WaitingSource, DashLegacyWheel045Block::NoNative);
         }
 
+        // sess_118/119 field fingerprints: a transient mid-episode abort
+        // (confirm native lost to a capture/rx gap, counter jump after a gap,
+        // one-off send failure) used to latch Aborted for the REST of a
+        // multi-second warning episode — re-arm only happens on the next
+        // warning edge, so the feature read as "occasionally dead". Recover
+        // from transient aborts through the retry cooldown while attempt
+        // budget remains. PhysicalInput stays terminal: never race the human
+        // scroll. AutoDisarmed is a different state and never recovers here.
+        if (diag.state == DashLegacyWheel045State::Aborted &&
+            diag.blocked != DashLegacyWheel045Block::PhysicalInput)
+        {
+            if (!warningActive_ || !episodeActive_)
+                return false;
+            if (txAttemptsThisEpisode_ >= kMaxFramesPerEpisode)
+            {
+                setState(DashLegacyWheel045State::Idle,
+                         DashLegacyWheel045Block::EpisodeLimit);
+                return false;
+            }
+            if (lastAttemptMs_ != 0 &&
+                (int32_t)(nowMs - lastAttemptMs_) < (int32_t)kRetryDelayMs)
+                return false;
+            ++diag.recoveries;
+            setState(DashLegacyWheel045State::WaitingSource,
+                     DashLegacyWheel045Block::None);
+        }
+
         const bool send = warningActive_ && episodeActive_ &&
-                          framesThisEpisode_ < kMaxFramesPerEpisode &&
+                          txAttemptsThisEpisode_ < kMaxFramesPerEpisode &&
                           (diag.state == DashLegacyWheel045State::WaitingSource ||
                            diag.state == DashLegacyWheel045State::Idle);
         if (!send)
         {
-            if (warningActive_ && episodeActive_ && framesThisEpisode_ >= kMaxFramesPerEpisode &&
+            if (warningActive_ && episodeActive_ && txAttemptsThisEpisode_ >= kMaxFramesPerEpisode &&
                 diag.state == DashLegacyWheel045State::Idle)
                 setState(DashLegacyWheel045State::Idle, DashLegacyWheel045Block::EpisodeLimit);
             return false;
@@ -435,6 +464,11 @@ struct DashLegacyWheel045Dnd
         outData[7] = crc8J1850(outData, 7);
         memcpy(pendingData_, outData, sizeof(pendingData_));
         pendingTx_ = true;
+        // Budget counts emitted attempts, not confirmed frames: a recovery
+        // loop through lost confirms must stay bounded at the beta02 drift
+        // scale even when no confirm ever lands.
+        ++txAttemptsThisEpisode_;
+        lastAttemptMs_ = nowMs;
         diag.generatedCounter = generatedCounter;
         diag.generatedCrc = outData[7];
         setState(DashLegacyWheel045State::TxPending, DashLegacyWheel045Block::None);
@@ -497,6 +531,9 @@ struct DashLegacyWheel045Dnd
         warningActive_ = false;
         apActive_ = false;
         framesThisEpisode_ = 0;
+        txAttemptsThisEpisode_ = 0;
+        lastAttemptMs_ = 0;
+        diag.recoveries = 0;
         episodeDirectionPositive_ = true;
         nextDirectionPositive_ = true;
         episodeTxDelivered_ = false;
@@ -525,6 +562,8 @@ private:
     uint32_t retryAtMs_ = 0;
     uint8_t lastTxCounter_ = 0;
     uint8_t framesThisEpisode_ = 0;
+    uint8_t txAttemptsThisEpisode_ = 0;
+    uint32_t lastAttemptMs_ = 0;
     uint8_t consecutiveTxFailures_ = 0;
     bool nativeSeen_ = false;
     bool runtimeAllowed_ = false;
@@ -593,12 +632,14 @@ private:
     void resetEpisodeCounters()
     {
         framesThisEpisode_ = 0;
+        txAttemptsThisEpisode_ = 0;
         syncEpisodeDiag();
     }
 
     void syncEpisodeDiag()
     {
         diag.framesThisEpisode = framesThisEpisode_;
+        diag.txAttemptsThisEpisode = txAttemptsThisEpisode_;
         diag.directionPositive = episodeDirectionPositive_;
         diag.nextDirectionPositive = nextDirectionPositive_;
         diag.retryAtMs = retryAtMs_;
