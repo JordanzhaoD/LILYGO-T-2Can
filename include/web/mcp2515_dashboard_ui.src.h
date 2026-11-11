@@ -1281,6 +1281,35 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
+      <div class="setting-name"><span data-i18n="防封禁 Ban Shield ">防封禁 Ban Shield </span><span class="exp-badge" data-i18n="实验">实验</span></div>
+      <div class="setting-desc" data-i18n="0x368 档位遮罩实验：默认关闭；开启后选择实验臂，每次臂注入≤3帧后自动停止。被动 tripwire 常开记录 0x368 变化">0x368 档位遮罩实验：默认关闭；开启后选择实验臂，每次臂注入≤3帧后自动停止。被动 tripwire 常开记录 0x368 变化</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-ban-shield-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name" data-i18n="实验臂">实验臂</div>
+      <div class="setting-desc" data-i18n="B1-B5=五个档位位候选；B6=B1+加法校验兜底；B7=整字节探针；每次臂间冷却30秒">B1-B5=五个档位位候选；B6=B1+加法校验兜底；B7=整字节探针；每次臂间冷却30秒</div>
+    </div>
+    <select class="inp" id="def-ban-shield-arm" onchange="saveDefenseConfig()" style="width:130px">
+      <option value="0" selected data-i18n="关闭">关闭</option>
+      <option value="1">B1 · b6[7:5]</option>
+      <option value="2">B2 · b6[3:1]</option>
+      <option value="3">B3 · b1[6:4]</option>
+      <option value="4">B4 · b2[5:3]</option>
+      <option value="5">B5 · b3[4:2]</option>
+      <option value="6" data-i18n="校验和兜底">校验和兜底</option>
+      <option value="7" data-i18n="整字节探针">整字节探针</option>
+    </select>
+  </div>
+  <div class="diag-grid" style="margin:6px 0 4px">
+    <div class="diag-item"><span class="lbl" data-i18n="开关状态">开关状态</span><span class="v-dim" id="st-banforge-state" data-i18n="关闭">关闭</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="当前臂">当前臂</span><span class="v-dim" id="st-banforge-arm">--</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="已注入">已注入</span><span class="v-dim" id="st-banforge-injected">0</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="tripwire 命中">tripwire 命中</span><span class="v-dim" id="st-banforge-tripwire">0</span></div>
+  </div>
+  <div class="setting-row">
+    <div>
       <div class="setting-name" data-i18n="AP 注入门控">AP 注入门控</div>
       <div class="setting-desc" data-i18n="Legacy 仅在 0x399 AP 活动后才允许注入（服务端强制，fail-closed）">Legacy 仅在 0x399 AP 活动后才允许注入（服务端强制，fail-closed）</div>
     </div>
@@ -2230,6 +2259,11 @@ var I18N={
   'Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
   '忽略车辆 OTA 守卫 ':'Ignore Vehicle OTA Guard ','最大性能 ':'Max Performance ','爆闪开关 ':'Burst Switch ',
   '自动换挡 ':'Auto Shift ','速度免打扰 ':'Speed DND ','限速覆盖 ':'Limit Override ',
+  '防封禁 Ban Shield ':'Ban Shield ','实验臂':'Experiment Arm',
+  '0x368 档位遮罩实验：默认关闭；开启后选择实验臂，每次臂注入≤3帧后自动停止。被动 tripwire 常开记录 0x368 变化':'0x368 tier-mask experiment: off by default; enable, pick an arm — each arm injects at most 3 frames then auto-stops. Passive tripwire always on, logging 0x368 changes',
+  'B1-B5=五个档位位候选；B6=B1+加法校验兜底；B7=整字节探针；每次臂间冷却30秒':'B1-B5 = five tier-bit candidates; B6 = B1 + additive checksum fallback; B7 = full-byte probe; 30s cooldown between arms',
+  '校验和兜底':'Checksum Fallback','整字节探针':'Full-Byte Probe',
+  '开关状态':'State','当前臂':'Active Arm','已注入':'Injected','tripwire 命中':'Tripwire Hits','待命':'Standby',
   '未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。':'Unknown / invalid / SNA gears block injection by default; AP disconnect resets gate timing instantly. Enforced server-side in C++ (handlers.h) — the web UI cannot bypass it.',
 };
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
@@ -2728,6 +2762,8 @@ async function loadDefenseConfig(){
   var abortTgl=$('def-abort-guard-tgl');if(abortTgl)abortTgl.checked=!!d.abort_guard;
   var otaOvr=$('def-ota-ovr-tgl');if(otaOvr)otaOvr.checked=!!d.ota_guard_override;
   var jtTgl=$('def-jitter-tgl');if(jtTgl)jtTgl.checked=!!d.jitter;
+  var banTgl=$('def-ban-shield-tgl');if(banTgl)banTgl.checked=!!d.banForge;
+  var banArm=$('def-ban-shield-arm');if(banArm)banArm.value=''+(d.banForgeArm||0);
   var safety=d.legacyInjectionSafety||{};
   var abort=safety.abortGuard||{};
   // v1.19 8.3.6 JITTER 诊断：legacyInjectionSafety.jitter 对象（逐字移植自
@@ -3113,6 +3149,8 @@ async function saveDefenseConfig(){
   var abortTgl=$('def-abort-guard-tgl');
   var otaOvr=$('def-ota-ovr-tgl');
   var jtTgl=$('def-jitter-tgl');
+  var banTgl=$('def-ban-shield-tgl');
+  var banArm=$('def-ban-shield-arm');
   var data={
     enabled:master&&master.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
@@ -3122,9 +3160,11 @@ async function saveDefenseConfig(){
     ap_eap_compatible:apeap&&apeap.checked?'1':'0',
     abort_guard:abortTgl&&abortTgl.checked?'1':'0',
     ota_guard_override:otaOvr&&otaOvr.checked?'1':'0',
-    jitter:jtTgl&&jtTgl.checked?'1':'0'
+    jitter:jtTgl&&jtTgl.checked?'1':'0',
+    ban_forge:banTgl&&banTgl.checked?'1':'0'
   };
   if(dndSpd)data.dnd_speed=dndSpd.checked?'1':'0';
+  if(banArm)data.ban_forge_arm=banArm.value||'0';
   try{await postForm('/defense_config',data);}
   catch(e){loadDefenseConfig()}
   loadDefenseConfig();
@@ -4141,6 +4181,12 @@ function renderLegacyTruth(d){
   set('wheel-counter-state',`${wd.expectedCounterDuplicates||0} / ${wd.counterConflicts||0}`);
   set('wheel-echo-state',`${wd.ownEchoRx||0} / ${wd.gatewayMirrorRx||0}`);
   set('wheel-blocked-reason',wd.blockedReason||'--');
+  const bf=d.banForgeDiag||{};
+  const bfArms=['--','B1','B2','B3','B4','B5',T('校验和兜底'),T('整字节探针')];
+  set('st-banforge-state',bf.pref?(bf.armed?T('运行中'):T('待命')):T('关闭'));
+  set('st-banforge-arm',bf.arm?(bfArms[bf.arm]||('B'+bf.arm)):'--');
+  set('st-banforge-injected',''+(bf.injected||0));
+  set('st-banforge-tripwire',''+(bf.tripwireHits||0));
 }
 
 // ── Temp from system_status ────────────────────────────────

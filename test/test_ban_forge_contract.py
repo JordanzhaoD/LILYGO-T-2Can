@@ -191,5 +191,70 @@ class BanForgeGlueContractTests(unittest.TestCase):
                            "ban-forge glue appears before any P4 guard")
 
 
+class BanForgeUiContractTests(unittest.TestCase):
+    """UI pins for the 防封禁 Ban Shield row on the FSD 防护 page
+    (plan Task 4)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import re
+        cls.ui = (ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h").read_text()
+        match = re.search(r'id="pg-defense".*?id="pg-ota"', cls.ui, re.S)
+        assert match is not None, "pg-defense page not found"
+        cls.page = match.group(0)
+
+    def test_defense_page_has_ban_shield_controls(self):
+        self.assertIn('id="def-ban-shield-tgl"', self.page)
+        self.assertIn('id="def-ban-shield-arm"', self.page)
+        self.assertIn("防封禁 Ban Shield", self.page)
+        # experiment disclosure in the description
+        self.assertIn("实验", self.page)
+        # status chips
+        for chip in ("st-banforge-state", "st-banforge-arm",
+                     "st-banforge-injected", "st-banforge-tripwire"):
+            self.assertIn(f'id="{chip}"', self.ui)
+
+    def test_arm_selector_options_cover_zero_through_seven(self):
+        import re
+        match = re.search(r'<select[^>]*id="def-ban-shield-arm".*?</select>',
+                          self.page, re.S)
+        self.assertIsNotNone(match, "arm select not found")
+        body = match.group(0)
+        for value in range(8):
+            self.assertIn(f'value="{value}"', body)
+        # arms labelled B1-B5 plus the two fallback labels
+        self.assertIn("B1", body)
+        self.assertIn("B5", body)
+
+    def test_ui_js_saves_ban_shield_fields(self):
+        import re
+        match = re.search(r"async function saveDefenseConfig\(\)\{.*?\n\}",
+                          self.ui, re.S)
+        self.assertIsNotNone(match)
+        body = match.group(0)
+        self.assertIn("ban_forge", body)
+        self.assertIn("ban_forge_arm", body)
+
+    def test_ui_js_loads_and_refreshes_ban_shield(self):
+        import re
+        load = re.search(r"async function loadDefenseConfig\(\)\{.*?setText\('tb-exp'",
+                         self.ui, re.S)
+        self.assertIsNotNone(load)
+        self.assertIn("def-ban-shield-tgl", load.group(0))
+        self.assertIn("def-ban-shield-arm", load.group(0))
+        # chips populate from /status banForgeDiag
+        self.assertIn("banForgeDiag", self.ui)
+        for chip in ("st-banforge-state", "st-banforge-arm",
+                     "st-banforge-injected", "st-banforge-tripwire"):
+            self.assertIn(f"'{chip}'", self.ui)
+
+    def test_i18n_en_map_covers_ban_shield_strings(self):
+        # trailing-space key: the name sits inline before the 实验 badge
+        self.assertIn("'防封禁 Ban Shield ':", self.ui)
+        self.assertIn("'实验臂':", self.ui)
+        self.assertIn("'校验和兜底':", self.ui)
+        self.assertIn("'整字节探针':", self.ui)
+
+
 if __name__ == "__main__":
     unittest.main()

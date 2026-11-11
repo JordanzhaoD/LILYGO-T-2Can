@@ -2256,7 +2256,12 @@ class DashboardApiContractTests(unittest.TestCase):
             "Hold to Enable",
             "Hold to Disable",
             "PRIMARY",
-            "防封",
+            # 2026-11-12: narrowed from bare "防封" — the guard targeted the
+            # removed Atlas-era "防封保护" standalone branding. The new
+            # Ban Shield X feature is explicitly named 防封禁 Ban Shield on
+            # the defense page (owner decision), which the bare substring
+            # would wrongly forbid.
+            "防封保护",
         ]
         # 5.0.0-beta04 task 8c: strip the I18N dict — EN labels there are
         # translation values, not hardcoded default copy.
