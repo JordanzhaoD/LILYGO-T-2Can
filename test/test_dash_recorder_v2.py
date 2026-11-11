@@ -657,6 +657,109 @@ class DashRecorderV2FinalReviewTests(unittest.TestCase):
             "details the user just opened")
 
 
+class DashRecorderV2StreamUiTests(unittest.TestCase):
+    """beta13 stream arm UI: a toggle at the top of the recorder zone.
+
+    The toggle is the explicit user action that arms blackbox flash
+    streaming (default OFF). It paints from the /ring_status poll
+    (stream_armed) — one source of truth with the firmware state — and
+    saves through /defense_config exactly like every other persistent
+    switch on the board.
+    """
+
+    UI_SRC = ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.src = cls.UI_SRC.read_text(encoding="utf-8")
+
+    def test_toggle_in_recorder_zone(self) -> None:
+        zone = self.src[
+            self.src.index('<div id="can-recorder"'):
+            self.src.index('id="rec-v2-lock"')]
+        self.assertIn('id="rec-v2-arm-tgl"', zone,
+                      "the arm toggle lives in the recorder zone")
+        self.assertIn('onchange="rv2SaveArm()"', zone)
+
+    def test_toggle_paints_from_ring_status(self) -> None:
+        poll_at = self.src.index("function rv2Poll")
+        poll_body = self.src[poll_at:poll_at + 1400]
+        self.assertIn(
+            "s.stream_armed", poll_body,
+            "the poll paints the toggle from /ring_status stream_armed")
+
+    def test_save_posts_defense_config(self) -> None:
+        save_at = self.src.index("function rv2SaveArm")
+        save_body = self.src[save_at:save_at + 400]
+        self.assertIn("'/defense_config'", save_body)
+        self.assertIn("recbb_stream:", save_body)
+        self.assertIn("rv2Poll()", save_body,
+                      "save re-polls so the toggle mirrors firmware truth")
+
+    def test_i18n_labels_registered(self) -> None:
+        keys = ("黑盒串流", "取证",
+                "默认关闭：连续写闪存会周期性冻结芯片（速度闪烁根因）；需要取证时再开启")
+        for zh in keys:
+            self.assertIn(f"'{zh}':", self.src, f"{zh} registered in I18N")
+            self.assertIn(f'data-i18n="{zh}"', self.src,
+                          f"{zh} used as a data-i18n label")
+
+
+class DashRecorderV2StreamConfigTests(unittest.TestCase):
+    """beta13 stream arm persistence (defense_config slice).
+
+    The toggle rides the /defense_config pattern (ota_guard_override):
+    POST recbb_stream flips the live gate, dashSavePrefs persists it under
+    the dashboard namespace key `recbb_arm` (9 chars — the NVS ≤15 limit),
+    boot load re-arms before traffic matters, and the GET JSON mirrors the
+    state. Every dashboard call site is macro-gated: on non-P4 boards the
+    engine header compiles away and the dashboard must not reference it.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dash = DASH.read_text(encoding="utf-8")
+
+    def test_post_routes_and_live_gate(self) -> None:
+        body = self.dash[
+            self.dash.index("static void handleDefenseConfig()"):
+            self.dash.index("static void handleDefenseConfig()") + 3600]
+        self.assertIn('server.hasArg("recbb_stream")', body)
+        self.assertIn(
+            "dashRecV2SetStreamArmed(dashArgTruthy("
+            'server.arg("recbb_stream")))', body)
+
+    def test_boot_load_arms_from_nvs_default_off(self) -> None:
+        self.assertIn(
+            'dashRecV2SetStreamArmed(prefs.getBool("recbb_arm", false))',
+            self.dash, "boot re-arms from NVS; the stored default is OFF")
+
+    def test_save_persists_stream_arm(self) -> None:
+        self.assertIn('prefs.putBool("recbb_arm"', self.dash,
+                      "dashSavePrefs persists the gate")
+
+    def test_get_json_mirrors_stream_arm(self) -> None:
+        body = self.dash[
+            self.dash.index("static String dashDefenseConfigJson()"):
+            self.dash.index("static String dashDefenseConfigJson()") + 2600]
+        self.assertIn('"recbb_stream"', body)
+
+    def test_dashboard_call_sites_are_macro_gated(self) -> None:
+        # Exactly two live call sites (POST handler + boot load) plus one
+        # read (save). Each must sit inside its own DASH_RECORDER_V2 guard
+        # — on T2CAN the engine header compiles away entirely.
+        self.assertEqual(
+            self.dash.count("dashRecV2SetStreamArmed("), 2,
+            "POST handler + boot load are the only writers")
+        for at in [i for i in range(len(self.dash))
+                   if self.dash.startswith("dashRecV2SetStreamArmed(", i)]:
+            guard = self.dash.rfind("#if defined(DASH_RECORDER_V2)", 0, at)
+            end = self.dash.find("#endif", guard)
+            self.assertLess(guard, at)
+            self.assertLess(at, end,
+                            "call site must sit inside its macro guard")
+
+
 class DashRecorderV2CarCrashReproTests(unittest.TestCase):
     """Field finding 2026-11-01: in-car lock → flush-phase reboot, 6 orphan
     bins (one torn mid-batch, 88101 % 18 == 9), board unstable while driving.

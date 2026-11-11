@@ -645,6 +645,79 @@ class FinalReviewFixPassTests(unittest.TestCase):
         self.assertIn("if (blk < kRecBBBlockCount)", body)
 
 
+class BlackboxStreamGateTests(unittest.TestCase):
+    """6.0.0-beta13 stream arm gate.
+
+    Field P0 (sess_115/116/117, 2026-11-10, ON beta12): the flicker survived
+    the 4KB chunking because the freeze is the SUM of all guard windows —
+    each chunk op already overflows the bus2/bus3 RX queues at their frame
+    rates. The deeper finding: the blackbox streamed to flash from BOOT
+    (recBBInitPartition set recBBEnabled=true unconditionally), whether or
+    not anyone "recorded" — ~50KB/s full-rate traffic into 64KB staging,
+    flushed under flash guards every ~1.27s = ~40% duty chip-wide freeze
+    (identical 3640-row hole fingerprint in all three sessions). That is
+    the no-recording flicker AND the recording flicker: one bug. Physics
+    verdict: full-rate streaming and gap-free injection are mutually
+    exclusive on this chip.
+
+    The stream therefore ships DISARMED: an explicit, persisted user action
+    arms it (defense_config slice, NVS recbb_arm), a lock against a disarmed
+    stream is refused with a reason instead of silently capturing nothing,
+    and the status JSON says which state it is in. Evidence workflows move
+    to the v1 session recorder (PSRAM ring, zero flash during capture).
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.engine = ENGINE.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _fn(source: str, signature: str, span: int = 2200) -> str:
+        start = source.index(signature)
+        return source[start : start + span]
+
+    def test_stream_flag_ships_disarmed(self) -> None:
+        # Fail-closed default: no code path may arm the stream except the
+        # setter — init in particular must never flip it (that is the bug).
+        self.assertIn("static bool recBBStreamArmed = false;", self.engine)
+        self.assertNotIn("recBBStreamArmed = true", self.engine,
+                         "only dashRecV2SetStreamArmed writes the flag")
+
+    def test_stream_arm_setter_and_getter(self) -> None:
+        setter = self._fn(self.engine, "static void dashRecV2SetStreamArmed(bool ")
+        self.assertIn("recBBStreamArmed = on;", setter)
+        # Disarm mid-buffer must not strand staging: the writer's 250ms tick
+        # drains whatever landed before the gate closed.
+        self.assertIn("static bool dashRecV2StreamArmed()", self.engine)
+
+    def test_submit_gated_on_stream_arm(self) -> None:
+        body = self._fn(self.engine, "static void dashRecV2Submit(")
+        self.assertIn(
+            "if (!recBBEnabled || !recBBStreamArmed || !recBBStage[0])", body,
+            "the hot path is the gate: disarmed = zero staging, zero flash")
+        self.assertLess(
+            body.index("recBBStreamArmed"), body.index("RecRingFrame r;"),
+            "the gate stands before any per-frame work")
+
+    def test_lock_refused_when_disarmed(self) -> None:
+        # A one-tap lock against a disarmed stream would arm, count down,
+        # and emit an empty/near-empty session — the zero-data field
+        # complaint wearing a different hat. Refuse with a reason the UI
+        # already knows how to surface (last_error).
+        body = self._fn(self.engine, "static bool dashRecV2LockRequest(", 2000)
+        self.assertIn("if (!recBBStreamArmed)", body)
+        self.assertIn('err = "blackbox stream not armed"', body)
+        self.assertGreater(
+            body.index("if (!recBBStreamArmed)"),
+            body.index("if (!recBBEnabled)"),
+            "the engine-disabled refusal keeps priority")
+
+    def test_status_reports_stream_arm(self) -> None:
+        body = self._fn(self.engine, "static String dashRecV2StatusJson(", 3400)
+        self.assertIn('"stream_armed"', body)
+        self.assertIn("dashRecV2StreamArmed()", body)
+
+
 class DeadCodeRemovalTests(unittest.TestCase):
     """Task 6: the ring/flush/reclaim/orphan era is deleted, not disabled.
 

@@ -1934,6 +1934,11 @@ static void dashSavePrefs()
     prefs.putBool("def_apeap", dashApEapCompatible);
     prefs.putBool("def_abort", dashAbortGuardEnabled);
     prefs.putBool("otg_ovr", dashOtaGuardOverrideEnabled());
+#if defined(DASH_RECORDER_V2)
+    // beta13 stream arm gate: blackbox flash streaming ships OFF (the
+    // speed-flicker root cause); this persists the explicit user arm.
+    prefs.putBool("recbb_arm", dashRecV2StreamArmed());
+#endif
     // def_mininj / def_instant / def_se writes removed with the #108
     // steer-jerk defense in 4.5.0-beta02; stale NVS values are ignored.
     // apr_on (coordinator) became jtr_on with the JITTER swap in beta15.
@@ -2185,6 +2190,11 @@ static void dashLoadPrefs()
     // false — the guard blocks injection exactly as before until the user
     // flips the「忽略车辆 OTA 守卫」toggle on the FSD defense page.
     dashOtaGuardSetOverride(prefs.getBool("otg_ovr", false));
+#if defined(DASH_RECORDER_V2)
+    // beta13: re-arm the blackbox stream from NVS (default OFF — fail
+    // closed; a fresh flash never streams to flash on its own).
+    dashRecV2SetStreamArmed(prefs.getBool("recbb_arm", false));
+#endif
     // def_mininj / def_instant / def_se loads removed with the #108 defense.
     // beta15: the coordinator's apr_on key died with the module — actively
     // removed so a stale "on" from beta14 never leaks into the JITTER switch
@@ -4331,6 +4341,10 @@ static String dashDefenseConfigJson()
     j += ",\"ban_shield\":";
     j += dashHandler ? ((bool)dashHandler->banShieldEnable ? "true" : "false") : (nvsBanShieldEnable ? "true" : "false");
     dashAppendLegacySafetyControlsJson(j);
+#if defined(DASH_RECORDER_V2)
+    j += ",\"recbb_stream\":";
+    j += dashRecV2StreamArmed() ? "true" : "false";
+#endif
     j += "}";
     return j;
 }
@@ -4344,7 +4358,8 @@ static void handleDefenseConfig()
         server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
         server.hasArg("abort_guard") ||
         server.hasArg("ota_guard_override") ||
-        server.hasArg("jitter"))
+        server.hasArg("jitter") ||
+        server.hasArg("recbb_stream"))
     {
         bool prevDndVolume = dashDndVolume;
         bool prevDndSpeed = dashDndSpeed;
@@ -4391,6 +4406,14 @@ static void handleDefenseConfig()
         // re-arms automatically when the gate reopens.
         if (server.hasArg("jitter"))
             dashJitterEnabled = dashArgTruthy(server.arg("jitter"));
+#if defined(DASH_RECORDER_V2)
+        // beta13 stream arm gate: flipping this ON is the explicit user
+        // action that starts blackbox flash streaming (default OFF — the
+        // always-on stream was the speed-flicker root cause; see
+        // BlackboxStreamGateTests). Applies immediately at the submit gate.
+        if (server.hasArg("recbb_stream"))
+            dashRecV2SetStreamArmed(dashArgTruthy(server.arg("recbb_stream")));
+#endif
         nvsBanShieldEnable = dashDefenseEnabled;
         if (dashHandler)
             dashHandler->banShieldEnable = dashDefenseEnabled;

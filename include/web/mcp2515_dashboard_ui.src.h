@@ -1714,6 +1714,15 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
        zone 3 sessions. Mobile-first: big touch targets, no hex input. -->
   <div data-cap="recorderV2">
     <div class="card">
+      <div class="setting-row">
+        <div>
+          <div class="setting-name"><span data-i18n="黑盒串流">黑盒串流</span><span class="exp-badge" data-i18n="取证">取证</span></div>
+          <div class="setting-desc" data-i18n="默认关闭：连续写闪存会周期性冻结芯片（速度闪烁根因）；需要取证时再开启">默认关闭：连续写闪存会周期性冻结芯片（速度闪烁根因）；需要取证时再开启</div>
+        </div>
+        <label class="tgl"><input type="checkbox" id="rec-v2-arm-tgl" onchange="rv2SaveArm()"><div class="tgl-track"></div></label>
+      </div>
+    </div>
+    <div class="card">
       <div class="card-title" data-i18n="历史环形缓冲">历史环形缓冲</div>
       <div class="diag-grid">
         <div class="diag-item"><span class="lbl" data-i18n="已覆盖">已覆盖</span><span class="v-dim" id="rv2-span">-- s</span></div>
@@ -2058,6 +2067,7 @@ var I18N={
   '已拦截':'Blocked','条':'items','清空':'Clear',
   'CAN 引脚配置':'CAN Pin Config','实时帧':'Live Frames','记录器':'Recorder',
   '一键锁定':'Lock Now','回溯窗口':'Lookback','录制会话':'Sessions',
+  '黑盒串流':'Blackbox stream','取证':'Forensics','默认关闭：连续写闪存会周期性冻结芯片（速度闪烁根因）；需要取证时再开启':'Off by default: continuous flash writes freeze the chip periodically (the speed-flicker root cause); arm only when capturing evidence',
   '下载CSV':'CSV','下载BIN':'BIN','删除会话':'Delete','高级设置':'Advanced',
   '历史环形缓冲':'Ring History','已覆盖':'Coverage','剩余空间':'Free Space',
   '暂无会话':'No sessions yet','锁定后回溯段立即封存，续录 30 秒后自动生成会话文件':'Seals the lookback span at once, records 30 s more, then writes the session file',
@@ -3889,6 +3899,7 @@ async function rv2Poll(){
   try{
     var s=await fetchJson('/ring_status');
     if(!s||!s.enabled)return;
+    var arm=$('rec-v2-arm-tgl');if(arm)arm.checked=!!s.stream_armed;
     setText('rv2-span',Math.floor(s.span_s||0)+' s');
     setText('rv2-fps-a',String(s.fps?s.fps.a:0));
     setText('rv2-fps-b',String(s.fps?s.fps.b:0));
@@ -3907,6 +3918,11 @@ async function rv2Poll(){
   }catch(e){}
 }
 function rv2StartPoll(){if(!CAP.recorderV2Available)return;rv2Poll();rv2LoadSessions();if(!RV2.timer)RV2.timer=setInterval(rv2Poll,2000)}
+async function rv2SaveArm(){
+  var a=$('rec-v2-arm-tgl');
+  try{await postForm('/defense_config',{recbb_stream:a&&a.checked?'1':'0'})}catch(e){}
+  rv2Poll();
+}
 async function rv2Lock(){
   var m=rv2BusMask();
   if(!m){var n=$('rv2-lock-note');if(n)n.textContent=T('至少选择一条总线');return}

@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [6.0.0-beta13] - 2026-11-11
+
+### Changed (P4)
+
+- **P4: blackbox flash streaming now ships OFF by default — the
+  with-recording AND no-recording speed flicker were one bug.** Field
+  sessions 115/116/117 (still flickering ON beta12) proved the 4KB
+  chunking could not help: the freeze is the sum of all flash-guard
+  windows, and each 4KB op already overflows the bus2/bus3 RX queues at
+  their frame rates. The deeper finding: the blackbox streamed to flash
+  from BOOT regardless of any recording — `recBBInitPartition` set the
+  engine enabled unconditionally, so ~50KB/s of full-rate traffic filled
+  a 64KB staging buffer every ~1.27s and the guard-windowed erase+write
+  bursts froze the whole chip ~40% duty (identical 3640-row hole
+  fingerprint in all three sessions). During each freeze our injected
+  0x3EE offset/keep-alive frames vanished while the car's offset-OFF
+  frames kept flowing, aging the consumer's offset out: the 96→80 km/h
+  speed flicker and the SR steering-wheel icon flicker. Full-rate
+  streaming and gap-free injection are mutually exclusive on this chip,
+  so the stream now needs an explicit, persisted arm: a "blackbox
+  streaming" toggle (recorder page, /defense_config `recbb_stream`, NVS
+  `recbb_arm`) that defaults OFF and fails closed on every fresh flash.
+  A one-tap lock against a disarmed stream is refused with "blackbox
+  stream not armed" instead of silently capturing nothing, and
+  /ring_status reports `stream_armed`. Evidence workflows move to the
+  v1 session recorder (PSRAM ring, zero flash writes during capture).
+
 ## [6.0.0-beta12] - 2026-11-08
 
 ### Fixed (P4)

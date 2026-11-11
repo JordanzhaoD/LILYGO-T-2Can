@@ -97,6 +97,13 @@ static_assert(sizeof(RecBBHeader) == 32, "blackbox header layout is frozen");
 
 static const esp_partition_t *recBBPart = nullptr;
 static bool recBBEnabled = false;
+// 6.0.0-beta13 stream arm gate: recBBEnabled says the ENGINE is up
+// (partition found, staging allocated, writer task running); this flag says
+// the hot path may stage frames. It ships false — the always-on stream was
+// the speed-flicker root cause (see BlackboxStreamGateTests) — and only the
+// persisted user preference (defense_config recbb_stream → NVS recbb_arm)
+// ever sets it. Fail-closed by construction: dashRecV2Init never touches it.
+static bool recBBStreamArmed = false;
 static uint32_t recBBWriteOff = 0; // next grid byte to write (writer lands in task 3)
 
 // Grid addressing: header-anchored, block edges deliberately ignored.
@@ -748,13 +755,36 @@ static void dashRecV2Init()
     recV2LedgerBoot();
 }
 
+// Stream arm gate (6.0.0-beta13). Arming starts staging on the next frame;
+// disarming stops it — the writer's 250ms tick still drains whatever landed
+// in staging before the gate closed (pre-disarm history, a few KB at most),
+// then finds both buffers empty and goes idle: zero flash traffic while
+// disarmed, so the chip never enters the guard-window freeze regime that
+// caused the speed flicker.
+static void dashRecV2SetStreamArmed(bool on)
+{
+    if (recBBStreamArmed == on)
+        return;
+    recBBStreamArmed = on;
+    Serial.printf("[REC2] blackbox stream %s (flash writes %s)\n",
+                  on ? "armed" : "disarmed", on ? "active" : "stopped");
+}
+
+static bool dashRecV2StreamArmed()
+{
+    return recBBStreamArmed;
+}
+
 // Hot path: one frame into the blackbox staging grid. Never blocks; when
 // both staging buffers are full (writer behind, or paused on a full grid)
 // the frame drops and the overflow counter keeps the loss visible in every
-// session meta (badge semantics preserved from the ring era).
+// session meta (badge semantics preserved from the ring era). Disarmed
+// (beta13 default) the gate returns before any work: no staging fill, no
+// flush, no flash guard windows — the ingest path is untouched by the
+// recorder until the user explicitly arms the stream.
 static void dashRecV2Submit(const CanFrame &f, uint8_t busTag, char dir)
 {
-    if (!recBBEnabled || !recBBStage[0])
+    if (!recBBEnabled || !recBBStreamArmed || !recBBStage[0])
         return;
     RecRingFrame r;
     r.tsUs = static_cast<uint32_t>(esp_timer_get_time());
@@ -1265,6 +1295,11 @@ static bool dashRecV2LockRequest(uint32_t preMs, uint32_t postMs,
         err = "recorder v2 disabled";
         return false;
     }
+    if (!recBBStreamArmed)
+    {
+        err = "blackbox stream not armed";
+        return false;
+    }
     if (!busMask)
     {
         err = "bus_mask must select at least one bus";
@@ -1339,6 +1374,8 @@ static String dashRecV2StatusJson()
     String j = "{";
     j += R"JSON("enabled":)JSON";
     j += String(recBBEnabled ? "true" : "false");
+    j += R"JSON(,"stream_armed":)JSON";
+    j += String(dashRecV2StreamArmed() ? "true" : "false");
     j += R"JSON(,"paused":)JSON";
     j += String(recBBPaused ? "true" : "false");
     j += R"JSON(,"span_s":)JSON";
