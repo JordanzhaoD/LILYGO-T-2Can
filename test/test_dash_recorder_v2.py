@@ -739,10 +739,15 @@ class DashRecorderV2StreamConfigTests(unittest.TestCase):
                       "dashSavePrefs persists the gate")
 
     def test_get_json_mirrors_stream_arm(self) -> None:
+        # Extract to the next function (fixed 2600-char window broke when
+        # the P4 banForge keys were inserted above the DASH_RECORDER_V2
+        # block — the JSON builder is longer now, not wrong). The key in
+        # C++ source is escaped, and the window no longer spills into
+        # handleDefenseConfig's plain-quote hasArg form.
         body = self.dash[
             self.dash.index("static String dashDefenseConfigJson()"):
-            self.dash.index("static String dashDefenseConfigJson()") + 2600]
-        self.assertIn('"recbb_stream"', body)
+            self.dash.index("static void handleDefenseConfig()")]
+        self.assertIn('\\"recbb_stream\\"', body)
 
     def test_dashboard_call_sites_are_macro_gated(self) -> None:
         # Exactly two live call sites (POST handler + boot load) plus one
