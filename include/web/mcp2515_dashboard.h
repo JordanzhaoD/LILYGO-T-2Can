@@ -1364,7 +1364,9 @@ static void mcpDashOnTxFrame(const CanFrame &frame, bool ok)
     // Single TX capture point: this callback fires once per transmitted
     // frame (driver.send → onSendFrame). Hooking dashRecordCanFrame's other
     // call sites would double-count TX (AP auto-restore also lands here).
-    dashRecV2Submit(frame, (frame.bus & CAN_BUS_PARTY) ? kRecV2BusB : kRecV2BusA,
+    // 3-way bus mapping matching the v1 CSV export: PT frames are bus C.
+    dashRecV2Submit(frame,
+                    frame.bus == CAN_BUS_PT ? kRecV2BusC : ((frame.bus & CAN_BUS_PARTY) ? kRecV2BusB : kRecV2BusA),
                     ok ? 'T' : 'E');
 #endif
 
