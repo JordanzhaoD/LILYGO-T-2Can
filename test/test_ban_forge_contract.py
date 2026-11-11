@@ -255,6 +255,26 @@ class BanForgeUiContractTests(unittest.TestCase):
         self.assertIn("'校验和兜底':", self.ui)
         self.assertIn("'整字节探针':", self.ui)
 
+    def test_ban_shield_ui_is_capability_gated(self):
+        """Non-P4 builds must not ship a dead toggle: the rows carry
+        data-cap="banForge", the CAP default is false, and capEnabled
+        knows the key (kDashCan3Available contract)."""
+        self.assertIn('data-cap="banForge"', self.page)
+        self.assertIn("banForgeAvailable:false", self.ui)
+        self.assertIn("if(name==='banForge')return !!CAP.banForgeAvailable;",
+                      self.ui)
+
+    def test_capability_flag_is_p4_only_and_emitted(self):
+        """Server side: kDashBanForgeAvailable true only under
+        DRIVER_P4_3CAN, emitted unconditionally as "banForgeAvailable"
+        so every non-P4 build keeps a byte-identical UI surface."""
+        source = DASHBOARD.read_text()
+        self.assertIn("static constexpr bool kDashBanForgeAvailable = true;",
+                      source)
+        self.assertIn("static constexpr bool kDashBanForgeAvailable = false;",
+                      source)
+        self.assertIn('"banForgeAvailable"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

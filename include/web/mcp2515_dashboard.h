@@ -331,6 +331,16 @@ static constexpr bool kDashAutoshiftAvailable = true;
 static constexpr bool kDashAutoshiftAvailable = false;
 #endif
 
+// Ban Shield X (P4 only): the 0x368 forge experiment rows on the defense
+// page exist on the surface only when the firmware says so. Emitted
+// unconditionally (false elsewhere) so every non-P4 build keeps a
+// byte-identical UI surface — same contract as kDashAutoshiftAvailable.
+#if defined(DRIVER_P4_3CAN)
+static constexpr bool kDashBanForgeAvailable = true;
+#else
+static constexpr bool kDashBanForgeAvailable = false;
+#endif
+
 static constexpr bool kDashLightingBusSupported = kDashCan2Available;
 static constexpr bool kDashServiceModeSupported = kDashCan2Available;
 static constexpr bool kDashStalkTestSupported = kDashCan2Available;
@@ -355,6 +365,10 @@ static String dashCapabilitiesJson()
     j += "autoshiftAvailable";
     j += "\":"; // "autoshiftAvailable":
     j += kDashAutoshiftAvailable ? "true" : "false";
+    j += ",\"";
+    j += "banForgeAvailable";
+    j += "\":"; // "banForgeAvailable":
+    j += kDashBanForgeAvailable ? "true" : "false";
     j += ",\"";
     j += "lightingBusSupported";
     j += "\":"; // "lightingBusSupported":

@@ -1279,6 +1279,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
       <div class="tgl-track"></div>
     </label>
   </div>
+  <div data-cap="banForge">
   <div class="setting-row">
     <div>
       <div class="setting-name"><span data-i18n="防封禁 Ban Shield ">防封禁 Ban Shield </span><span class="exp-badge" data-i18n="实验">实验</span></div>
@@ -1307,6 +1308,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="diag-item"><span class="lbl" data-i18n="当前臂">当前臂</span><span class="v-dim" id="st-banforge-arm">--</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="已注入">已注入</span><span class="v-dim" id="st-banforge-injected">0</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="tripwire 命中">tripwire 命中</span><span class="v-dim" id="st-banforge-tripwire">0</span></div>
+  </div>
   </div>
   <div class="setting-row">
     <div>
@@ -2267,7 +2269,7 @@ var I18N={
   '未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。':'Unknown / invalid / SNA gears block injection by default; AP disconnect resets gate timing instantly. Enforced server-side in C++ (handlers.h) — the web UI cannot bypass it.',
 };
 function T(zh){return lang==='en'&&I18N[zh]?I18N[zh]:zh}
-var CAP={singleCan:false,can2Available:true,can3Available:false,lightingBusSupported:true,serviceModeSupported:true,stalkTestSupported:true,bus2SnifferSupported:true,fsdActivation:true,speedStrategy:true,driveProfile:true,networkSettings:true,otaUpdate:true,canDiagnostics:true,recorderV2Available:false,autoshiftAvailable:false};
+var CAP={singleCan:false,can2Available:true,can3Available:false,lightingBusSupported:true,serviceModeSupported:true,stalkTestSupported:true,bus2SnifferSupported:true,fsdActivation:true,speedStrategy:true,driveProfile:true,networkSettings:true,otaUpdate:true,canDiagnostics:true,recorderV2Available:false,autoshiftAvailable:false,banForgeAvailable:false};
 var PRODUCT_SINGLE_CAN_NAME='Atlas Single CAN';
 var PRODUCT_DUAL_CAN_NAME='Atlas T-2CAN';
 function isSingleCan(){return !!CAP.singleCan}
@@ -2284,6 +2286,7 @@ function capEnabled(name){
   if(name==='lighting')return !!CAP.lightingBusSupported;
   if(name==='recorderV2')return !!CAP.recorderV2Available;
   if(name==='autoshift')return !!CAP.autoshiftAvailable;
+  if(name==='banForge')return !!CAP.banForgeAvailable;
   return true;
 }
 function applyCapabilities(c){
