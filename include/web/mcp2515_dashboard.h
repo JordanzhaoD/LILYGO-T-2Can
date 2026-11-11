@@ -4466,7 +4466,9 @@ static void handleDefenseConfig()
         server.hasArg("abort_guard") ||
         server.hasArg("ota_guard_override") ||
         server.hasArg("jitter") ||
-        server.hasArg("recbb_stream"))
+        server.hasArg("recbb_stream") ||
+        server.hasArg("ban_forge") ||
+        server.hasArg("ban_forge_arm"))
     {
         bool prevDndVolume = dashDndVolume;
         bool prevDndSpeed = dashDndSpeed;
@@ -4527,40 +4529,46 @@ static void handleDefenseConfig()
 #if defined(DRIVER_P4_3CAN)
         // Ban Shield X (2026-11-12): toggle = forge pref (the passive
         // 0x368 tripwire runs regardless); selector = experimental arm.
-        // Pref off or arm 0 disarms and restores LISTEN_ONLY (autoshift
-        // idle); otherwise the selected arm is requested — the core
-        // enforces budget/wallclock/cooldown internally.
-        if (server.hasArg("ban_forge"))
+        // Final-review fix: the arm request runs ONLY when this POST
+        // carries a ban field — an unrelated defense save must never
+        // re-arm the experiment from persisted state (injecting 0x368
+        // frames requires an explicit gesture, every time).
+        const bool banTouched = server.hasArg("ban_forge") ||
+                                server.hasArg("ban_forge_arm");
+        if (banTouched)
         {
-            const bool banOn = dashArgTruthy(server.arg("ban_forge"));
-            if (banOn != (t2canBanForgePrefGet() != 0))
-                dashLog(banOn ? "[BANFORGE] pref on" : "[BANFORGE] pref off");
-            t2canBanForgePrefSet(banOn ? 1 : 0);
-            dashBanForgeSetPref(banOn);
-        }
-        uint8_t banArmSel = 0;
-        if (dashArgUIntInRange("ban_forge_arm", 0, 7, banArmSel))
-            t2canBanForgeArmSet(banArmSel);
-        const bool banForgeOn = t2canBanForgePrefGet() != 0;
-        const uint8_t banArmWanted = t2canBanForgeArmGet();
-        if (!banForgeOn || banArmWanted == 0)
-        {
-            if (dashBanForgeActive())
-                dashLog("[BANFORGE] disarmed by config");
-            dashBanForgeRequestArm(0);
-            if (!(dashAsPermit.master && dashAsPermit.armed))
-                t2canAutoshiftModeDirty();  // restore LISTEN_ONLY
-        }
-        else if (dashBanForgeRequestArm(banArmWanted))
-        {
-            dashLog(String("[BANFORGE] arm B") + String(banArmWanted) +
-                    String(" armed (max 3 injections, 600ms window)"));
-            t2canAutoshiftModeDirty();  // flip TWAI2 to NORMAL on can_rt
-        }
-        else
-        {
-            dashLog(String("[BANFORGE] arm B") + String(banArmWanted) +
-                    String(" rejected (armed or cooldown)"));
+            if (server.hasArg("ban_forge"))
+            {
+                const bool banOn = dashArgTruthy(server.arg("ban_forge"));
+                if (banOn != (t2canBanForgePrefGet() != 0))
+                    dashLog(banOn ? "[BANFORGE] pref on" : "[BANFORGE] pref off");
+                t2canBanForgePrefSet(banOn ? 1 : 0);
+                dashBanForgeSetPref(banOn);
+            }
+            uint8_t banArmSel = 0;
+            if (dashArgUIntInRange("ban_forge_arm", 0, 7, banArmSel))
+                t2canBanForgeArmSet(banArmSel);
+            const bool banForgeOn = t2canBanForgePrefGet() != 0;
+            const uint8_t banArmWanted = t2canBanForgeArmGet();
+            if (!banForgeOn || banArmWanted == 0)
+            {
+                if (dashBanForgeActive())
+                    dashLog("[BANFORGE] disarmed by config");
+                dashBanForgeRequestArm(0);
+                if (!(dashAsPermit.master && dashAsPermit.armed))
+                    t2canAutoshiftModeDirty();  // restore LISTEN_ONLY
+            }
+            else if (dashBanForgeRequestArm(banArmWanted))
+            {
+                dashLog(String("[BANFORGE] arm B") + String(banArmWanted) +
+                        String(" armed (max 3 injections, 600ms window)"));
+                t2canAutoshiftModeDirty();  // flip TWAI2 to NORMAL on can_rt
+            }
+            else
+            {
+                dashLog(String("[BANFORGE] arm B") + String(banArmWanted) +
+                        String(" rejected (armed or cooldown)"));
+            }
         }
 #endif
         dashApplyRuntimeState();

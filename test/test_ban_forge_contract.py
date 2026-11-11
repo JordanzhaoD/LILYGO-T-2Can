@@ -175,6 +175,27 @@ class BanForgeGlueContractTests(unittest.TestCase):
         self.assertIn('dashArgUIntInRange("ban_forge_arm", 0, 7', source)
         self.assertIn("dashBanForgeRequestArm(", source)
 
+    def test_unrelated_defense_saves_do_not_rearm(self):
+        """Final-review Important finding: an unrelated /defense_config
+        save (any other toggle) must never re-arm the forge from
+        persisted state — injecting 0x368 frames requires the POST itself
+        to carry a ban field (explicit gesture, fail-closed)."""
+        import re
+        body = self._body(DASHBOARD.read_text(),
+                          r"static void handleDefenseConfig\(\)")
+        # 1. the dispatch gate admits ban-only posts
+        gate = body[:body.index("prevDndVolume")]
+        self.assertIn('server.hasArg("ban_forge")', gate,
+                      "ban-only posts never enter the handler block")
+        # 2. the arm request runs only inside a banTouched guard
+        #    (formatting-tolerant: clang-format may wrap the declaration)
+        self.assertIn("const bool banTouched", body)
+        before = body[:body.index("banTouched")]
+        after = body[body.index("banTouched"):]
+        self.assertNotIn("dashBanForgeRequestArm(", before,
+                         "requestArm reachable without a posted ban field")
+        self.assertIn("dashBanForgeRequestArm(", after)
+
     def test_dash_log_events_exist(self):
         source = DASHBOARD.read_text()
         self.assertIn("[BANFORGE]", source)
