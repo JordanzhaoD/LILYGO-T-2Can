@@ -19,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HEADER = ROOT / "include" / "dash_ban_forge.h"
 DASHBOARD = ROOT / "include" / "web" / "mcp2515_dashboard.h"
+MAIN = ROOT / "src" / "main.cpp"
 NATIVE_MAIN = ROOT / "test" / "test_native_ban_forge_main.cpp"
 
 CLANG = "clang++"
@@ -72,6 +73,122 @@ class BanForgeContractTests(unittest.TestCase):
                                  text=True, timeout=30)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             self.assertIn("ALL PASS", run.stdout)
+
+
+class BanForgeGlueContractTests(unittest.TestCase):
+    """Source pins for the runtime glue (plan Task 3): CanC send path,
+    wantTx OR, disarm->LISTEN_ONLY restore, NVS persistence in the
+    "t2can" namespace (as_master pattern), /defense_config wiring, and
+    the /status banForgeDiag JSON block."""
+
+    def _body(self, source, signature):
+        import re
+        match = re.search(signature + r".*?\n\}", source, re.DOTALL)
+        self.assertIsNotNone(match, f"body not found for {signature}")
+        return match.group(0)
+
+    def test_dashboard_includes_core_header(self):
+        source = DASHBOARD.read_text()
+        self.assertIn("#include \"dash_ban_forge.h\"", source)
+        self.assertIn("#include \"dash_autoshift.h\"", source)
+
+    def test_want_tx_or_gates_bus_mode(self):
+        """wantTx must be the OR: autoshift permit OR forge active —
+        and nothing else may enter the expression (OR-only rule)."""
+        body = self._body(MAIN.read_text(),
+                          r"static bool t2canAutoshiftApplyBusMode\(\)")
+        self.assertIn(
+            "(dashAsPermit.master && dashAsPermit.armed) || dashBanForgeActive()",
+            body)
+
+    def test_send_helper_targets_872_dlc8_pt(self):
+        """Mirror of t2canAutoshiftSendCan3 for the forge: decimal id
+        872, dlc 8, CAN_BUS_PT, tertiary driver send, TX-mode gated."""
+        body = self._body(MAIN.read_text(),
+                          r"bool t2canBanForgeSendCan3\(const uint8_t d\[8\]\)")
+        self.assertIn("f.id = 872", body)
+        self.assertIn("f.dlc = 8", body)
+        self.assertIn("f.bus = CAN_BUS_PT", body)
+        self.assertIn("appDriverTertiary->send(f)", body)
+        self.assertIn("t2canAsCan3TxMode", body)
+
+    def test_sniff_hook_runs_core_and_reports_results(self):
+        """The CanC sniff hook feeds every frame to the core and, when
+        an injection is requested, reports the send result either way —
+        failure still consumes budget."""
+        source = DASHBOARD.read_text()
+        self.assertIn("dashBanForgeOnFrame(tagged.id, tagged.dlc, "
+                      "tagged.data,", source)
+        self.assertIn("dashBanForgeOnInjectResult(sent, millis())", source)
+
+    def test_disarm_restores_listen_only(self):
+        """Disarm (explicit or auto) with autoshift idle must dirty the
+        bus mode so TWAI2 returns to LISTEN_ONLY."""
+        body = self._body(DASHBOARD.read_text(),
+                          r"static void handleDefenseConfig\(\)")
+        self.assertIn("dashBanForgeRequestArm(0)", body)
+        self.assertIn("t2canAutoshiftModeDirty()", body)
+
+    def test_nvs_persistence_uses_t2can_namespace(self):
+        """banForge/banForgeArm persist in ns "t2can" (u8, as_master
+        pattern) — single source of truth, loadable at boot from
+        main.cpp."""
+        source = MAIN.read_text()
+        self.assertIn('nvs_set_u8(handle, "banForge"', source)
+        self.assertIn('nvs_set_u8(handle, "banForgeArm"', source)
+        self.assertIn('nvs_get_u8(handle, "banForge"', source)
+        self.assertIn('nvs_get_u8(handle, "banForgeArm"', source)
+        # keys fit the 15-char NVS limit
+        self.assertLessEqual(len("banForgeArm"), 15)
+
+    def test_boot_restores_pref_but_not_armed(self):
+        """Boot: SetPref(loaded) only — the runtime arm flag must stay
+        false until an explicit re-arm (fail-closed across reboots)."""
+        source = MAIN.read_text()
+        self.assertIn("dashBanForgeSetPref(t2canBanForgePrefGet() != 0)",
+                      source)
+        boot_block = self._boot_block(source)
+        self.assertNotIn("dashBanForgeRequestArm", boot_block)
+
+    def _boot_block(self, source):
+        import re
+        match = re.search(
+            r"#ifdef DRIVER_P4_3CAN\n    if \(appBusEnable & 0x04\).*?#endif",
+            source, re.DOTALL)
+        self.assertIsNotNone(match, "boot P4 block not found")
+        return match.group(0)
+
+    def test_status_exposes_ban_forge_diag(self):
+        source = DASHBOARD.read_text()
+        self.assertIn('"banForgeDiag"', source)
+        for key in ('"pref"', '"armed"', '"arm"', '"injected"', '"armsRun"',
+                    '"tripwireHits"', '"lastDeviantMs"'):
+            self.assertIn(key, source)
+
+    def test_defense_config_reports_and_applies(self):
+        """GET returns banForge/banForgeArm; the form save path parses
+        them and applies pref + arm at submit time."""
+        source = DASHBOARD.read_text()
+        self.assertIn('\\"banForge\\":', source)      # GET JSON (C-escaped)
+        self.assertIn('\\"banForgeArm\\":', source)   # GET JSON (C-escaped)
+        self.assertIn('server.hasArg("ban_forge")', source)
+        self.assertIn('dashArgUIntInRange("ban_forge_arm", 0, 7', source)
+        self.assertIn("dashBanForgeRequestArm(", source)
+
+    def test_dash_log_events_exist(self):
+        source = DASHBOARD.read_text()
+        self.assertIn("[BANFORGE]", source)
+
+    def test_glue_is_p4_gated(self):
+        """All new dashboard glue must sit inside DRIVER_P4_3CAN guards
+        (T2CAN byte-identical red line): count guard opens vs closes
+        around the new tokens."""
+        source = DASHBOARD.read_text()
+        first_guard = source.find("#if defined(DRIVER_P4_3CAN)")
+        first_token = source.find("dashBanForgeOnFrame")
+        self.assertNotEqual(first_token, -1, "sniff hook missing")
+        self.assertGreater(first_token, first_guard,
+                           "ban-forge glue appears before any P4 guard")
 
 
 if __name__ == "__main__":

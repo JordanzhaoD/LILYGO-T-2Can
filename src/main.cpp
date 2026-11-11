@@ -51,6 +51,8 @@
 #include "drivers/p4_twai_secondary.h"
 #include "drivers/can_bench_blast.h"
 #include "dash_autoshift.h"
+// Ban Shield X (2026-11-12): 0x368 forge core (self-guarded, P4-only).
+#include "dash_ban_forge.h"
 #endif
 
 #ifdef DRIVER_MCP2515
@@ -237,6 +239,57 @@ bool t2canAutoshiftArmedSet(uint8_t v)
     nvs_close(handle);
     return ok;
 }
+
+// Ban Shield X persistence (2026-11-12): same namespace/pattern as the
+// autoshift permit — pref (default 0 = forge off; the passive tripwire
+// needs no persistence) and the last selected arm (0-7, default 0).
+uint8_t t2canBanForgePrefGet(void)
+{
+    uint8_t stored = 0;
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READONLY, &handle) == ESP_OK)
+    {
+        nvs_get_u8(handle, "banForge", &stored);
+        nvs_close(handle);
+    }
+    return stored;
+}
+
+bool t2canBanForgePrefSet(uint8_t v)
+{
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READWRITE, &handle) != ESP_OK)
+        return false;
+    bool ok = nvs_set_u8(handle, "banForge", v) == ESP_OK &&
+              nvs_commit(handle) == ESP_OK;
+    nvs_close(handle);
+    return ok;
+}
+
+uint8_t t2canBanForgeArmGet(void)
+{
+    uint8_t stored = 0;
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READONLY, &handle) == ESP_OK)
+    {
+        nvs_get_u8(handle, "banForgeArm", &stored);
+        nvs_close(handle);
+    }
+    return stored > 7 ? 0 : stored;
+}
+
+bool t2canBanForgeArmSet(uint8_t v)
+{
+    if (v > 7)
+        return false;
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READWRITE, &handle) != ESP_OK)
+        return false;
+    bool ok = nvs_set_u8(handle, "banForgeArm", v) == ESP_OK &&
+              nvs_commit(handle) == ESP_OK;
+    nvs_close(handle);
+    return ok;
+}
 #endif
 static void t2canSetupSecondary()
 {
@@ -355,7 +408,10 @@ static void t2canAsBindTertiary()
 static bool t2canAutoshiftApplyBusMode()
 {
     static uint32_t s_asModeRetryMs = 0;
-    const bool wantTx = dashAsPermit.master && dashAsPermit.armed;
+    // OR-only extension (Ban Shield X): the forge experiment flips the
+    // bus mode on its own when armed; autoshift semantics are untouched.
+    const bool wantTx =
+        (dashAsPermit.master && dashAsPermit.armed) || dashBanForgeActive();
     if (appDriverTertiary && wantTx == t2canAsCan3TxMode)
         return true;
     if (!appDriverTertiary)
@@ -411,6 +467,24 @@ static bool t2canAutoshiftSendCan3(const uint8_t d[4])
     f.id = 0x228;
     f.dlc = 4;
     for (int i = 0; i < 4; ++i)
+        f.data[i] = d[i];
+    f.bus = CAN_BUS_PT;
+    return appDriverTertiary->send(f);
+}
+
+// Ban Shield X submit (2026-11-12): mirrors the autoshift send — same
+// TX-mode gate (never TX unless the bus-mode flip armed TWAI2), PT bus,
+// tertiary driver so the frame rides mcpDashOnTxFrame (T/E rows).
+// Called from mcpDashSniffCan3 (can_rt) via the dashboard header's
+// forward declaration. Decimal 872 = 0x368 GTW_carConfig.
+bool t2canBanForgeSendCan3(const uint8_t d[8])
+{
+    if (!appDriverTertiary || !t2canAsCan3TxMode)
+        return false;
+    CanFrame f;
+    f.id = 872;
+    f.dlc = 8;
+    for (int i = 0; i < 8; ++i)
         f.data[i] = d[i];
     f.bus = CAN_BUS_PT;
     return appDriverTertiary->send(f);
@@ -1167,6 +1241,10 @@ static void app_main_setup()
         t2canAsModeDirty = true;
         Serial.println("[AS] permit restored: master=1 armed=1 (bus mode applies on can_rt)");
     }
+    // Ban Shield X restore (2026-11-12): preference only — the runtime
+    // armed flag stays false at boot (fail-closed; re-arm explicitly via
+    // the defense page). The passive 0x368 tripwire needs no state.
+    dashBanForgeSetPref(t2canBanForgePrefGet() != 0);
 #endif
 #if defined(DASH_HEAP_GUARD_V2)
     // Heap guard tripwire v2 (2026-11-02 forensics round 3): sentinel the

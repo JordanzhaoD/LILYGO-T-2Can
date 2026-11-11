@@ -56,6 +56,14 @@
 // Auto-shift engine core (P4-only): self-guarded header.
 #if defined(DRIVER_P4_3CAN)
 #include "dash_autoshift.h"
+// Ban Shield X core (2026-11-12): 0x368 template tripwire + tier-bit
+// forge experiment. Self-guarded header.
+#include "dash_ban_forge.h"
+// Forge submit lives in main.cpp (tertiary driver send, TX-mode gated);
+// declared here because the CanC sniff hook fires it on RX triggers —
+// as is the bus-mode dirty flag the same hook sets on core disarm.
+bool t2canBanForgeSendCan3(const uint8_t d[8]);
+void t2canAutoshiftModeDirty(void);
 #endif
 #include "dash_capabilities.h"
 #include "dash_twai_diag.h"
@@ -1161,6 +1169,42 @@ static void mcpDashSniffCan3(const CanFrame &f)
         dashAsOnMirror116(tagged.data, millis());
     else if (tagged.id == 0x228 && tagged.dlc >= 4)
         dashAsOnSbw0228(tagged.data, millis());
+    // Ban Shield X (2026-11-12): every CanC frame feeds the 0x368 core
+    // (passive template tripwire + RX-triggered forge injection). A
+    // requested injection rides the tertiary send path; the result is
+    // reported either way (failures consume budget). When the core
+    // disarms here (budget/wallclock/pref-kill) and autoshift is idle,
+    // dirty the bus mode so can_rt restores LISTEN_ONLY.
+    {
+        const bool banForgeWasActive = dashBanForgeActive();
+        const uint32_t banForgeHitsBefore = dashBanForgeDiag().tripwireHits;
+        uint8_t banForgeOut[8];
+        if (dashBanForgeOnFrame(tagged.id, tagged.dlc, tagged.data,
+                                millis(), banForgeOut))
+        {
+            const bool sent = t2canBanForgeSendCan3(banForgeOut);
+            dashBanForgeOnInjectResult(sent, millis());
+        }
+        const DashBanForgeDiag &bfDiag = dashBanForgeDiag();
+        if (bfDiag.tripwireHits != banForgeHitsBefore)
+        {
+            char bfHex[24];
+            snprintf(bfHex, sizeof(bfHex), "%02X %02X %02X %02X %02X %02X %02X %02X",
+                     bfDiag.lastDeviant[0], bfDiag.lastDeviant[1],
+                     bfDiag.lastDeviant[2], bfDiag.lastDeviant[3],
+                     bfDiag.lastDeviant[4], bfDiag.lastDeviant[5],
+                     bfDiag.lastDeviant[6], bfDiag.lastDeviant[7]);
+            dashLog(String("[BANFORGE] 0x368 tripwire hit deviant ") + bfHex);
+        }
+        if (banForgeWasActive && !bfDiag.armed &&
+            !(dashAsPermit.master && dashAsPermit.armed))
+        {
+            t2canAutoshiftModeDirty();
+            dashLog(String("[BANFORGE] arm complete (injected=") +
+                    String(bfDiag.injected) + String(", arm=") +
+                    String(bfDiag.lastArm) + String(")"));
+        }
+    }
 #endif
 }
 
@@ -2557,6 +2601,13 @@ bool t2canAutoshiftMasterSet(uint8_t v);
 uint8_t t2canAutoshiftArmedGet(void);
 bool t2canAutoshiftArmedSet(uint8_t v);
 void t2canAutoshiftModeDirty(void);
+// Ban Shield X (2026-11-12): NVS-backed forge pref + selected arm
+// (ns "t2can", u8 keys "banForge"/"banForgeArm", default 0). Defined in
+// main.cpp next to the autoshift permit persistence.
+uint8_t t2canBanForgePrefGet(void);
+bool t2canBanForgePrefSet(uint8_t v);
+uint8_t t2canBanForgeArmGet(void);
+bool t2canBanForgeArmSet(uint8_t v);
 #endif
 
 static bool dashArgUIntInRange(const char *name, uint8_t minValue, uint8_t maxValue, uint8_t &out)
@@ -2705,6 +2756,33 @@ static void serviceDiagJson(String &j, unsigned long now)
 {
     appendServiceDiagJson(j, now);
 }
+
+// Ban Shield X diag (2026-11-12): forge pref/arm runtime state + the
+// passive 0x368 tripwire counters. Empty on non-P4 builds (macro-gate
+// totality — /status JSON stays byte-identical there).
+#if defined(DRIVER_P4_3CAN)
+static void appendBanForgeDiagJson(String &j, unsigned long)
+{
+    const DashBanForgeDiag &d = dashBanForgeDiag();
+    j += R"JSON(,"banForgeDiag":{"pref":)JSON";
+    j += dashBanForgePref() ? "true" : "false";
+    j += R"JSON(,"armed":)JSON";
+    j += d.armed ? "true" : "false";
+    j += R"JSON(,"arm":)JSON";
+    j += d.lastArm;
+    j += R"JSON(,"injected":)JSON";
+    j += d.injected;
+    j += R"JSON(,"armsRun":)JSON";
+    j += d.armsRun;
+    j += R"JSON(,"tripwireHits":)JSON";
+    j += d.tripwireHits;
+    j += R"JSON(,"lastDeviantMs":)JSON";
+    j += d.lastDeviantMs;
+    j += "}";
+}
+#else
+static void appendBanForgeDiagJson(String &, unsigned long) {}
+#endif
 
 static void appendWheelDndDiagJson(String &j, unsigned long now)
 {
@@ -3402,6 +3480,7 @@ static void handleStatus()
 #endif
     appendServiceDiagJson(j, now);
     appendWheelDndDiagJson(j, now);
+    appendBanForgeDiagJson(j, now);
     appendLegacySmartSpeedJson(j, now);
     dashAppendLegacySafetyControlsJson(j);
     // ── Phase 1 新增状态字段 ──────────────────────────────────────────
@@ -4347,6 +4426,14 @@ static String dashDefenseConfigJson()
     j += ",\"ban_shield\":";
     j += dashHandler ? ((bool)dashHandler->banShieldEnable ? "true" : "false") : (nvsBanShieldEnable ? "true" : "false");
     dashAppendLegacySafetyControlsJson(j);
+#if defined(DRIVER_P4_3CAN)
+    // Ban Shield X (2026-11-12): requested pref + selected arm (the live
+    // runtime state lives in /status banForgeDiag).
+    j += ",\"banForge\":";
+    j += dashBanForgePref() ? "true" : "false";
+    j += ",\"banForgeArm\":";
+    j += t2canBanForgeArmGet();
+#endif
 #if defined(DASH_RECORDER_V2)
     j += ",\"recbb_stream\":";
     j += dashRecV2StreamArmed() ? "true" : "false";
@@ -4423,6 +4510,45 @@ static void handleDefenseConfig()
         nvsBanShieldEnable = dashDefenseEnabled;
         if (dashHandler)
             dashHandler->banShieldEnable = dashDefenseEnabled;
+#if defined(DRIVER_P4_3CAN)
+        // Ban Shield X (2026-11-12): toggle = forge pref (the passive
+        // 0x368 tripwire runs regardless); selector = experimental arm.
+        // Pref off or arm 0 disarms and restores LISTEN_ONLY (autoshift
+        // idle); otherwise the selected arm is requested — the core
+        // enforces budget/wallclock/cooldown internally.
+        if (server.hasArg("ban_forge"))
+        {
+            const bool banOn = dashArgTruthy(server.arg("ban_forge"));
+            if (banOn != (t2canBanForgePrefGet() != 0))
+                dashLog(banOn ? "[BANFORGE] pref on" : "[BANFORGE] pref off");
+            t2canBanForgePrefSet(banOn ? 1 : 0);
+            dashBanForgeSetPref(banOn);
+        }
+        uint8_t banArmSel = 0;
+        if (dashArgUIntInRange("ban_forge_arm", 0, 7, banArmSel))
+            t2canBanForgeArmSet(banArmSel);
+        const bool banForgeOn = t2canBanForgePrefGet() != 0;
+        const uint8_t banArmWanted = t2canBanForgeArmGet();
+        if (!banForgeOn || banArmWanted == 0)
+        {
+            if (dashBanForgeActive())
+                dashLog("[BANFORGE] disarmed by config");
+            dashBanForgeRequestArm(0);
+            if (!(dashAsPermit.master && dashAsPermit.armed))
+                t2canAutoshiftModeDirty();  // restore LISTEN_ONLY
+        }
+        else if (dashBanForgeRequestArm(banArmWanted))
+        {
+            dashLog(String("[BANFORGE] arm B") + String(banArmWanted) +
+                    String(" armed (max 3 injections, 600ms window)"));
+            t2canAutoshiftModeDirty();  // flip TWAI2 to NORMAL on can_rt
+        }
+        else
+        {
+            dashLog(String("[BANFORGE] arm B") + String(banArmWanted) +
+                    String(" rejected (armed or cooldown)"));
+        }
+#endif
         dashApplyRuntimeState();
         dashSavePrefs();
         dashLog("[CFG] /defense_config saved");
