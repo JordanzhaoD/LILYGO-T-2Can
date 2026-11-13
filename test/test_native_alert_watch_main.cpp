@@ -145,6 +145,54 @@ static void test_event_ring_capacity()
     CHECK(dashAlertWatchLastEvent()->data[1] == 29);
 }
 
+// Watch-set ring: only watched IDs enter, full ring evicts the oldest,
+// PopOldest drains in insertion order, empty buffer degrades safely.
+static void test_watch_ring()
+{
+    static uint8_t buf[6 * 18]; // six slots
+    dashAlertWatchRingInit(buf, sizeof(buf));
+
+    const uint8_t tpl[8] = {0x51, 0x31, 0x59, 0x0F, 0x88, 0x49, 0x67, 0x00};
+    uint8_t notWatched = 0;
+    CHECK(!dashAlertWatchRingPush(0x7FF, 8, tpl, 1000)); // not in set
+    CHECK(dashAlertWatchRingCount() == 0 + notWatched);
+
+    CHECK(dashAlertWatchRingPush(0x368, 8, tpl, 2000));
+    CHECK(dashAlertWatchRingCount() == 1);
+    CHECK(dashAlertWatchRingPush(0x3EE, 8, tpl, 3000));
+    CHECK(dashAlertWatchRingPush(0x398, 8, tpl, 4000));
+    CHECK(dashAlertWatchRingCount() == 3);
+
+    DashAlertRec r{};
+    CHECK(dashAlertWatchRingPopOldest(&r));
+    CHECK(r.id == 0x368 && r.tsUs == 2000 && r.flags == 3); // CanC RX tag
+    CHECK(dashAlertWatchRingPopOldest(&r));
+    CHECK(r.id == 0x3EE);
+    CHECK(dashAlertWatchRingPopOldest(&r));
+    CHECK(r.id == 0x398);
+    CHECK(!dashAlertWatchRingPopOldest(&r)); // drained
+
+    // Overflow: 8 pushes into 6 slots -> oldest two evicted.
+    for (int i = 0; i < 8; i++)
+    {
+        uint8_t p[8];
+        std::memcpy(p, tpl, 8);
+        p[7] = static_cast<uint8_t>(i);
+        CHECK(dashAlertWatchRingPush(0x126, 8, p, 5000 + i));
+    }
+    CHECK(dashAlertWatchRingCount() == 6);
+    CHECK(dashAlertWatchRingPopOldest(&r));
+    CHECK(r.data[7] == 2); // payloads 0,1 evicted
+    CHECK(dashAlertWatchRingPopOldest(&r));
+    CHECK(r.data[7] == 3);
+
+    // Null buffer = safe drop (wiring alloc failure degrades to log-only).
+    dashAlertWatchRingInit(nullptr, 0);
+    CHECK(!dashAlertWatchRingPush(0x368, 8, tpl, 9000));
+    CHECK(dashAlertWatchRingCount() == 0);
+    dashAlertWatchRingInit(buf, sizeof(buf)); // restore
+}
+
 int main()
 {
     test_log_frame_a144_is_capture();
@@ -153,6 +201,7 @@ int main()
     test_tripwire_payload_dedupe();
     test_decode_names();
     test_event_ring_capacity();
+    test_watch_ring();
     if (g_fail == 0)
         std::printf("ALL PASS\n");
     else

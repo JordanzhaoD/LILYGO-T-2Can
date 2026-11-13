@@ -259,6 +259,69 @@ inline const char *dashAlertWatchName(uint16_t src, uint8_t code)
     return fallback;
 }
 
+// ---- forensic watch ring (spec §4 pre-context substrate) ------------------
+// Rolling store of the last N watch-set frames in externally provided
+// memory (wiring hands over PSRAM; the core never allocates). Full ring
+// evicts the oldest; PopOldest drains in insertion order for the
+// event-time backfill. A null/short buffer degrades to safe drops.
+inline uint8_t *g_alertRingBuf = nullptr;
+inline size_t g_alertRingCap = 0;   // in records
+inline size_t g_alertRingCount = 0; // valid records
+inline size_t g_alertRingNext = 0;  // write slot
+
+inline void dashAlertWatchRingInit(uint8_t *buf, size_t capBytes)
+{
+    g_alertRingBuf = buf;
+    g_alertRingCap = buf ? capBytes / sizeof(DashAlertRec) : 0;
+    g_alertRingCount = 0;
+    g_alertRingNext = 0;
+}
+
+inline bool dashAlertWatchIdWatched(uint32_t id)
+{
+    for (size_t i = 0; i < kAlertWatchIdCount; i++)
+        if (kAlertWatchIds[i] == id)
+            return true;
+    return false;
+}
+
+inline bool dashAlertWatchRingPush(uint32_t id, uint8_t dlc, const uint8_t *data,
+                                   uint32_t tsUs)
+{
+    if (g_alertRingBuf == nullptr || g_alertRingCap == 0 ||
+        data == nullptr || !dashAlertWatchIdWatched(id))
+        return false;
+    DashAlertRec *slot = reinterpret_cast<DashAlertRec *>(
+        g_alertRingBuf + g_alertRingNext * sizeof(DashAlertRec));
+    slot->tsUs = tsUs;
+    slot->id = id;
+    slot->dlc = dlc < 8 ? dlc : 8;
+    // The whole watch set lives on CanC and is receive-only: bus tag 3,
+    // dir R (spec §5.1 — matches the recorder grid's flags encoding).
+    slot->flags = 3;
+    std::memset(slot->data, 0, 8);
+    std::memcpy(slot->data, data, slot->dlc);
+    g_alertRingNext = (g_alertRingNext + 1) % g_alertRingCap;
+    if (g_alertRingCount < g_alertRingCap)
+        g_alertRingCount++; // else: just evicted the oldest
+    return true;
+}
+
+inline size_t dashAlertWatchRingCount() { return g_alertRingCount; }
+
+inline bool dashAlertWatchRingPopOldest(DashAlertRec *out)
+{
+    if (out == nullptr || g_alertRingCount == 0)
+        return false;
+    size_t oldest = (g_alertRingNext + g_alertRingCap - g_alertRingCount) %
+                    g_alertRingCap;
+    const DashAlertRec *slot = reinterpret_cast<const DashAlertRec *>(
+        g_alertRingBuf + oldest * sizeof(DashAlertRec));
+    std::memcpy(out, slot, sizeof(DashAlertRec));
+    g_alertRingCount--;
+    return true;
+}
+
 // ---- sentinels ------------------------------------------------------------
 
 inline bool dashAlertWatchOnTripwire(const uint8_t deviant[8], uint32_t nowMs)
