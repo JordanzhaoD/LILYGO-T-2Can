@@ -88,6 +88,7 @@ struct DashAlertEvent
 };
 
 inline uint32_t g_alertBootSeq = 0;
+inline uint32_t g_alertCaptureSeq = 0; // capture-severity events ever (SM trigger)
 inline DashAlertEvent g_alertEvents[24] = {};
 inline size_t g_alertEventCount = 0;  // number of valid events (capped at 24)
 inline size_t g_alertEventNext = 0;   // ring write slot
@@ -105,6 +106,8 @@ inline void dashAlertWatchPushEvent(const DashAlertEvent &e)
     g_alertEventNext = (g_alertEventNext + 1) % 24;
     if (g_alertEventCount < 24)
         g_alertEventCount++;
+    if (e.sev == kSevCapture)
+        g_alertCaptureSeq++; // the state machine's trigger counter
 }
 
 inline const DashAlertEvent *dashAlertWatchLastEvent()
@@ -320,6 +323,146 @@ inline bool dashAlertWatchRingPopOldest(DashAlertRec *out)
     std::memcpy(out, slot, sizeof(DashAlertRec));
     g_alertRingCount--;
     return true;
+}
+
+// ---- capture state machine (spec §5.2 + §8 rulings) ------------------------
+// poll returns each action exactly once per phase; wiring executes it and
+// reports back via the notify entries. Time enters ONLY through nowMs.
+enum class DashAlertAction : uint8_t
+{
+    None,
+    ArmFlush, // wiring: capacity-check + evict + arm stream + drain ring
+    Lock,     // wiring: dashRecV2LockRequest(pre, post, mask)
+};
+struct DashAlertPoll
+{
+    DashAlertAction action;
+    uint32_t preMs;
+    uint32_t postMs;
+    uint8_t busMask;
+};
+
+enum class DashAlertSm : uint8_t
+{
+    Idle,
+    PendingFlush, // ArmFlush delivered, awaiting NotifyCaptureBegin
+    Capturing,    // post window running, retriggers extend (cap 60 s)
+    LockPending,  // Lock delivered, awaiting NotifyLockDone
+    Cooldown,     // 60 s anti-hammer gap after a finished/denied capture
+};
+
+inline DashAlertSm g_alertSm = DashAlertSm::Idle;
+inline uint32_t g_alertSmSeqSeen = 0;  // captureSeq consumed by the SM
+inline uint32_t g_alertSmDeadline = 0; // post-window end (Capturing) or cooldown end
+inline uint32_t g_alertSmCapBegin = 0; // capture start (extension cap anchor)
+inline uint32_t g_alertSmLastNow = 0;  // latest poll clock (notify anchors)
+inline bool g_alertExternalRecording = false;
+inline const char *g_alertDenyReason = nullptr; // last NotifyCaptureBegin(false) reason
+
+// §8-④: post window base 30 s, retrigger +15 s, hard cap 60 s from begin.
+static constexpr uint32_t kAlertPostBaseMs = 30000;
+static constexpr uint32_t kAlertPostExtMs = 15000;
+static constexpr uint32_t kAlertPostCapMs = 60000;
+static constexpr uint32_t kAlertCooldownMs = 60000;
+// Lock window: pre must cover the ring backfill depth (ring holds up to
+// ~4 min at watch-set rates; 300 s is within the recorder's 10-600 s range).
+static constexpr uint32_t kAlertLockPreMs = 300000;
+static constexpr uint8_t kAlertBusMask = 0x05; // CanA + CanC (spec §5.2)
+
+inline void dashAlertWatchSetExternalRecording(bool active)
+{
+    g_alertExternalRecording = active;
+}
+
+inline void dashAlertWatchNotifyCaptureBegin(bool ok, const char *reason)
+{
+    if (g_alertSm != DashAlertSm::PendingFlush)
+        return;
+    if (ok)
+    {
+        g_alertSm = DashAlertSm::Capturing;
+        g_alertSmCapBegin = g_alertSmLastNow;
+        g_alertSmDeadline = g_alertSmCapBegin + kAlertPostBaseMs;
+    }
+    else
+    {
+        // §8-④ capacity degrade: mark the triggering event, keep the
+        // reason for /status, and cool down so a starved grid cannot
+        // turn every capture event into an arm/deny spin.
+        g_alertDenyReason = reason;
+        DashAlertEvent *e = const_cast<DashAlertEvent *>(
+            dashAlertWatchLastEvent());
+        if (e)
+            e->captureFailed = true;
+        g_alertSmSeqSeen = g_alertCaptureSeq;
+        g_alertSm = DashAlertSm::Cooldown;
+        g_alertSmDeadline = g_alertSmLastNow + kAlertCooldownMs;
+    }
+}
+
+inline void dashAlertWatchNotifyLockDone(bool)
+{
+    if (g_alertSm != DashAlertSm::LockPending)
+        return;
+    g_alertSmSeqSeen = g_alertCaptureSeq;
+    g_alertSm = DashAlertSm::Cooldown;
+    g_alertSmDeadline = g_alertSmLastNow + kAlertCooldownMs;
+}
+
+inline DashAlertPoll dashAlertWatchPoll(uint32_t nowMs)
+{
+    g_alertSmLastNow = nowMs;
+    DashAlertPoll p{};
+    p.busMask = kAlertBusMask;
+    p.preMs = kAlertLockPreMs;
+    p.postMs = kAlertPostBaseMs;
+    switch (g_alertSm)
+    {
+    case DashAlertSm::Idle:
+        if (g_alertCaptureSeq != g_alertSmSeqSeen)
+        {
+            g_alertSmSeqSeen = g_alertCaptureSeq;
+            if (g_alertExternalRecording)
+            {
+                // Manual recording already rolling: no flush/backfill,
+                // just ride the post window and lock (spec §5.2 rule 1).
+                g_alertSm = DashAlertSm::Capturing;
+                g_alertSmCapBegin = nowMs;
+                g_alertSmDeadline = nowMs + kAlertPostBaseMs;
+            }
+            else
+            {
+                g_alertSm = DashAlertSm::PendingFlush;
+                p.action = DashAlertAction::ArmFlush;
+            }
+        }
+        break;
+    case DashAlertSm::PendingFlush:
+        break; // wiring owns this phase; nothing until NotifyCaptureBegin
+    case DashAlertSm::Capturing:
+        if (g_alertCaptureSeq != g_alertSmSeqSeen)
+        {
+            // Retrigger: extend the window, capped at begin + 60 s.
+            g_alertSmSeqSeen = g_alertCaptureSeq;
+            uint32_t extended =
+                g_alertSmDeadline + kAlertPostExtMs;
+            uint32_t cap = g_alertSmCapBegin + kAlertPostCapMs;
+            g_alertSmDeadline = extended > cap ? cap : extended;
+        }
+        if ((int32_t)(nowMs - g_alertSmDeadline) >= 0)
+        {
+            g_alertSm = DashAlertSm::LockPending;
+            p.action = DashAlertAction::Lock;
+        }
+        break;
+    case DashAlertSm::LockPending:
+        break; // wiring is locking
+    case DashAlertSm::Cooldown:
+        if ((int32_t)(nowMs - g_alertSmDeadline) >= 0)
+            g_alertSm = DashAlertSm::Idle;
+        break;
+    }
+    return p;
 }
 
 // ---- sentinels ------------------------------------------------------------

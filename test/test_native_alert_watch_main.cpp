@@ -193,6 +193,130 @@ static void test_watch_ring()
     dashAlertWatchRingInit(buf, sizeof(buf)); // restore
 }
 
+// ---- capture state machine (poll/action protocol) ------------------------
+
+static uint32_t g_smNow = 0; // simulated clock, ms
+
+// Feed one CAPTURE-severity event (a144 log frame).
+static void smInjectCapture()
+{
+    const uint8_t f[8] = {0x90, 0x80, 0x20, 0, 0, 0, 0, 0};
+    dashAlertWatchOnFrame(0x526, 8, f, g_smNow);
+}
+// Feed one LOG-severity event.
+static void smInjectLog()
+{
+    const uint8_t f[8] = {0x0A, 0, 0, 0, 0, 0, 0, 0};
+    dashAlertWatchOnFrame(0x526, 8, f, g_smNow);
+}
+
+static void test_sm_full_chain()
+{
+    smInjectCapture();
+    DashAlertPoll p = dashAlertWatchPoll(g_smNow);
+    CHECK(p.action == DashAlertAction::ArmFlush);
+    CHECK(p.preMs == 300000 && p.postMs == 30000 && p.busMask == 0x05);
+
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::None); // once
+    dashAlertWatchNotifyCaptureBegin(true, nullptr);
+
+    g_smNow += 30000; // post window elapses
+    p = dashAlertWatchPoll(g_smNow);
+    CHECK(p.action == DashAlertAction::Lock);
+    CHECK(p.preMs == 300000 && p.postMs == 30000 && p.busMask == 0x05);
+    dashAlertWatchNotifyLockDone(true);
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::None); // cooldown
+
+    g_smNow += 60000;                                                   // cooldown elapses
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::None); // idle
+
+    smInjectCapture(); // a fresh event re-arms the whole chain
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::ArmFlush);
+    dashAlertWatchNotifyCaptureBegin(true, nullptr);
+    g_smNow += 30000; // full wind-down for the next test: the SM ignores
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::Lock); // LockDone without a Lock action
+    dashAlertWatchNotifyLockDone(true);
+    g_smNow += 61000;
+    dashAlertWatchPoll(g_smNow);
+}
+
+static void test_sm_retrigger_extends_post_window_capped()
+{
+    smInjectCapture();
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::ArmFlush);
+    dashAlertWatchNotifyCaptureBegin(true, nullptr);
+
+    g_smNow += 10000;
+    smInjectCapture(); // retrigger at +10s -> deadline 30+15=45s
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::None);
+
+    g_smNow += 20000; // +30s total: original deadline passed, extension holds
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::None);
+    g_smNow += 15000; // +45s: extended deadline reached
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::Lock);
+
+    // Cap: begin at T, hammer retriggers — Lock never later than T+60s.
+    dashAlertWatchNotifyLockDone(true);
+    g_smNow += 61000;
+    dashAlertWatchPoll(g_smNow); // drain to idle
+    smInjectCapture();
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::ArmFlush);
+    uint32_t begin = g_smNow;
+    dashAlertWatchNotifyCaptureBegin(true, nullptr);
+    for (int i = 0; i < 10; i++)
+    {
+        g_smNow += 5000;
+        smInjectCapture(); // would extend endlessly without the cap
+        CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::None);
+    }
+    g_smNow = begin + 60000; // exactly at the cap
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::Lock);
+    dashAlertWatchNotifyLockDone(true);
+    g_smNow += 61000;
+    dashAlertWatchPoll(g_smNow);
+}
+
+static void test_sm_external_recording_skips_flush()
+{
+    dashAlertWatchSetExternalRecording(true);
+    smInjectCapture();
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::None); // no ArmFlush
+    g_smNow += 30000;
+    DashAlertPoll p = dashAlertWatchPoll(g_smNow);
+    CHECK(p.action == DashAlertAction::Lock);
+    dashAlertWatchNotifyLockDone(true);
+    dashAlertWatchSetExternalRecording(false);
+    g_smNow += 61000;
+    dashAlertWatchPoll(g_smNow);
+}
+
+static void test_sm_denied_capture_marks_event_and_cooldowns()
+{
+    smInjectCapture();
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::ArmFlush);
+    dashAlertWatchNotifyCaptureBegin(false, "no space");
+    CHECK(dashAlertWatchLastEvent()->captureFailed);
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::None); // cooldown
+    g_smNow += 61000;
+    dashAlertWatchPoll(g_smNow); // back to idle
+    smInjectCapture();           // next event can arm again
+    CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::ArmFlush);
+    dashAlertWatchNotifyCaptureBegin(true, nullptr);
+    dashAlertWatchNotifyLockDone(true);
+    g_smNow += 61000;
+    dashAlertWatchPoll(g_smNow);
+}
+
+static void test_sm_log_events_never_arm()
+{
+    smInjectLog();
+    for (uint32_t t = 0; t < 120000; t += 10000)
+    {
+        g_smNow += 10000;
+        CHECK(dashAlertWatchPoll(g_smNow).action == DashAlertAction::None);
+    }
+}
+
 int main()
 {
     test_log_frame_a144_is_capture();
@@ -202,6 +326,11 @@ int main()
     test_decode_names();
     test_event_ring_capacity();
     test_watch_ring();
+    test_sm_full_chain();
+    test_sm_retrigger_extends_post_window_capped();
+    test_sm_external_recording_skips_flush();
+    test_sm_denied_capture_marks_event_and_cooldowns();
+    test_sm_log_events_never_arm();
     if (g_fail == 0)
         std::printf("ALL PASS\n");
     else
