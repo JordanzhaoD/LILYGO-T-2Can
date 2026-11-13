@@ -777,3 +777,40 @@ class DeadCodeRemovalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StampedSubmitTests(unittest.TestCase):
+    """Task: alert-forensic ring backfill needs a submit that PRESERVES the
+    frame's original tsUs (dashRecV2Submit stamps now() at submit time, which
+    would compress four minutes of pre-context into the flush second)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.engine = ENGINE.read_text(encoding="utf-8")
+
+    def _fn(self, signature: str, span: int = 2400) -> str:
+        start = self.engine.index(signature)
+        return self.engine[start : start + span]
+
+    def test_stamped_submit_exists(self) -> None:
+        self.assertIn("static void dashRecV2SubmitRecord(const RecRingFrame &r)",
+                      self.engine)
+
+    def test_stamped_submit_shares_the_stream_gate(self) -> None:
+        # Closed gate = zero work, zero flash (beta13 fail-closed rule):
+        # the very first check must be identical to dashRecV2Submit's.
+        body = self._fn("static void dashRecV2SubmitRecord(")
+        self.assertIn("!recBBEnabled || !recBBStreamArmed || !recBBStage[0]",
+                      body[:400])
+
+    def test_stamped_submit_never_rewrites_ts(self) -> None:
+        # The whole point of the variant: r.tsUs flows through untouched.
+        body = self._fn("static void dashRecV2SubmitRecord(")
+        self.assertNotIn("esp_timer_get_time", body)
+
+    def test_stamped_submit_reuses_backpressure(self) -> None:
+        # Same drop+count discipline on a full staging pair — the backfill
+        # may lose frames under writer backpressure, never block or bypass.
+        body = self._fn("static void dashRecV2SubmitRecord(")
+        self.assertIn("ringOverflow = ringOverflow + 1", body)
+        self.assertIn("recBBStageFillIdx = other", body)

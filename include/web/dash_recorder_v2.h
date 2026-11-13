@@ -859,6 +859,71 @@ static void dashRecV2Submit(const CanFrame &f, uint8_t busTag, char dir)
         xSemaphoreGive(recBBFlushSem); // outside the critical section
 }
 
+// Stamped submit for the alert-forensic ring backfill (2026-11-14): the
+// record arrives pre-built with its ORIGINAL tsUs — dashRecV2Submit stamps
+// submit-time, which would compress four minutes of pre-context into the
+// flush second. Same gate, same staging backpressure (drops counted, never
+// blocks), same block-summary attribution; bus tag comes from the record's
+// own flags bits (the alert core tags CanC RX = 3 there).
+static void dashRecV2SubmitRecord(const RecRingFrame &r)
+{
+    if (!recBBEnabled || !recBBStreamArmed || !recBBStage[0])
+        return;
+    uint8_t busTag = r.flags & 0x03;
+    bool wake = false;
+    portENTER_CRITICAL(&recV2Mux);
+    uint8_t fi = recBBStageFillIdx;
+    if (recBBStageLen[fi] + sizeof(r) > kRecBBBlockSize)
+    {
+        uint8_t other = fi ^ 1;
+        if (recBBStageLen[other] != 0)
+        {
+            ringOverflow = ringOverflow + 1;
+            portEXIT_CRITICAL(&recV2Mux);
+            return;
+        }
+        recBBStageFillIdx = other;
+        fi = other;
+        wake = true;
+    }
+    memcpy(recBBStage[fi] + recBBStageLen[fi], &r, sizeof(r));
+    uint32_t absOff = recBBWriteOff + recBBStageLen[fi ^ 1] + recBBStageLen[fi];
+    const uint32_t gridEnd =
+        kRecBBHeaderSize +
+        ((recBBPart->size - kRecBBHeaderSize) / sizeof(RecRingFrame)) *
+            sizeof(RecRingFrame);
+    if (absOff > gridEnd)
+        absOff = kRecBBHeaderSize + (absOff - gridEnd);
+    uint32_t blk = absOff / kRecBBBlockSize;
+    if (blk < kRecBBBlockCount)
+    {
+        RecBBBlockSum &s = recBBSums[blk];
+        if (s.firstTsUs == 0)
+            s.firstTsUs = r.tsUs;
+        s.lastTsUs = r.tsUs;
+        if ((r.flags >> 2) == 0)
+        {
+            if (busTag == kRecV2BusA)
+                s.cntA = s.cntA + 1;
+            else if (busTag == kRecV2BusB)
+                s.cntB = s.cntB + 1;
+            else if (busTag == kRecV2BusC)
+                s.cntC = s.cntC + 1;
+        }
+        else
+        {
+            s.cntTx = s.cntTx + 1;
+        }
+    }
+    recBBNewestTsUs = r.tsUs;
+    recBBStageLen[fi] = recBBStageLen[fi] + sizeof(r);
+    if (busTag >= kRecV2BusA && busTag <= kRecV2BusC)
+        recV2FpsAccum[busTag - 1] = recV2FpsAccum[busTag - 1] + 1;
+    portEXIT_CRITICAL(&recV2Mux);
+    if (wake)
+        xSemaphoreGive(recBBFlushSem); // outside the critical section
+}
+
 // Retention in µs: oldest live block summary firstTs → now. Unsigned
 // subtraction is wrap-safe across the 71.6-min tsUs rollover.
 static uint32_t dashRecV2SpanUs()
