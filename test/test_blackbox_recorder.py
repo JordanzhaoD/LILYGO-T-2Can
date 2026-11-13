@@ -493,6 +493,27 @@ class BlackboxDownloadTests(unittest.TestCase):
         # Range sanity against the real partition bounds.
         self.assertIn("recBBPart->size", body)
 
+    def test_download_accepts_full_grid_lock_range(self) -> None:
+        # 2026-11-14 field rescue (board 2, boot-window session 129): the
+        # lock's full-grid path (windowCoversGrid, ka500-size=0 fix) writes
+        # bb_start_off=0 / bb_end_off=grid; the download validator demanded
+        # bb_start_off >= kRecBBHeaderSize and 500'd "corrupt session meta
+        # (grid range)" — the only export path died for exactly the sessions
+        # that filled the whole grid. The handler must recognize the exact
+        # full-grid form and snap it to the header anchor BEFORE validation.
+        body = self._fn(self.dash, "static void handleSessionDownload(", 9000)
+        self.assertIn(
+            "bbStart == 0u", body,
+            "the full-grid lock form (bb_start_off=0) must be recognized")
+        self.assertIn(
+            "bbStart = kRecBBHeaderSize", body,
+            "full-grid metas snap to the first frame slot, not rejected")
+        snap = body.index("bbStart = kRecBBHeaderSize")
+        reject = body.index("corrupt session meta (grid range)")
+        self.assertLess(
+            snap, reject,
+            "the snap must run before the validator can reject the range")
+
     def test_download_holds_no_writer_state(self) -> None:
         body = self._fn(self.dash, "static void handleSessionDownload(", 9000)
         self.assertNotIn("recV2Mux", body)  # never blocks the ingest path

@@ -9030,6 +9030,13 @@ static void handleSessionDownload()
     uint32_t endUs = doc["end_boot_us"] | 0u;
     uint8_t busMask = doc["bus_mask"] | 0u;
     bool wrapped = bbEnd < bbStart; // ring range across the rolling seam
+    // 2026-11-14 field rescue (board 2, boot-window session 129): the lock's
+    // full-grid path (windowCoversGrid) writes bb_start_off=0 / bb_end_off=
+    // grid — snap that exact form to the header anchor BEFORE validation,
+    // or the sole export path 500s on the very sessions that filled the
+    // grid. Block-aligned starts from normal locks are untouched.
+    if (bbStart == 0u && bbEnd >= kRecBBBlockCount * kRecBBBlockSize)
+        bbStart = kRecBBHeaderSize;
     if (bbStart < kRecBBHeaderSize || bbStart > recBBPart->size ||
         bbEnd > recBBPart->size || bbEnd < kRecBBHeaderSize ||
         (!wrapped && bbEnd == bbStart))
