@@ -59,6 +59,9 @@
 // Ban Shield X core (2026-11-12): 0x368 template tripwire + tier-bit
 // forge experiment. Self-guarded header.
 #include "dash_ban_forge.h"
+// Alert Telemetry core (2026-11-14): passive five-source sentinel for
+// downgrade-day forensics. Self-guarded header (DRIVER_P4_3CAN).
+#include "dash_alert_watch.h"
 // Forge submit lives in main.cpp (tertiary driver send, TX-mode gated);
 // declared here because the CanC sniff hook fires it on RX triggers —
 // as is the bus-mode dirty flag the same hook sets on core disarm.
@@ -1209,6 +1212,9 @@ static void mcpDashSniffCan3(const CanFrame &f)
                      bfDiag.lastDeviant[4], bfDiag.lastDeviant[5],
                      bfDiag.lastDeviant[6], bfDiag.lastDeviant[7]);
             dashLog(String("[BANFORGE] 0x368 tripwire hit deviant ") + bfHex);
+            // Alert telemetry rides the same delta: the deviant payload
+            // feeds the forensic event log (payload-deduped in the core).
+            dashAlertWatchOnTripwire(bfDiag.lastDeviant, millis());
         }
         if (banForgeWasActive && !bfDiag.armed &&
             !(dashAsPermit.master && dashAsPermit.armed))
@@ -1219,6 +1225,14 @@ static void mcpDashSniffCan3(const CanFrame &f)
                     String(bfDiag.lastArm) + String(")"));
         }
     }
+    // Alert telemetry (2026-11-14): every CanC frame feeds the sentinels
+    // (0x346 rising edges, 0x526/0x5A5/0x524 log frames) and the watch-set
+    // ring (pre-context substrate for auto-capture backfill). Pure RAM on
+    // this hot path — NVS persistence and the capture executor live in
+    // dashAlertWatchService (loop side). Pref off gates it all in the core.
+    dashAlertWatchOnFrame(tagged.id, tagged.dlc, tagged.data, millis());
+    dashAlertWatchRingPush(tagged.id, tagged.dlc, tagged.data,
+                           (uint32_t)esp_timer_get_time());
 #endif
 }
 
@@ -2619,6 +2633,8 @@ void t2canAutoshiftModeDirty(void);
 // (ns "t2can", u8 keys "banForge"/"banForgeArm", default 0). Defined in
 // main.cpp next to the autoshift permit persistence.
 uint8_t t2canBanForgePrefGet(void);
+uint8_t t2canAlertWatchPrefGet(void);
+bool t2canAlertWatchPrefSet(uint8_t v);
 bool t2canBanForgePrefSet(uint8_t v);
 uint8_t t2canBanForgeArmGet(void);
 bool t2canBanForgeArmSet(uint8_t v);
@@ -2796,6 +2812,42 @@ static void appendBanForgeDiagJson(String &j, unsigned long)
 }
 #else
 static void appendBanForgeDiagJson(String &, unsigned long) {}
+#endif
+
+#if defined(DRIVER_P4_3CAN)
+static void appendAlertWatchJson(String &j, unsigned long)
+{
+    j += R"JSON(,"alertWatch":{"enabled":)JSON";
+    j += g_alertWatchEnabled ? "true" : "false";
+    j += R"JSON(,"ringCount":)JSON";
+    j += String(dashAlertWatchRingCount());
+    j += R"JSON(,"eventTotal":)JSON";
+    j += String(g_alertEventTotal);
+    const DashAlertEvent *last = dashAlertWatchLastEvent();
+    if (last)
+    {
+        j += R"JSON(,"lastEvent":{"tMs":)JSON";
+        j += String(last->tMs);
+        j += R"JSON(,"src":)JSON";
+        j += String(last->src);
+        j += R"JSON(,"code":)JSON";
+        j += String(last->code);
+        j += R"JSON(,"name":")JSON";
+        j += dashAlertWatchName(last->src, last->code);
+        j += R"JSON(","sev":)JSON";
+        j += String(last->sev);
+        j += "}";
+    }
+    if (g_alertDenyReason)
+    {
+        j += R"JSON(,"denyReason":")JSON";
+        j += g_alertDenyReason;
+        j += "\"";
+    }
+    j += "}";
+}
+#else
+static void appendAlertWatchJson(String &, unsigned long) {}
 #endif
 
 static void appendWheelDndDiagJson(String &j, unsigned long now)
@@ -3495,6 +3547,7 @@ static void handleStatus()
     appendServiceDiagJson(j, now);
     appendWheelDndDiagJson(j, now);
     appendBanForgeDiagJson(j, now);
+    appendAlertWatchJson(j, now);
     appendLegacySmartSpeedJson(j, now);
     dashAppendLegacySafetyControlsJson(j);
     // ── Phase 1 新增状态字段 ──────────────────────────────────────────
@@ -4537,6 +4590,14 @@ static void handleDefenseConfig()
                                 server.hasArg("ban_forge_arm");
         if (banTouched)
         {
+            if (server.hasArg("alert_watch"))
+            {
+                const bool alertOn = dashArgTruthy(server.arg("alert_watch"));
+                if (alertOn != (t2canAlertWatchPrefGet() != 0))
+                    dashLog(alertOn ? "[ALERT] watch on" : "[ALERT] watch off");
+                t2canAlertWatchPrefSet(alertOn ? 1 : 0);
+                dashAlertWatchSetEnabled(alertOn);
+            }
             if (server.hasArg("ban_forge"))
             {
                 const bool banOn = dashArgTruthy(server.arg("ban_forge"));
@@ -9321,6 +9382,8 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver, MCP251
     dashDriver = driver;
     dashMcp = mcp;
 #else
+static void handleAlertEvents(); // forward: definition lives below, after the executor
+
 static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 {
     dashHandler = handler;
@@ -9435,6 +9498,9 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     server.on("/ring_lock", HTTP_POST, handleRingLock);
     server.on("/ring_status", HTTP_GET, handleRingStatus);
     server.on("/sessions", HTTP_GET, handleSessions);
+#if defined(DRIVER_P4_3CAN)
+    server.on("/alert_events", HTTP_GET, handleAlertEvents);
+#endif
     server.on("/session_download", HTTP_GET, handleSessionDownload);
     server.on("/session_delete", HTTP_POST, handleSessionDelete);
 #endif
@@ -9497,6 +9563,228 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     dashLog("[BOOT] ev-open-can-tools ready");
 }
 
+#if defined(DASH_RECORDER_V2) && defined(DRIVER_P4_3CAN)
+// ---- Alert Telemetry wiring (plan Task 5) ----------------------------------
+// Executor + persistence for the pure core. The pref switch stops INPUTS
+// at the dispatch (core gate); any in-flight capture cycle runs to its
+// natural Lock finish here — no half-armed stream survives a pref flip.
+static bool g_alertWeArmed = false;       // THIS capture armed the stream
+static bool g_alertLockIssued = false;    // LockRequest accepted, finisher pending
+static uint32_t g_alertPersistedTotal = 0;
+
+static size_t dashAlertFreeGridBlocks()
+{
+    size_t freeBlocks = 0;
+    for (uint32_t b = 0; b < kRecBBBlockCount; b++)
+        if (!recBBProtGet(b))
+            freeBlocks++;
+    return freeBlocks;
+}
+
+static uint32_t dashAlertOldestAutoSession()
+{
+    uint32_t seqs[32];
+    size_t n = recV2ScanSessions(seqs, 32); // ascending = oldest first
+    for (size_t i = 0; i < n; i++)
+    {
+        File mf = SPIFFS.open(recV2MetaPath(seqs[i]), "r");
+        if (!mf)
+            continue;
+        String body = mf.readString();
+        mf.close();
+        if (body.indexOf("\"auto\":true") >= 0)
+            return seqs[i];
+    }
+    return 0; // no auto session (user sessions are never evicted)
+}
+
+static void dashAlertPatchAutoMarker()
+{
+    File mf = SPIFFS.open(recV2MetaPath(recV2Seq), "r");
+    if (!mf)
+        return;
+    String body = mf.readString();
+    mf.close();
+    if (body.indexOf("\"auto\"") >= 0)
+        return;
+    // The platform String shim has no lastIndexOf: metas always end
+    // with '}', so trim exactly one trailing character.
+    if (!body.length())
+        return;
+    body = body.substring(0, body.length() - 1) + ",\"auto\":true}";
+    File wf = SPIFFS.open(recV2MetaPath(recV2Seq), "w");
+    if (wf)
+    {
+        wf.print(body);
+        wf.close();
+    }
+}
+
+static void dashAlertPersistEvents()
+{
+    static uint8_t blob[2 + 24 * sizeof(DashAlertEvent)];
+    blob[0] = (uint8_t)g_alertEventCount;
+    blob[1] = (uint8_t)g_alertEventNext;
+    memcpy(blob + 2, g_alertEvents, sizeof(g_alertEvents));
+    Preferences p;
+    p.begin("alert", false);
+    p.putBytes("alertEvLog", blob, sizeof(blob));
+    p.end();
+    g_alertPersistedTotal = g_alertEventTotal;
+}
+
+// Boot init: pref, PSRAM ring, boot sequence, event-log restore.
+void dashAlertWatchSetup(bool prefOn)
+{
+    dashAlertWatchSetEnabled(prefOn);
+    uint8_t *ring = (uint8_t *)heap_caps_malloc(256 * 1024,
+                                                MALLOC_CAP_SPIRAM);
+    if (ring)
+    {
+        dashAlertWatchRingInit(ring, 256 * 1024);
+    }
+    else
+    {
+        // Fail-closed: no pre-context ring = no silent half-feature.
+        dashAlertWatchSetEnabled(false);
+        dashLog("[ALERT] PSRAM ring alloc failed - watch disabled");
+    }
+    Preferences p;
+    p.begin("alert", false);
+    uint32_t boots = p.getUInt("alertBoot", 0) + 1;
+    p.putUInt("alertBoot", boots);
+    static uint8_t blob[2 + 24 * sizeof(DashAlertEvent)];
+    size_t got = p.getBytes("alertEvLog", blob, sizeof(blob));
+    p.end();
+    dashAlertWatchSetBootSeq(boots);
+    if (got == sizeof(blob))
+    {
+        // Direct state restore (bypasses PushEvent so restored events
+        // never re-trigger the capture state machine at boot).
+        g_alertEventCount = blob[0] > 24 ? 24 : blob[0];
+        g_alertEventNext = blob[1] % 24;
+        memcpy(g_alertEvents, blob + 2, sizeof(g_alertEvents));
+        for (size_t i = 0; i < g_alertEventCount; i++)
+            if (g_alertEvents[i].sev == kSevCapture)
+                g_alertCaptureSeq++;
+        g_alertSmSeqSeen = g_alertCaptureSeq; // consume restored history
+        g_alertEventTotal = g_alertEventCount;
+    }
+    g_alertPersistedTotal = g_alertEventTotal;
+    dashLog(String("[ALERT] boot #") + String(boots) +
+            (prefOn && ring ? " watch on" : " watch off"));
+}
+
+static void dashAlertWatchService()
+{
+    // Lock follow-up first and unconditionally: the finisher may land
+    // even if the pref was flipped mid-capture (fail-closed wind-down).
+    if (g_alertLockIssued && recV2State == kRecV2Idle)
+    {
+        g_alertLockIssued = false;
+        dashAlertPatchAutoMarker();
+        if (g_alertWeArmed)
+        {
+            dashRecV2SetStreamArmed(false);
+            g_alertWeArmed = false;
+        }
+        dashAlertWatchNotifyLockDone(true);
+    }
+    if (!recBBEnabled)
+        return;
+    if (g_alertEventTotal != g_alertPersistedTotal)
+        dashAlertPersistEvents(); // events are rare; flash write is bounded
+    dashAlertWatchSetExternalRecording(dashRecV2StreamArmed() &&
+                                       !g_alertWeArmed);
+    DashAlertPoll p = dashAlertWatchPoll(millis());
+    if (p.action == DashAlertAction::ArmFlush)
+    {
+        bool ok = false;
+        const char *reason = "no space";
+        // §8-④ capacity: ring bytes + 60 s full-rate post, evicting the
+        // OLDEST AUTO session until it fits — user sessions never evicted;
+        // a still-starved grid degrades to log-only via the deny path.
+        uint32_t needBytes = (uint32_t)dashAlertWatchRingCount() * 18 +
+                             (kAlertPostCapMs / 1000UL) * 33UL * 1024UL;
+        uint32_t needBlocks = needBytes / kRecBBBlockSize + 1;
+        while (dashAlertFreeGridBlocks() < needBlocks)
+        {
+            uint32_t victim = dashAlertOldestAutoSession();
+            if (!victim || !recV2RemoveSession(victim))
+                break;
+        }
+        if (dashAlertFreeGridBlocks() >= needBlocks)
+        {
+            dashRecV2SetStreamArmed(true);
+            g_alertWeArmed = true;
+            DashAlertRec rec;
+            while (dashAlertWatchRingPopOldest(&rec))
+            {
+                RecRingFrame f;
+                memcpy(&f, &rec, sizeof(f)); // identical frozen 18B layout
+                dashRecV2SubmitRecord(f);
+            }
+            ok = true;
+            reason = nullptr;
+        }
+        dashAlertWatchNotifyCaptureBegin(ok, reason);
+    }
+    else if (p.action == DashAlertAction::Lock)
+    {
+        String err;
+        if (dashRecV2LockRequest(p.preMs, p.postMs, p.busMask, err))
+        {
+            g_alertLockIssued = true;
+        }
+        else
+        {
+            if (g_alertWeArmed)
+            {
+                dashRecV2SetStreamArmed(false);
+                g_alertWeArmed = false;
+            }
+            dashAlertWatchNotifyLockDone(false);
+            dashLog(String("[ALERT] lock rejected: ") + err);
+        }
+    }
+}
+
+static void handleAlertEvents()
+{
+    String j = "{\"bootSeq\":" + String(g_alertBootSeq);
+    j += String(",\"enabled\":") +
+         (g_alertWatchEnabled ? "true" : "false");
+    j += String(",\"ringCount\":") + String(dashAlertWatchRingCount());
+    if (g_alertDenyReason)
+        j += String(",\"denyReason\":\"") + g_alertDenyReason + "\"";
+    j += ",\"events\":[";
+    size_t n = g_alertEventCount;
+    for (size_t k = 0; k < n; k++)
+    {
+        size_t idx = (g_alertEventNext + 24 - n + k) % 24; // oldest first
+        const DashAlertEvent &e = g_alertEvents[idx];
+        if (k)
+            j += ",";
+        char hex[24];
+        snprintf(hex, sizeof(hex),
+                 "%02X%02X%02X%02X%02X%02X%02X%02X",
+                 e.data[0], e.data[1], e.data[2], e.data[3],
+                 e.data[4], e.data[5], e.data[6], e.data[7]);
+        j += "{\"bootSeq\":" + String(e.bootSeq) +
+             ",\"tMs\":" + String(e.tMs) +
+             ",\"src\":" + String(e.src) +
+             ",\"code\":" + String(e.code) +
+             ",\"sev\":" + String(e.sev) +
+             ",\"name\":\"" + dashAlertWatchName(e.src, e.code) + "\"" +
+             ",\"data\":\"" + hex + "\"" +
+             ",\"captureFailed\":" +
+             (e.captureFailed ? "true" : "false") + "}";
+    }
+    j += "]}";
+    server.send(200, "application/json", j);
+}
+#endif
+
 static void mcpDashboardLoop()
 {
     if (Update.isRunning())
@@ -9512,6 +9800,9 @@ static void mcpDashboardLoop()
     }
 #if defined(DASH_RECORDER_V2)
     dashRecV2Loop();
+#if defined(DRIVER_P4_3CAN)
+    dashAlertWatchService();
+#endif
 #endif
 #if defined(DASH_RGB_STATUS_LED)
     appRefreshStatusLed(false);

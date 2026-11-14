@@ -85,3 +85,58 @@ class AlertWatchContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AlertWatchWiringContractTests(unittest.TestCase):
+    """Plan Task 5: vehicle wiring — hook, NVS events, auto-capture
+    executor, endpoints. Source-token pins against the wiring files."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dash = (ROOT / "include" / "web" / "mcp2515_dashboard.h").read_text(
+            encoding="utf-8")
+        cls.main = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+
+    def test_dispatch_hook_rides_the_banforge_block(self) -> None:
+        # Same CanC dispatch, after the ban-forge block: frame feed, ring
+        # push, and the tripwire delta off the SAME diag the forge logs.
+        self.assertIn("dashAlertWatchOnFrame(tagged.id", self.dash)
+        self.assertIn("dashAlertWatchRingPush(tagged.id", self.dash)
+        self.assertIn("dashAlertWatchOnTripwire(bfDiag.lastDeviant", self.dash)
+        i_forge = self.dash.index("dashBanForgeOnFrame(tagged.id")
+        i_alert = self.dash.index("dashAlertWatchOnFrame(tagged.id")
+        self.assertLess(i_forge, i_alert, "alert hook sits after the forge block")
+
+    def test_nvs_keys_pinned_in_wiring(self) -> None:
+        for key in ('"alertEvLog"', '"alertBoot"', '"alert_watch"'):
+            self.assertIn(key, self.dash + self.main)
+
+    def test_alert_events_route_exists(self) -> None:
+        self.assertIn('"/alert_events"', self.dash)
+
+    def test_status_has_alertwatch_block(self) -> None:
+        self.assertIn('"alertWatch"', self.dash)
+
+    def test_executor_evicts_auto_sessions_and_degrades(self) -> None:
+        # §8-④: evict oldest AUTO session on capacity pressure, and a
+        # still-starved grid must degrade to log-only (deny), not spin.
+        self.assertIn("recV2RemoveSession", self.dash)
+        self.assertIn('"auto"', self.dash)
+        self.assertIn("dashAlertWatchNotifyCaptureBegin(ok, reason)",
+                      self.dash)  # the deny path rides reason="no space"
+        self.assertIn('"no space"', self.dash)
+
+    def test_psram_ring_alloc_with_fail_closed(self) -> None:
+        # 256KB PSRAM ring; alloc failure self-disables the feature
+        # (fail-closed) instead of running sentinels without pre-context.
+        wiring = self.main + self.dash
+        self.assertIn("heap_caps_malloc", wiring)
+        self.assertIn("MALLOC_CAP_SPIRAM", wiring)
+        self.assertIn("dashAlertWatchSetEnabled(false", self.main +
+                      self.dash)
+
+    def test_pref_defaults_on(self) -> None:
+        # Passive listening is zero-risk: preference ships ON.
+        i = self.main.find("t2canAlertWatchPrefGet")
+        body = self.main[i : i + 400]
+        self.assertIn("stored = 1", body)

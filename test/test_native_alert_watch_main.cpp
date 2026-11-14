@@ -317,6 +317,22 @@ static void test_sm_log_events_never_arm()
     }
 }
 
+static void test_enabled_flag_gates_all_entries()
+{
+    uint32_t before = g_alertCaptureSeq; // monotonic, never caps
+    dashAlertWatchSetEnabled(false);
+    const uint8_t f[8] = {0x90, 0x80, 0x20, 0, 0, 0, 0, 0};
+    CHECK(!dashAlertWatchOnFrame(0x526, 8, f, 500000));
+    CHECK(!dashAlertWatchOnTripwire(f, 500001));
+    uint8_t rb[3 * 18];
+    dashAlertWatchRingInit(rb, sizeof(rb));
+    CHECK(!dashAlertWatchRingPush(0x368, 8, f, 500002));
+    CHECK(g_alertCaptureSeq == before); // nothing new recorded
+    dashAlertWatchSetEnabled(true);
+    CHECK(dashAlertWatchOnFrame(0x526, 8, f, 500003)); // alive again
+    CHECK(g_alertCaptureSeq == before + 1);
+}
+
 int main()
 {
     test_log_frame_a144_is_capture();
@@ -331,6 +347,7 @@ int main()
     test_sm_external_recording_skips_flush();
     test_sm_denied_capture_marks_event_and_cooldowns();
     test_sm_log_events_never_arm();
+    test_enabled_flag_gates_all_entries();
     if (g_fail == 0)
         std::printf("ALL PASS\n");
     else

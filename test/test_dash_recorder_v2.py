@@ -69,8 +69,10 @@ class DashRecorderV2ContractTests(unittest.TestCase):
     # --- dashboard hook wiring ---------------------------------------------
 
     def test_three_hooks_gated_by_macro(self) -> None:
+        # Exact call form: the stamped backfill variant
+        # (dashRecV2SubmitRecord) must not count as a live-path hook.
         self.assertEqual(
-            self.dash.count("dashRecV2Submit"), 3,
+            self.dash.count("dashRecV2Submit("), 3,
             "exactly three submit hooks: onFrame / sniffCan3 / onTxFrame")
         self.assertGreaterEqual(
             self.dash.count("DASH_RECORDER_V2"), 4,
@@ -750,12 +752,22 @@ class DashRecorderV2StreamConfigTests(unittest.TestCase):
         self.assertIn('\\"recbb_stream\\"', body)
 
     def test_dashboard_call_sites_are_macro_gated(self) -> None:
-        # Exactly two live call sites (POST handler + boot load) plus one
-        # read (save). Each must sit inside its own DASH_RECORDER_V2 guard
-        # — on T2CAN the engine header compiles away entirely.
+        # Exactly five live call sites: POST handler + boot load (the
+        # user-facing writers) plus the alert auto-capture executor's
+        # three (arm at capture begin, disarm at lock completion, disarm
+        # at lock rejection — spec 2026-11-13-alert-telemetry §5.2). The
+        # executor sites must ALL live inside dashAlertWatchService.
         self.assertEqual(
-            self.dash.count("dashRecV2SetStreamArmed("), 2,
-            "POST handler + boot load are the only writers")
+            self.dash.count("dashRecV2SetStreamArmed("), 5,
+            "POST handler + boot load + alert executor are the writers")
+        svc = self.dash.index("static void dashAlertWatchService()")
+        svc_end = self.dash.index("\n}\n", svc)
+        for at in [i for i in range(len(self.dash))
+                   if self.dash.startswith("dashRecV2SetStreamArmed(", i)]:
+            in_service = svc < at < svc_end
+            is_legacy = at < svc  # both user-facing sites precede the executor
+            self.assertTrue(in_service or is_legacy,
+                            "stream-gate writer outside the enumerated set")
         for at in [i for i in range(len(self.dash))
                    if self.dash.startswith("dashRecV2SetStreamArmed(", i)]:
             guard = self.dash.rfind("#if defined(DASH_RECORDER_V2)", 0, at)

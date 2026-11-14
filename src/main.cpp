@@ -266,6 +266,31 @@ bool t2canBanForgePrefSet(uint8_t v)
     return ok;
 }
 
+// Alert Telemetry persistence (2026-11-14): same namespace/pattern as the
+// ban-forge pref. Default ON — passive listening is zero-risk (spec §5.4).
+uint8_t t2canAlertWatchPrefGet(void)
+{
+    uint8_t stored = 1; // ships ON; absence of the key means ON
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READONLY, &handle) == ESP_OK)
+    {
+        nvs_get_u8(handle, "alert_watch", &stored);
+        nvs_close(handle);
+    }
+    return stored;
+}
+
+bool t2canAlertWatchPrefSet(uint8_t v)
+{
+    nvs_handle_t handle;
+    if (nvs_open("t2can", NVS_READWRITE, &handle) != ESP_OK)
+        return false;
+    bool ok = nvs_set_u8(handle, "alert_watch", v) == ESP_OK &&
+              nvs_commit(handle) == ESP_OK;
+    nvs_close(handle);
+    return ok;
+}
+
 uint8_t t2canBanForgeArmGet(void)
 {
     uint8_t stored = 0;
@@ -1245,6 +1270,10 @@ static void app_main_setup()
     // armed flag stays false at boot (fail-closed; re-arm explicitly via
     // the defense page). The passive 0x368 tripwire needs no state.
     dashBanForgeSetPref(t2canBanForgePrefGet() != 0);
+    // Alert telemetry (2026-11-14): pref (default on), PSRAM watch ring,
+    // boot sequence, event-log restore. Self-disables fail-closed if the
+    // ring cannot be allocated.
+    dashAlertWatchSetup(t2canAlertWatchPrefGet() != 0);
 #endif
 #if defined(DASH_HEAP_GUARD_V2)
     // Heap guard tripwire v2 (2026-11-02 forensics round 3): sentinel the

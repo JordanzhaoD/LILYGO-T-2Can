@@ -87,8 +87,11 @@ struct DashAlertEvent
     bool captureFailed; // §8-④: auto-capture denied (capacity) marks the event
 };
 
+inline bool g_alertWatchEnabled = true; // wiring pref gate (default ON)
+inline void dashAlertWatchSetEnabled(bool on) { g_alertWatchEnabled = on; }
 inline uint32_t g_alertBootSeq = 0;
-inline uint32_t g_alertCaptureSeq = 0; // capture-severity events ever (SM trigger)
+inline uint32_t g_alertCaptureSeq = 0;  // capture-severity events ever (SM trigger)
+inline uint32_t g_alertEventTotal = 0;  // events ever (wiring persist marker)
 inline DashAlertEvent g_alertEvents[24] = {};
 inline size_t g_alertEventCount = 0;  // number of valid events (capped at 24)
 inline size_t g_alertEventNext = 0;   // ring write slot
@@ -106,6 +109,7 @@ inline void dashAlertWatchPushEvent(const DashAlertEvent &e)
     g_alertEventNext = (g_alertEventNext + 1) % 24;
     if (g_alertEventCount < 24)
         g_alertEventCount++;
+    g_alertEventTotal++;
     if (e.sev == kSevCapture)
         g_alertCaptureSeq++; // the state machine's trigger counter
 }
@@ -291,6 +295,8 @@ inline bool dashAlertWatchIdWatched(uint32_t id)
 inline bool dashAlertWatchRingPush(uint32_t id, uint8_t dlc, const uint8_t *data,
                                    uint32_t tsUs)
 {
+    if (!g_alertWatchEnabled)
+        return false;
     if (g_alertRingBuf == nullptr || g_alertRingCap == 0 ||
         data == nullptr || !dashAlertWatchIdWatched(id))
         return false;
@@ -469,6 +475,8 @@ inline DashAlertPoll dashAlertWatchPoll(uint32_t nowMs)
 
 inline bool dashAlertWatchOnTripwire(const uint8_t deviant[8], uint32_t nowMs)
 {
+    if (!g_alertWatchEnabled)
+        return false;
     for (size_t i = 0; i < g_alertDeviantCount; i++)
         if (std::memcmp(g_alertDeviant[i], deviant, 8) == 0)
             return false; // §8-①: distinct payloads only
@@ -492,6 +500,8 @@ inline bool dashAlertWatchOnTripwire(const uint8_t deviant[8], uint32_t nowMs)
 inline bool dashAlertWatchOnFrame(uint32_t id, uint8_t dlc, const uint8_t *data,
                                   uint32_t nowMs)
 {
+    if (!g_alertWatchEnabled)
+        return false;
     if (dlc < 1 || data == nullptr)
         return false;
     if (id == 0x346)
