@@ -211,3 +211,36 @@ class UiScriptSyntaxTests(unittest.TestCase):
                 self.assertEqual(r.returncode, 0,
                                  f"script block {i} has a syntax error "
                                  f"(this kills the whole page):\n{r.stderr[:400]}")
+
+
+class OtaStallGuardContractTests(unittest.TestCase):
+    """2026-11-15 field root cause: a mid-upload client death leaves the
+    WebServer parse loop spinning on a half-dead socket forever; the OTA
+    handler deinit'd the task watchdog at start and NOTHING re-arms or
+    watches — webTask (httpd + ArduinoOTA + wifi self-heal) wedges until
+    power cycle. Fix: a stall sentinel in the LOOP task (proven survivor):
+    upload active && >30 s without a WRITE callback -> controlled restart."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dash = (ROOT / "include" / "web" / "mcp2515_dashboard.h").read_text(
+            encoding="utf-8")
+
+    def test_upload_callbacks_track_progress(self) -> None:
+        start = self.dash.index("static void handleOtaUpload()")
+        body = self.dash[start : start + 2500]  # result handler sits earlier in file
+        self.assertIn("UPLOAD_FILE_START", body)
+        self.assertIn("g_otaRxActive = true", body)       # armed at start
+        self.assertIn("g_otaRxLastMs = millis()", body)    # touched on write
+        self.assertIn("UPLOAD_FILE_ABORTED", body)
+        self.assertIn("g_otaRxActive = false", body)       # cleared on end/abort
+
+    def test_stall_sentinel_lives_in_the_loop_task(self) -> None:
+        # The sentinel must NOT live in webTask (the task that hangs).
+        loop_start = self.dash.index("static void mcpDashboardLoop")
+        loop = self.dash[loop_start : loop_start + 2000]
+        self.assertIn("kOtaStallMs", loop)
+        self.assertIn("ESP.restart()", loop)
+        web = self.dash[self.dash.index("static void webTask"):
+                        self.dash.index("static void mcpDashboardSetup")]
+        self.assertNotIn("kOtaStallMs", web)

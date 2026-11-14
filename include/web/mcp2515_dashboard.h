@@ -2826,11 +2826,20 @@ static void appendAlertWatchJson(String &j, unsigned long)
     const char *smName = "idle";
     switch (g_alertSm)
     {
-    case DashAlertSm::PendingFlush: smName = "flush"; break;
-    case DashAlertSm::Capturing: smName = "capturing"; break;
-    case DashAlertSm::LockPending: smName = "locking"; break;
-    case DashAlertSm::Cooldown: smName = "cooldown"; break;
-    default: break;
+    case DashAlertSm::PendingFlush:
+        smName = "flush";
+        break;
+    case DashAlertSm::Capturing:
+        smName = "capturing";
+        break;
+    case DashAlertSm::LockPending:
+        smName = "locking";
+        break;
+    case DashAlertSm::Cooldown:
+        smName = "cooldown";
+        break;
+    default:
+        break;
     }
     j += R"JSON(,"sm":")JSON";
     j += smName;
@@ -4629,13 +4638,13 @@ static void handleDefenseConfig()
                     dashLog("[BANFORGE] disarmed by config");
                 dashBanForgeRequestArm(0);
                 if (!(dashAsPermit.master && dashAsPermit.armed))
-                    t2canAutoshiftModeDirty();  // restore LISTEN_ONLY
+                    t2canAutoshiftModeDirty(); // restore LISTEN_ONLY
             }
             else if (dashBanForgeRequestArm(banArmWanted))
             {
                 dashLog(String("[BANFORGE] arm B") + String(banArmWanted) +
                         String(" armed (max 3 injections, 600ms window)"));
-                t2canAutoshiftModeDirty();  // flip TWAI2 to NORMAL on can_rt
+                t2canAutoshiftModeDirty(); // flip TWAI2 to NORMAL on can_rt
             }
             else
             {
@@ -5121,7 +5130,7 @@ static void handleRecStatus()
 void t2canSetServiceMode(bool on);
 bool t2canGetServiceMode(void);
 uint16_t t2canBus2IdCount(void);
-bool t2canCan2Up(void);  // P4-3CAN: CanB lane constructed this boot
+bool t2canCan2Up(void); // P4-3CAN: CanB lane constructed this boot
 uint32_t t2canBus2RxCount(void);
 uint32_t t2canBus2TxCount(void);
 uint32_t t2canBus2TxErrCount(void);
@@ -5501,6 +5510,18 @@ static void handleOtaResult()
     }
 }
 
+// OTA stall sentinel (2026-11-15 root cause: a mid-upload client death
+// wedges webTask forever in the WebServer parse loop — esp_hosted leaves
+// the socket unreadable-yet-connected; the handler's wdt_deinit disarms
+// every watchdog and nothing re-arms them. The LOOP task outlives the
+// hang (serial stays alive in the field), so it stands guard: upload
+// active with no WRITE progress for 30 s = dead for certain (healthy
+// transfers callback continuously) -> controlled restart. Dual-slot OTA
+// makes that safe: otadata switches only after a complete write.
+static volatile bool g_otaRxActive = false;
+static volatile uint32_t g_otaRxLastMs = 0;
+static constexpr uint32_t kOtaStallMs = 30000;
+
 static void handleOtaUpload()
 {
     if (!server.authenticate(DASH_OTA_USER, DASH_OTA_PASS))
@@ -5509,12 +5530,15 @@ static void handleOtaUpload()
     if (upload.status == UPLOAD_FILE_START)
     {
         dashLog("[OTA] Receiving: " + String(upload.filename.c_str()));
+        g_otaRxActive = true;
+        g_otaRxLastMs = millis();
         esp_task_wdt_deinit();
         if (!Update.begin(UPDATE_SIZE_UNKNOWN))
             dashLog("[OTA] Begin failed: " + String(Update.errorString()));
     }
     else if (upload.status == UPLOAD_FILE_WRITE)
     {
+        g_otaRxLastMs = millis(); // healthy transfers touch this continuously
         if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
         {
             dashLog("[OTA] Write error: " + String(Update.errorString()));
@@ -5523,6 +5547,7 @@ static void handleOtaUpload()
     }
     else if (upload.status == UPLOAD_FILE_END)
     {
+        g_otaRxActive = false;
         if (upload.totalSize > 0 && Update.end(true) && Update.isFinished())
             dashLog("[OTA] Done: " + String(upload.totalSize) + " bytes");
         else
@@ -5534,6 +5559,7 @@ static void handleOtaUpload()
     else if (upload.status == UPLOAD_FILE_ABORTED)
     {
         dashLog("[OTA] Upload aborted");
+        g_otaRxActive = false;
         Update.abort();
     }
 }
@@ -7583,9 +7609,9 @@ static void dashSerialRunCommand(char *cmd)
                 const bool on = value != 0;
                 dashAsSetMaster(on);
                 if (!on)
-                    t2canAutoshiftArmedSet(0);  // parity with the web path:
-                                                // stale NVS armed=1 would
-                                                // skip the ritual on reboot
+                    t2canAutoshiftArmedSet(0); // parity with the web path:
+                                               // stale NVS armed=1 would
+                                               // skip the ritual on reboot
                 if (!t2canAutoshiftMasterSet((uint8_t)(value != 0)))
                     Serial.println("[as] NVS write failed");
                 t2canAutoshiftModeDirty();
@@ -9124,7 +9150,8 @@ static void handleSessionDownload()
     uint32_t firstOff =
         kRecBBHeaderSize +
         ((bbStart - kRecBBHeaderSize + sizeof(RecRingFrame) - 1) /
-         sizeof(RecRingFrame)) * sizeof(RecRingFrame);
+         sizeof(RecRingFrame)) *
+            sizeof(RecRingFrame);
     uint32_t lastOff =
         kRecBBHeaderSize +
         ((bbEnd - kRecBBHeaderSize) / sizeof(RecRingFrame)) *
@@ -9580,8 +9607,8 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
 // Executor + persistence for the pure core. The pref switch stops INPUTS
 // at the dispatch (core gate); any in-flight capture cycle runs to its
 // natural Lock finish here — no half-armed stream survives a pref flip.
-static bool g_alertWeArmed = false;       // THIS capture armed the stream
-static bool g_alertLockIssued = false;    // LockRequest accepted, finisher pending
+static bool g_alertWeArmed = false;    // THIS capture armed the stream
+static bool g_alertLockIssued = false; // LockRequest accepted, finisher pending
 static uint32_t g_alertPersistedTotal = 0;
 
 static size_t dashAlertFreeGridBlocks()
@@ -9810,7 +9837,7 @@ static void handleAlertEvents()
                 j += ",";
             firstBit = false;
             j += String("\"") +
-                  dashAlertWatchName(kAlertSrcMatrix346, code) + "\"";
+                 dashAlertWatchName(kAlertSrcMatrix346, code) + "\"";
         }
     j += "]}";
     server.send(200, "application/json", j);
@@ -9821,6 +9848,15 @@ static void mcpDashboardLoop()
 {
     if (Update.isRunning())
         return;
+    // OTA stall guard: webTask may be wedged mid-upload (see the sentinel
+    // comment above) — this task outlives it, so it owns the recovery.
+    if (g_otaRxActive && millis() - g_otaRxLastMs > kOtaStallMs)
+    {
+        dashLog("[OTA] Upload stalled >30s - controlled restart (httpd hang guard)");
+        Serial.println("[OTA] stall guard: restarting");
+        delay(200);
+        ESP.restart();
+    }
     dashSerialDiagnosticsPoll();
     if (recActive && (millis() - recStartMs >= recDurationMs))
         dashRequestRecStop(kRecStopTimeLimit);
