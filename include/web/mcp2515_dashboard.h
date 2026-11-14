@@ -2823,6 +2823,18 @@ static void appendAlertWatchJson(String &j, unsigned long)
     j += String(dashAlertWatchRingCount());
     j += R"JSON(,"eventTotal":)JSON";
     j += String(g_alertEventTotal);
+    const char *smName = "idle";
+    switch (g_alertSm)
+    {
+    case DashAlertSm::PendingFlush: smName = "flush"; break;
+    case DashAlertSm::Capturing: smName = "capturing"; break;
+    case DashAlertSm::LockPending: smName = "locking"; break;
+    case DashAlertSm::Cooldown: smName = "cooldown"; break;
+    default: break;
+    }
+    j += R"JSON(,"sm":")JSON";
+    j += smName;
+    j += "\"";
     const DashAlertEvent *last = dashAlertWatchLastEvent();
     if (last)
     {
@@ -4854,6 +4866,24 @@ static void handleFrames()
         }
         j += "],\"name\":\"" + jsonEscape(decodeCanId(f.id)) + "\"}";
     }
+    j += "],\"matrix\":\"";
+    char mhex[17];
+    for (uint8_t b = 0; b < 8; b++)
+        snprintf(mhex + b * 2, 3, "%02X", g_alertMatrix[b]);
+    j += mhex;
+    j += "\",\"matrixBits\":[";
+    bool firstBit = true;
+    for (uint8_t byte = 0; byte < 8; byte++)
+        for (uint8_t bit = 0; bit < 8; bit++)
+        {
+            if (!(g_alertMatrix[byte] & (1u << bit)))
+                continue;
+            uint8_t code = byte * 8 + bit + 1;
+            if (!firstBit)
+                j += ",";
+            firstBit = false;
+            j += String "\"") + dashAlertWatchName(kAlertSrcMatrix346, code) + "\"";
+        }
     j += "]}";
     server.send(200, "application/json", j);
 }

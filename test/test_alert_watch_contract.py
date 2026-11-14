@@ -140,3 +140,38 @@ class AlertWatchWiringContractTests(unittest.TestCase):
         i = self.main.find("t2canAlertWatchPrefGet")
         body = self.main[i : i + 400]
         self.assertIn("stored = 1", body)
+
+
+class AlertWatchUiContractTests(unittest.TestCase):
+    """Plan Task 6: defense-page alert forensics card (spec §5.4)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.ui = (ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h").read_text(
+            encoding="utf-8")
+        cls.dash = (ROOT / "include" / "web" / "mcp2515_dashboard.h").read_text(
+            encoding="utf-8")
+
+    def test_card_elements_exist(self) -> None:
+        for el in ('id="alw-status"', 'id="alw-matrix"', 'id="alw-events"',
+                   'id="alw-tgl"'):
+            self.assertIn(el, self.ui)
+
+    def test_events_endpoint_fetched(self) -> None:
+        self.assertIn("fetch('/alert_events')", self.ui)
+
+    def test_toggle_rides_defense_config(self) -> None:
+        self.assertIn("alert_watch:", self.ui)  # saveDefenseConfig payload key
+
+    def test_status_poll_feeds_card(self) -> None:
+        self.assertIn("d.alertWatch", self.ui)
+
+    def test_events_endpoint_exposes_matrix(self) -> None:
+        # The live 0x346 latch (decoded names) ships with the event log.
+        self.assertIn("matrixBits", self.dash)
+
+    def test_i18n_covers_new_terms(self) -> None:
+        # One representative term appears both as data-i18n and in the
+        # EN dictionary (the zh source string is the dictionary key).
+        self.assertIn('data-i18n="告警取证"', self.ui)
+        self.assertIn("'告警取证':", self.ui)

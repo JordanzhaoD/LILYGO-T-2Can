@@ -1312,6 +1312,22 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
+      <div class="setting-name" data-i18n="告警取证">告警取证</div>
+      <div class="setting-desc" data-i18n="被动监听车端告警（0x346 矩阵/0x526/0x5A5/0x524 日志+0x368 tripwire）；配置/跛行级事件自动抓拍总线上下文">被动监听车端告警（0x346 矩阵/0x526/0x5A5/0x524 日志+0x368 tripwire）；配置/跛行级事件自动抓拍总线上下文</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="alw-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="diag-grid" style="margin:6px 0 4px">
+    <div class="diag-item"><span class="lbl" data-i18n="监听状态">监听状态</span><span class="v-dim" id="alw-status" data-i18n="已关闭">已关闭</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="环占用">环占用</span><span class="v-dim" id="alw-ring">0</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="累计事件">累计事件</span><span class="v-dim" id="alw-total">0</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="抓拍状态">抓拍状态</span><span class="v-dim" id="alw-sm">idle</span></div>
+  </div>
+  <div class="diag-item" style="margin:2px 0"><span class="lbl" data-i18n="0x346 锁存">0x346 锁存</span>&nbsp;<span class="v-dim" id="alw-matrix" data-i18n="无">无</span></div>
+  <div style="margin:4px 0"><div class="lbl" data-i18n="最近事件">最近事件</div><div id="alw-events" class="v-dim" style="font-size:12px;line-height:1.6" data-i18n="暂无告警">暂无告警</div></div>
+  <div class="setting-desc" style="margin-top:4px"><a href="/alert_events" target="_blank" data-i18n="导出事件 JSON">导出事件 JSON</a> · <span data-i18n="自动抓拍的会话在录制页的会话列表下载">自动抓拍的会话在录制页的会话列表下载</span></div>
+  <div class="setting-row">
+    <div>
       <div class="setting-name" data-i18n="AP 注入门控">AP 注入门控</div>
       <div class="setting-desc" data-i18n="Legacy 仅在 0x399 AP 活动后才允许注入（服务端强制，fail-closed）">Legacy 仅在 0x399 AP 活动后才允许注入（服务端强制，fail-closed）</div>
     </div>
@@ -2263,6 +2279,14 @@ var I18N={
   '自动换挡 ':'Auto Shift ','速度免打扰 ':'Speed DND ','限速覆盖 ':'Limit Override ',
   '防封禁 Ban Shield ':'Ban Shield ','实验臂':'Experiment Arm',
   '0x368 档位遮罩实验：默认关闭；开启后选择实验臂，每次臂注入≤3帧后自动停止。被动 tripwire 常开记录 0x368 变化':'0x368 tier-mask experiment: off by default; enable, pick an arm — each arm injects at most 3 frames then auto-stops. Passive tripwire always on, logging 0x368 changes',
+  ,'告警取证':'Alert forensics'
+  ,'被动监听车端告警（0x346 矩阵/0x526/0x5A5/0x524 日志+0x368 tripwire）；配置/跛行级事件自动抓拍总线上下文':'Passive vehicle-alert watch (0x346 matrix, 0x526/0x5A5/0x524 logs, 0x368 tripwire); config/limp-class events auto-capture bus context'
+  ,'监听状态':'Watch state','监听中':'Watching','已关闭':'Off'
+  ,'环占用':'Ring use','累计事件':'Events total','抓拍状态':'Capture'
+  ,'0x346 锁存':'0x346 latch','无':'None'
+  ,'最近事件':'Recent events','暂无告警':'No alerts'
+  ,'导出事件 JSON':'Export events JSON'
+  ,'自动抓拍的会话在录制页的会话列表下载':'Auto-captured sessions download from the recorder session list'
   'B1-B5=五个档位位候选；B6=B1+加法校验兜底；B7=整字节探针；每次臂间冷却30秒':'B1-B5 = five tier-bit candidates; B6 = B1 + additive checksum fallback; B7 = full-byte probe; 30s cooldown between arms',
   '校验和兜底':'Checksum Fallback','整字节探针':'Full-Byte Probe',
   '开关状态':'State','当前臂':'Active Arm','已注入':'Injected','tripwire 命中':'Tripwire Hits','待命':'Standby',
@@ -2766,6 +2790,7 @@ async function loadDefenseConfig(){
   var otaOvr=$('def-ota-ovr-tgl');if(otaOvr)otaOvr.checked=!!d.ota_guard_override;
   var jtTgl=$('def-jitter-tgl');if(jtTgl)jtTgl.checked=!!d.jitter;
   var banTgl=$('def-ban-shield-tgl');if(banTgl)banTgl.checked=!!d.banForge;
+  var alwRTgl=$('alw-tgl');if(alwRTgl)alwRTgl.checked=!!(d.alertWatch&&d.alertWatch.enabled);
   var banArm=$('def-ban-shield-arm');if(banArm)banArm.value=''+(d.banForgeArm||0);
   var safety=d.legacyInjectionSafety||{};
   var abort=safety.abortGuard||{};
@@ -3154,6 +3179,7 @@ async function saveDefenseConfig(){
   var jtTgl=$('def-jitter-tgl');
   var banTgl=$('def-ban-shield-tgl');
   var banArm=$('def-ban-shield-arm');
+  var alwTgl=$('alw-tgl');
   var data={
     enabled:master&&master.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
@@ -3164,7 +3190,8 @@ async function saveDefenseConfig(){
     abort_guard:abortTgl&&abortTgl.checked?'1':'0',
     ota_guard_override:otaOvr&&otaOvr.checked?'1':'0',
     jitter:jtTgl&&jtTgl.checked?'1':'0',
-    ban_forge:banTgl&&banTgl.checked?'1':'0'
+    ban_forge:banTgl&&banTgl.checked?'1':'0',
+    alert_watch:alwTgl&&alwTgl.checked?'1':'0'
   };
   if(dndSpd)data.dnd_speed=dndSpd.checked?'1':'0';
   if(banArm)data.ban_forge_arm=banArm.value||'0';
@@ -4190,6 +4217,29 @@ function renderLegacyTruth(d){
   set('st-banforge-arm',bf.arm?(bfArms[bf.arm]||('B'+bf.arm)):'--');
   set('st-banforge-injected',''+(bf.injected||0));
   set('st-banforge-tripwire',''+(bf.tripwireHits||0));
+  const aw=d.alertWatch||{};
+  set('alw-status',aw.enabled?T('监听中'):T('已关闭'));
+  set('alw-ring',''+(aw.ringCount||0));
+  set('alw-total',''+(aw.eventTotal||0));
+  set('alw-sm',aw.sm||'idle');
+  const alwLast=aw.lastEvent;
+  if(alwLast&&alwLast.tMs!==undefined&&alwLast.tMs!==g_alwLastMs){
+    g_alwLastMs=alwLast.tMs;loadAlertEvents();
+  }
+}
+var g_alwLastMs=-1;
+async function loadAlertEvents(){
+  try{
+    const r=await fetch('/alert_events');if(!r.ok)return;
+    const d=await r.json();
+    const bits=(d.matrixBits||[]);
+    set('alw-matrix',bits.length?('0x'+(d.matrix||'')+' · '+bits.slice(0,8).join(', ')):T('无'));
+    const evs=d.events||[];
+    if(!evs.length){set('alw-events',T('暂无告警'));return;}
+    set('alw-events',evs.slice(-10).reverse().map(e=>
+      '#'+(e.bootSeq||0)+' '+(e.sev?'【CAP】':'')+((e.name||('a'+e.code))+' '+(e.data||'')+(e.captureFailed?' (抓拍失败)':''))
+    ).join('<br>'));
+  }catch(e){}
 }
 
 // ── Temp from system_status ────────────────────────────────
