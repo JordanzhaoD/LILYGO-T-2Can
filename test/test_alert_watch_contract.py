@@ -244,3 +244,49 @@ class OtaStallGuardContractTests(unittest.TestCase):
         web = self.dash[self.dash.index("static void webTask"):
                         self.dash.index("static void mcpDashboardSetup")]
         self.assertNotIn("kOtaStallMs", web)
+
+
+class WebTaskLivenessContractTests(unittest.TestCase):
+    """2026-11-15 field pattern: httpd dies occasionally during NORMAL
+    driving, not only during OTA. webTask (8KB stack) alone runs httpd +
+    ArduinoOTA + wifi self-heal, and any of several stall vectors wedges
+    it until power cycle: stalled upload parse (fixed separately), a
+    stalled download/response send to a locked-screen phone, an
+    esp_hosted radio death, or handler stack pressure. Unified hardening:
+    a liveness heartbeat — webTask stamps every loop, streaming handlers
+    stamp every chunk, and the loop task (proven survivor) restarts the
+    board after 60 s of zero progress (the restart also reboots the C6,
+    healing hosted-side wedges). Plus a stack bump 8K -> 12K."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dash = (ROOT / "include" / "web" / "mcp2515_dashboard.h").read_text(
+            encoding="utf-8")
+
+    def test_webtask_stamps_heartbeat(self) -> None:
+        start = self.dash.index("static void webTask")
+        body = self.dash[start : start + 400]
+        self.assertIn("g_webAliveMs", body)
+
+    def test_loop_task_owns_liveness_guard(self) -> None:
+        start = self.dash.rindex("static void mcpDashboardLoop")
+        body = self.dash[start : start + 2200]
+        self.assertIn("kWebDeadMs", body)
+        self.assertIn("ESP.restart()", body)
+        self.assertIn("g_webAliveMs", body)
+
+    def test_streaming_download_stamps_per_chunk(self) -> None:
+        # The session download is the longest legit handler; its chunk
+        # loops must feed the heartbeat so a healthy slow client never
+        # trips the guard (only a truly stalled socket does).
+        start = self.dash.index("static void handleSessionDownload")
+        body = self.dash[start : start + 9000]
+        self.assertIn("g_webAliveMs", body)
+
+    def test_webtask_stack_raised(self) -> None:
+        # 8K + String-heavy handlers (sessions list, alert events ~3KB)
+        # ran close to the documented overflow edge; 12K is cheap
+        # insurance on a PSRAM-rich board.
+        self.assertIn("xTaskCreatePinnedToCore(webTask, \"web\", 12288",
+                      self.dash)
+        self.assertIn("xTaskCreate(webTask, \"web\", 12288", self.dash)

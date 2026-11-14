@@ -195,7 +195,7 @@ class DashRecorderV2LockContractTests(unittest.TestCase):
         self.assertIn(
             'server.on("/ring_status", HTTP_GET, handleRingStatus)', self.dash)
         loop_fn = self.dash.index("static void mcpDashboardLoop()")
-        loop_body = self.dash[loop_fn:loop_fn + 900]
+        loop_body = self.dash[loop_fn:loop_fn + 1600]  # guards prepend; the pin is presence, not offset
         self.assertIn("dashRecV2Loop()", loop_body,
                       "lock state machine is polled from the dashboard loop")
 

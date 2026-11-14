@@ -5518,6 +5518,14 @@ static void handleOtaResult()
 // active with no WRITE progress for 30 s = dead for certain (healthy
 // transfers callback continuously) -> controlled restart. Dual-slot OTA
 // makes that safe: otadata switches only after a complete write.
+// webTask liveness heartbeat (2026-11-15 hardening): webTask stamps
+// every loop (~10 ms) and streaming handlers stamp per chunk; the loop
+// task restarts the board after 60 s of zero progress — covering every
+// webTask stall vector (stalled upload parse, stalled download send to
+// a locked-screen phone, handler wedge) and healing esp_hosted radio
+// deaths with it (the restart resets the C6 slave too).
+static volatile uint32_t g_webAliveMs = 0;
+static constexpr uint32_t kWebDeadMs = 60000;
 static volatile bool g_otaRxActive = false;
 static volatile uint32_t g_otaRxLastMs = 0;
 static constexpr uint32_t kOtaStallMs = 30000;
@@ -9003,6 +9011,7 @@ static void webTask(void *)
 {
     for (;;)
     {
+        g_webAliveMs = millis();
         ArduinoOTA.handle();
         server.handleClient();
         dashCheckWifi();
@@ -9286,6 +9295,7 @@ static void handleSessionDownload()
                 vTaskDelay(1);
         }
         base += frames * sizeof(RecRingFrame);
+        g_webAliveMs = millis(); // chunk fed: healthy slow clients live
         // Wrapped range: after segment A drains, resume at the
         // header anchor for segment B ([32, bbEnd)) — once (C-1).
         if (wrapped && base >= limit)
@@ -9594,9 +9604,9 @@ static void mcpDashboardSetup(CarManagerBase *handler, CanDriver *driver)
     if (strlen(staSSID) > 0)
         dashScheduleSTAConnect(kDashStaBootDelayMs);
 #if CONFIG_FREERTOS_UNICORE
-    xTaskCreate(webTask, "web", 8192, nullptr, 1, nullptr);
+    xTaskCreate(webTask, "web", 12288, nullptr, 1, nullptr);
 #else
-    xTaskCreatePinnedToCore(webTask, "web", 8192, nullptr, 1, nullptr, 1);
+    xTaskCreatePinnedToCore(webTask, "web", 12288, nullptr, 1, nullptr, 1);
 #endif
     Serial.println("[WEB] Dashboard: http://" + WiFi.softAPIP().toString());
     dashLog("[BOOT] ev-open-can-tools ready");
@@ -9854,6 +9864,17 @@ static void mcpDashboardLoop()
     {
         dashLog("[OTA] Upload stalled >30s - controlled restart (httpd hang guard)");
         Serial.println("[OTA] stall guard: restarting");
+        delay(200);
+        ESP.restart();
+    }
+    // webTask liveness: no loop stamp and no streaming progress for 60 s
+    // means webTask (httpd + OTA + wifi self-heal) is wedged — restart
+    // heals it AND the esp_hosted C6 slave. Boot grace: g_webAliveMs
+    // starts at 0 and millis() - 0 < 60 s covers task startup.
+    if (millis() > kWebDeadMs && millis() - g_webAliveMs > kWebDeadMs)
+    {
+        dashLog("[WEB] webTask stalled >60s - controlled restart (liveness guard)");
+        Serial.println("[WEB] liveness guard: restarting");
         delay(200);
         ESP.restart();
     }
