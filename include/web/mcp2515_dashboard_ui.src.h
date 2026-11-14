@@ -2278,7 +2278,7 @@ var I18N={
   '忽略车辆 OTA 守卫 ':'Ignore Vehicle OTA Guard ','最大性能 ':'Max Performance ','爆闪开关 ':'Burst Switch ',
   '自动换挡 ':'Auto Shift ','速度免打扰 ':'Speed DND ','限速覆盖 ':'Limit Override ',
   '防封禁 Ban Shield ':'Ban Shield ','实验臂':'Experiment Arm',
-  '0x368 档位遮罩实验：默认关闭；开启后选择实验臂，每次臂注入≤3帧后自动停止。被动 tripwire 常开记录 0x368 变化':'0x368 tier-mask experiment: off by default; enable, pick an arm — each arm injects at most 3 frames then auto-stops. Passive tripwire always on, logging 0x368 changes',
+  '0x368 档位遮罩实验：默认关闭；开启后选择实验臂，每次臂注入≤3帧后自动停止。被动 tripwire 常开记录 0x368 变化':'0x368 tier-mask experiment: off by default; enable, pick an arm — each arm injects at most 3 frames then auto-stops. Passive tripwire always on, logging 0x368 changes'
   ,'告警取证':'Alert forensics'
   ,'被动监听车端告警（0x346 矩阵/0x526/0x5A5/0x524 日志+0x368 tripwire）；配置/跛行级事件自动抓拍总线上下文':'Passive vehicle-alert watch (0x346 matrix, 0x526/0x5A5/0x524 logs, 0x368 tripwire); config/limp-class events auto-capture bus context'
   ,'监听状态':'Watch state','监听中':'Watching','已关闭':'Off'
@@ -2286,7 +2286,7 @@ var I18N={
   ,'0x346 锁存':'0x346 latch','无':'None'
   ,'最近事件':'Recent events','暂无告警':'No alerts'
   ,'导出事件 JSON':'Export events JSON'
-  ,'自动抓拍的会话在录制页的会话列表下载':'Auto-captured sessions download from the recorder session list'
+  ,'自动抓拍的会话在录制页的会话列表下载':'Auto-captured sessions download from the recorder session list',
   'B1-B5=五个档位位候选；B6=B1+加法校验兜底；B7=整字节探针；每次臂间冷却30秒':'B1-B5 = five tier-bit candidates; B6 = B1 + additive checksum fallback; B7 = full-byte probe; 30s cooldown between arms',
   '校验和兜底':'Checksum Fallback','整字节探针':'Full-Byte Probe',
   '开关状态':'State','当前臂':'Active Arm','已注入':'Injected','tripwire 命中':'Tripwire Hits','待命':'Standby',

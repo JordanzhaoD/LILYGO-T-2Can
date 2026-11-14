@@ -180,3 +180,34 @@ class AlertWatchUiContractTests(unittest.TestCase):
         # EN dictionary (the zh source string is the dictionary key).
         self.assertIn('data-i18n="告警取证"', self.ui)
         self.assertIn("'告警取证':", self.ui)
+
+
+class UiScriptSyntaxTests(unittest.TestCase):
+    """2026-11-14 field incident: a double comma in the i18n dictionary
+    shipped through the minifier silently and killed the ENTIRE page at
+    runtime (one script block = one syntax unit: every control died).
+    Pin: every <script> block in the UI source must parse under node."""
+
+    def test_all_script_blocks_parse(self) -> None:
+        import re
+        import shutil
+        import subprocess
+        import tempfile
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not available")
+        src = (ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h").read_text(
+            encoding="utf-8", errors="replace")
+        blocks = re.findall(r"<script[^>]*>(.*?)</script>", src, re.S)
+        self.assertGreaterEqual(len(blocks), 1, "UI must have script blocks")
+        with tempfile.TemporaryDirectory() as tmp:
+            for i, block in enumerate(blocks):
+                if not block.strip():
+                    continue
+                p = Path(tmp) / f"ui_{i}.js"
+                p.write_text(block, encoding="utf-8")
+                r = subprocess.run([node, "--check", str(p)],
+                                   capture_output=True, text=True, timeout=60)
+                self.assertEqual(r.returncode, 0,
+                                 f"script block {i} has a syntax error "
+                                 f"(this kills the whole page):\n{r.stderr[:400]}")
