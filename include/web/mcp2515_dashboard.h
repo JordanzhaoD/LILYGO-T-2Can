@@ -4866,24 +4866,6 @@ static void handleFrames()
         }
         j += "],\"name\":\"" + jsonEscape(decodeCanId(f.id)) + "\"}";
     }
-    j += "],\"matrix\":\"";
-    char mhex[17];
-    for (uint8_t b = 0; b < 8; b++)
-        snprintf(mhex + b * 2, 3, "%02X", g_alertMatrix[b]);
-    j += mhex;
-    j += "\",\"matrixBits\":[";
-    bool firstBit = true;
-    for (uint8_t byte = 0; byte < 8; byte++)
-        for (uint8_t bit = 0; bit < 8; bit++)
-        {
-            if (!(g_alertMatrix[byte] & (1u << bit)))
-                continue;
-            uint8_t code = byte * 8 + bit + 1;
-            if (!firstBit)
-                j += ",";
-            firstBit = false;
-            j += String("\"") + dashAlertWatchName(kAlertSrcMatrix346, code) + "\"";
-        }
     j += "]}";
     server.send(200, "application/json", j);
 }
@@ -9810,6 +9792,26 @@ static void handleAlertEvents()
              ",\"captureFailed\":" +
              (e.captureFailed ? "true" : "false") + "}";
     }
+    // Live 0x346 latch: hex bitmap + decoded set-bit names (≤8 in the UI).
+    j += "],\"matrix\":\"";
+    char mhex[17];
+    for (uint8_t b = 0; b < 8; b++)
+        snprintf(mhex + b * 2, 3, "%02X", g_alertMatrix[b]);
+    j += mhex;
+    j += "\",\"matrixBits\":[";
+    bool firstBit = true;
+    for (uint8_t byte = 0; byte < 8; byte++)
+        for (uint8_t bit = 0; bit < 8; bit++)
+        {
+            if (!(g_alertMatrix[byte] & (1u << bit)))
+                continue;
+            uint8_t code = byte * 8 + bit + 1;
+            if (!firstBit)
+                j += ",";
+            firstBit = false;
+            j += String("\"") +
+                  dashAlertWatchName(kAlertSrcMatrix346, code) + "\"";
+        }
     j += "]}";
     server.send(200, "application/json", j);
 }

@@ -167,8 +167,13 @@ class AlertWatchUiContractTests(unittest.TestCase):
         self.assertIn("d.alertWatch", self.ui)
 
     def test_events_endpoint_exposes_matrix(self) -> None:
-        # The live 0x346 latch (decoded names) ships with the event log.
-        self.assertIn("matrixBits", self.dash)
+        # The live 0x346 latch (decoded names) ships with the event log —
+        # and must live INSIDE handleAlertEvents (a 2026-11-14 field
+        # incident landed it in the /frames handler via a silent anchor).
+        start = self.dash.rindex("static void handleAlertEvents()")  # definition, past the fwd decl
+        body = self.dash[start : start + 3000]
+        self.assertIn("matrixBits", body)
+        self.assertIn("\"matrix\"", body)
 
     def test_i18n_covers_new_terms(self) -> None:
         # One representative term appears both as data-i18n and in the
