@@ -173,7 +173,7 @@ class AlertWatchUiContractTests(unittest.TestCase):
         start = self.dash.rindex("static void handleAlertEvents()")  # definition, past the fwd decl
         body = self.dash[start : start + 3000]
         self.assertIn("matrixBits", body)
-        self.assertIn("\"matrix\"", body)
+        self.assertIn('\\"matrix\\"', body)  # as escaped in C++ source
 
     def test_i18n_covers_new_terms(self) -> None:
         # One representative term appears both as data-i18n and in the
