@@ -4228,15 +4228,20 @@ function renderLegacyTruth(d){
   }
 }
 var g_alwLastMs=-1;
+// NOTE: this function lives OUTSIDE the dashboard's closure (appended
+// after the poll function), so the closure-private set()/T() helpers are
+// NOT in scope — calling them throws and the catch swallows it (the
+// 2026-11-15 '暂无告警' forever bug). Write DOM directly, literal strings.
+function alwSet(id,v){var e=document.getElementById(id);if(e)e.innerHTML=v;}
 async function loadAlertEvents(){
   try{
     const r=await fetch('/alert_events');if(!r.ok)return;
     const d=await r.json();
     const bits=(d.matrixBits||[]);
-    set('alw-matrix',bits.length?('0x'+(d.matrix||'')+' · '+bits.slice(0,8).join(', ')):T('无'));
+    alwSet('alw-matrix',bits.length?('0x'+(d.matrix||'')+' · '+bits.slice(0,8).join(', ')):'无');
     const evs=d.events||[];
-    if(!evs.length){set('alw-events',T('暂无告警'));return;}
-    set('alw-events',evs.slice(-10).reverse().map(e=>
+    if(!evs.length){alwSet('alw-events','暂无告警');return;}
+    alwSet('alw-events',evs.slice(-10).reverse().map(e=>
       '#'+(e.bootSeq||0)+' '+(e.sev?'【CAP】':'')+((e.name||('a'+e.code))+' '+(e.data||'')+(e.captureFailed?' (抓拍失败)':''))
     ).join('<br>'));
   }catch(e){}

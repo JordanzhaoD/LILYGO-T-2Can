@@ -290,3 +290,20 @@ class WebTaskLivenessContractTests(unittest.TestCase):
         self.assertIn("xTaskCreatePinnedToCore(webTask, \"web\", 12288",
                       self.dash)
         self.assertIn("xTaskCreate(webTask, \"web\", 12288", self.dash)
+
+
+class UiClosureDisciplineTests(unittest.TestCase):
+    """2026-11-15 bug: loadAlertEvents was appended OUTSIDE the dashboard
+    closure, so the closure-private set()/T() helpers threw a silent
+    ReferenceError and the event list rendered '暂无告警' forever. Pin:
+    standalone alert functions must write DOM directly, never borrow
+    closure helpers."""
+
+    def test_loader_never_borrows_closure_helpers(self) -> None:
+        ui = (ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h").read_text(
+            encoding="utf-8")
+        start = ui.index("async function loadAlertEvents")
+        body = ui[start : ui.index("}", ui.index("catch(e){}", start)) + 1]
+        self.assertNotIn("set(", body)
+        self.assertNotIn("T(", body)
+        self.assertIn("alwSet(", body)
