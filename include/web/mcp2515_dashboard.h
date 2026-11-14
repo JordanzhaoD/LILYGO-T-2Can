@@ -4882,7 +4882,7 @@ static void handleFrames()
             if (!firstBit)
                 j += ",";
             firstBit = false;
-            j += String "\"") + dashAlertWatchName(kAlertSrcMatrix346, code) + "\"";
+            j += String("\"") + dashAlertWatchName(kAlertSrcMatrix346, code) + "\"";
         }
     j += "]}";
     server.send(200, "application/json", j);
