@@ -2790,7 +2790,7 @@ async function loadDefenseConfig(){
   var otaOvr=$('def-ota-ovr-tgl');if(otaOvr)otaOvr.checked=!!d.ota_guard_override;
   var jtTgl=$('def-jitter-tgl');if(jtTgl)jtTgl.checked=!!d.jitter;
   var banTgl=$('def-ban-shield-tgl');if(banTgl)banTgl.checked=!!d.banForge;
-  var alwRTgl=$('alw-tgl');if(alwRTgl)alwRTgl.checked=!!(d.alertWatch&&d.alertWatch.enabled);
+  var alwRTgl=$('alw-tgl');if(alwRTgl)alwRTgl.checked=!!d.alertWatch; // C2 follow-up: defense GET field is a plain bool (the .enabled shape is /status's)
   var banArm=$('def-ban-shield-arm');if(banArm)banArm.value=''+(d.banForgeArm||0);
   var safety=d.legacyInjectionSafety||{};
   var abort=safety.abortGuard||{};

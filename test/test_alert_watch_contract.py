@@ -405,3 +405,17 @@ class FinalReviewFixPassTests(unittest.TestCase):
                         self.dash.rindex("static void handleAlertEvents()")]  # rindex: definition, not fwd decl
         self.assertLess(svc.index("dashAlertPersistEvents"),
                         svc.index("!recBBEnabled"))
+
+
+class C2FollowUpTests(unittest.TestCase):
+    """C2 follow-up (2026-11-15 field catch): the defense GET field is a
+    plain bool, but the toggle restore read the /status object shape
+    (.enabled) — the toggle never initialized even with the GET fix."""
+
+    def test_toggle_restore_reads_the_bool_form(self) -> None:
+        ui = (ROOT / "include" / "web" / "mcp2515_dashboard_ui.src.h").read_text(
+            encoding="utf-8")
+        i = ui.index("alwRTgl")
+        line = ui[i : ui.index("\n", i)]
+        self.assertIn("!!d.alertWatch", line)
+        self.assertNotIn("d.alertWatch.enabled", line)
