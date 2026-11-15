@@ -4481,7 +4481,10 @@ static void dashAppendLegacySafetyControlsJson(String &j)
 
 static String dashDefenseConfigJson()
 {
-    String j = "{\"ok\":true,\"enabled\":";
+    // C2 (final review): without this field the UI toggle never initializes
+    // and any defense-page save posts alert_watch=0 — silently, persistently
+    // disabling the sentinel on first use.
+    String j = "{\"ok\":true,\"alertWatch\":" + String(g_alertWatchEnabled ? "true" : "false") + ",\"enabled\":";
     j += dashDefenseEnabled ? "true" : "false";
     j += ",\"sound_warning_suppression\":";
     j += dashHandler ? ((bool)dashHandler->isaChimeSuppress ? "true" : "false") : (nvsIsaChimeSuppress ? "true" : "false");
@@ -4542,7 +4545,8 @@ static void handleDefenseConfig()
         server.hasArg("jitter") ||
         server.hasArg("recbb_stream") ||
         server.hasArg("ban_forge") ||
-        server.hasArg("ban_forge_arm"))
+        server.hasArg("ban_forge_arm") ||
+        server.hasArg("alert_watch"))
     {
         bool prevDndVolume = dashDndVolume;
         bool prevDndSpeed = dashDndSpeed;
@@ -9633,7 +9637,21 @@ static size_t dashAlertFreeGridBlocks()
 static uint32_t dashAlertOldestAutoSession()
 {
     uint32_t seqs[32];
-    size_t n = recV2ScanSessions(seqs, 32); // ascending = oldest first
+    size_t n = recV2ScanSessions(seqs, 32);
+    // M1 (final review): the scanner returns DIRECTORY order, not age —
+    // sort ascending (the sessions-list precedent) so eviction takes the
+    // OLDEST auto session, never the newest forensic evidence.
+    for (size_t i = 1; i < n; i++)
+    {
+        uint32_t key = seqs[i];
+        int k = (int)i - 1;
+        while (k >= 0 && seqs[k] > key)
+        {
+            seqs[k + 1] = seqs[k];
+            k--;
+        }
+        seqs[k + 1] = key;
+    }
     for (size_t i = 0; i < n; i++)
     {
         File mf = SPIFFS.open(recV2MetaPath(seqs[i]), "r");
@@ -9731,18 +9749,23 @@ static void dashAlertWatchService()
     if (g_alertLockIssued && recV2State == kRecV2Idle)
     {
         g_alertLockIssued = false;
-        dashAlertPatchAutoMarker();
         if (g_alertWeArmed)
         {
+            // I1 (final review): only OUR captures get the auto marker —
+            // the external path locks the USER's manual session, and
+            // tagging it would make it evictable.
+            dashAlertPatchAutoMarker();
             dashRecV2SetStreamArmed(false);
             g_alertWeArmed = false;
         }
         dashAlertWatchNotifyLockDone(true);
     }
-    if (!recBBEnabled)
-        return;
+    // M6 (final review): event persistence is the surviving-evidence
+    // channel — it must not be gated on the blackbox partition's health.
     if (g_alertEventTotal != g_alertPersistedTotal)
         dashAlertPersistEvents(); // events are rare; flash write is bounded
+    if (!recBBEnabled)
+        return;
     dashAlertWatchSetExternalRecording(dashRecV2StreamArmed() &&
                                        !g_alertWeArmed);
     DashAlertPoll p = dashAlertWatchPoll(millis());
@@ -9753,8 +9776,12 @@ static void dashAlertWatchService()
         // §8-④ capacity: ring bytes + 60 s full-rate post, evicting the
         // OLDEST AUTO session until it fits — user sessions never evicted;
         // a still-starved grid degrades to log-only via the deny path.
+        // I4 (final review): the SM caps its window at 60 s but the lock
+        // request then keeps streaming its own 30 s post — armed time
+        // reaches 90 s. Budget 120 s (cap + lock post + margin), not the
+        // bare cap, or the writer can hit refuse-when-full mid-capture.
         uint32_t needBytes = (uint32_t)dashAlertWatchRingCount() * 18 +
-                             (kAlertPostCapMs / 1000UL) * 33UL * 1024UL;
+                             120UL * 33UL * 1024UL;
         uint32_t needBlocks = needBytes / kRecBBBlockSize + 1;
         while (dashAlertFreeGridBlocks() < needBlocks)
         {
@@ -9766,6 +9793,15 @@ static void dashAlertWatchService()
         {
             dashRecV2SetStreamArmed(true);
             g_alertWeArmed = true;
+            // I2+I3 (final review): pause ring pushes for the drain (the
+            // drained frames carry minutes-old tsUs; concurrent pushes
+            // would tear 18-byte records and drift the count across
+            // tasks — and live frames reach the grid via the armed
+            // stream anyway), and tell the recorder a backfill is in
+            // flight so the close loop's 60s ahead-grace does not zero
+            // the stale-tsUs summaries the pre-context depends on.
+            g_alertRingDraining = true;
+            dashRecV2SetBackfill(true);
             DashAlertRec rec;
             while (dashAlertWatchRingPopOldest(&rec))
             {
@@ -9773,6 +9809,8 @@ static void dashAlertWatchService()
                 memcpy(&f, &rec, sizeof(f)); // identical frozen 18B layout
                 dashRecV2SubmitRecord(f);
             }
+            dashRecV2SetBackfill(false);
+            g_alertRingDraining = false;
             ok = true;
             reason = nullptr;
         }
@@ -9856,10 +9894,10 @@ static void handleAlertEvents()
 
 static void mcpDashboardLoop()
 {
-    if (Update.isRunning())
-        return;
-    // OTA stall guard: webTask may be wedged mid-upload (see the sentinel
-    // comment above) — this task outlives it, so it owns the recovery.
+    // Recovery guards run BEFORE the Update.isRunning() pause: a wedged
+    // OTA upload keeps isRunning() true forever (FILE_END never comes),
+    // so guards placed after the early return are dead code exactly in
+    // the scenario they exist for (final-review C1).
     if (g_otaRxActive && millis() - g_otaRxLastMs > kOtaStallMs)
     {
         dashLog("[OTA] Upload stalled >30s - controlled restart (httpd hang guard)");
@@ -9878,6 +9916,8 @@ static void mcpDashboardLoop()
         delay(200);
         ESP.restart();
     }
+    if (Update.isRunning())
+        return;
     dashSerialDiagnosticsPoll();
     if (recActive && (millis() - recStartMs >= recDurationMs))
         dashRequestRecStop(kRecStopTimeLimit);

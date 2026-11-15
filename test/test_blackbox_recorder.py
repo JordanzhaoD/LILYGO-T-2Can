@@ -230,7 +230,7 @@ class BlackboxWriterTests(unittest.TestCase):
         # still programmable — while park/jump/wrap retire every block the
         # pointer left, so the next pass re-erases before reprogramming.
         self.assertIn("static void recBBErasedClr(uint32_t b)", self.engine)
-        body = self._fn(self.engine, "static void recBBFlushBuffer(", 7400)
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 8200)  # I3 comments lengthened the fn
         self.assertIn("while (b0 != nb)", body,
                       "erase bit retires when the pointer leaves the block")
 
@@ -259,7 +259,7 @@ class BlackboxWriterTests(unittest.TestCase):
         # repositions); the clamp only applies to later blocks. The return
         # is preceded by the I-1 erase-bit retirement: the eviction leaves
         # the entry block, so its bit must retire before returning.
-        body = self._fn(self.engine, "static void recBBFlushBuffer(", 7400)
+        body = self._fn(self.engine, "static void recBBFlushBuffer(", 8200)  # I3 comments lengthened the fn
         self.assertRegex(
             body, r"if \(b == b0\)\s*\{[^{}]*recBBErasedClr\(b0\);[^{}]*return;")
         clamp = body[body.index("lenEff = b * kRecBBBlockSize - off"):]
@@ -316,7 +316,7 @@ class BlackboxWriterTests(unittest.TestCase):
         close = body[body.index("while (recBBLiveBlk != nb)"):]
         self.assertIn("recBBNewestTsUs - recBBSums[recBBLiveBlk].lastTsUs",
                       close, "the age the guard tests is anchor minus slot")
-        self.assertIn("if (ageUs > kRecBBAheadGraceUs)", close,
+        self.assertIn("if (ageUs > kRecBBAheadGraceUs && !recBBBackfill)", close,  # I3: backfill drain suppresses the zeroing
                       "zero only attribution older than the grace")
         guard_end = close.index("memset(&recBBSums[recBBLiveBlk]")
         guard_start = close.rindex("if (", 0, guard_end)

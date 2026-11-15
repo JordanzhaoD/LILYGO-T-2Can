@@ -104,6 +104,12 @@ static bool recBBEnabled = false;
 // persisted user preference (defense_config recbb_stream → NVS recbb_arm)
 // ever sets it. Fail-closed by construction: dashRecV2Init never touches it.
 static bool recBBStreamArmed = false;
+// I3 (final review 2026-11-15): true while the alert executor drains the
+// forensic watch ring into the grid — those records carry original (old)
+// tsUs, and the close loop's ahead-grace zeroing must not retire their
+// block summaries mid-drain (the lock's pre-window depends on them).
+static volatile bool recBBBackfill = false;
+static void dashRecV2SetBackfill(bool on) { recBBBackfill = on; }
 static uint32_t recBBWriteOff = 0; // next grid byte to write (writer lands in task 3)
 
 // Grid addressing: header-anchored, block edges deliberately ignored.
@@ -565,7 +571,11 @@ static void recBBFlushBuffer(uint8_t di)
         recBBLiveBlk = (recBBLiveBlk + 1) % kRecBBBlockCount;
         recBBClosedBlocks = recBBClosedBlocks + 1;
         uint32_t ageUs = recBBNewestTsUs - recBBSums[recBBLiveBlk].lastTsUs;
-        if (ageUs > kRecBBAheadGraceUs)
+        // I3 (final review 2026-11-15): forensic backfill blocks carry
+        // minutes-old tsUs while live frames keep newest≈now — the grace
+        // zeroing would punch holes that collapse the lock's pre-window.
+        // Suppress while a backfill drain is in flight.
+        if (ageUs > kRecBBAheadGraceUs && !recBBBackfill)
             memset(&recBBSums[recBBLiveBlk], 0, sizeof(recBBSums[recBBLiveBlk]));
     }
     // Retire erase bits for blocks the pointer LEFT this flush (boundary
@@ -1318,12 +1328,12 @@ static String dashRecV2SessionsJson()
             uint32_t e0 = doc["bb_end_off"] | 0u;
             // e0 < s0 = wrapped seam range (C-1): report both segments
             j += String(e0 > s0 ? e0 - s0
-                                : (e0 < s0)
-                                      ? (kRecBBBlockCount *
-                                             kRecBBBlockSize -
-                                         s0) +
-                                            e0
-                                      : 0);
+                        : (e0 < s0)
+                            ? (kRecBBBlockCount *
+                                   kRecBBBlockSize -
+                               s0) +
+                                  e0
+                            : 0);
         }
         j += R"JSON(,"loss_badge":)JSON";
         j += String(doc["ring_overflow_in_window"] | false ? "true" : "false");
@@ -1520,17 +1530,28 @@ static const char *recV2ResetName(uint8_t code)
     // codes fall through to the number itself.
     switch (code)
     {
-    case 1: return "POWERON";
-    case 3: return "SW";
-    case 4: return "PANIC";
-    case 5: return "INT_WDT";
-    case 6: return "TASK_WDT";
-    case 7: return "TASK_WDT_OTHER";
-    case 9: return "BROWNOUT";
-    case 10: return "SW_BROWNOUT";
-    case 11: return "SDIO";
-    case 12: return "USB";
-    default: return "?";
+    case 1:
+        return "POWERON";
+    case 3:
+        return "SW";
+    case 4:
+        return "PANIC";
+    case 5:
+        return "INT_WDT";
+    case 6:
+        return "TASK_WDT";
+    case 7:
+        return "TASK_WDT_OTHER";
+    case 9:
+        return "BROWNOUT";
+    case 10:
+        return "SW_BROWNOUT";
+    case 11:
+        return "SDIO";
+    case 12:
+        return "USB";
+    default:
+        return "?";
     }
 }
 

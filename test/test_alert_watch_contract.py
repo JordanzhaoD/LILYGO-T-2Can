@@ -307,3 +307,101 @@ class UiClosureDisciplineTests(unittest.TestCase):
         self.assertNotIn("set(", body)
         self.assertNotIn("T(", body)
         self.assertIn("alwSet(", body)
+
+
+class FinalReviewFixPassTests(unittest.TestCase):
+    """Whole-branch review 2026-11-15: C1/C2/I1-I4 + M1/M6 re-graded
+    Important. Each test pins one fix; the stories live in the review
+    result and the ledger."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dash = (ROOT / "include" / "web" / "mcp2515_dashboard.h").read_text(
+            encoding="utf-8")
+        cls.engine = (ROOT / "include" / "web" / "dash_recorder_v2.h").read_text(
+            encoding="utf-8")
+        cls.core = (ROOT / "include" / "dash_alert_watch.h").read_text(
+            encoding="utf-8")
+
+    def _loop(self) -> str:
+        start = self.dash.rindex("static void mcpDashboardLoop")
+        return self.dash[start : start + 2600]
+
+    def test_c1_guards_precede_the_update_gate(self) -> None:
+        # In the true OTA wedge (Update.begin ran, FILE_END never comes)
+        # Update.isRunning() stays true forever — guards placed after the
+        # early return are dead code exactly when they are needed.
+        body = self._loop()
+        gate = body.index("if (Update.isRunning())")  # executable form; the fix comment names it earlier
+        self.assertLess(body.index("if (g_otaRxActive"), gate)
+        self.assertLess(body.index("g_webAliveMs"), gate)
+
+    def test_c2_defense_get_carries_alertwatch_and_post_guard(self) -> None:
+        # Without the GET field the UI toggle never initializes; any
+        # defense-page save then posts alert_watch:'0' and silently,
+        # persistently disables the sentinel. And a bare alert_watch POST
+        # must clear the outer arg guard too.
+        get_start = self.dash.index("static void handleDefenseConfig()")
+        region = self.dash[get_start : get_start + 2200]
+        self.assertIn('server.hasArg("alert_watch")', region)
+        cfg = self.dash[self.dash.rindex("static String dashDefenseConfigJson()"):]
+        self.assertIn('\\"alertWatch\\"', cfg[:1200])  # escaped form in C++ source
+
+    def test_i1_auto_marker_only_on_own_captures(self) -> None:
+        # The external path locks the USER's manual session; tagging it
+        # auto makes it evictable — violating the never-evict invariant.
+        start = self.dash.index("static void dashAlertWatchService()")
+        body = self.dash[start : start + 4000]
+        i_guard = body.index("if (g_alertWeArmed)")
+        i_patch = body.index("dashAlertPatchAutoMarker()")
+        self.assertLess(i_guard, i_patch, "patch must sit inside the we-armed guard")
+
+    def test_i2_ring_draining_pauses_pushes(self) -> None:
+        self.assertIn("g_alertRingDraining", self.core)
+        push = self.core[self.core.index("inline bool dashAlertWatchRingPush"):
+                         self.core.index("inline size_t dashAlertWatchRingCount")]
+        self.assertIn("g_alertRingDraining", push)
+        svc = self.dash[self.dash.index("static void dashAlertWatchService()"):
+                        self.dash.rindex("static void handleAlertEvents()")]  # rindex: definition, not fwd decl
+        self.assertIn("g_alertRingDraining = true", svc)
+        self.assertIn("g_alertRingDraining = false", svc)
+
+    def test_i3_backfill_mode_protects_stale_summaries(self) -> None:
+        # Backfilled blocks carry minutes-old tsUs while live frames keep
+        # newest≈now; the close loop's 60s ahead-grace would zero their
+        # summaries and the lock walk would stop at the hole, truncating
+        # pre-context to ~60-90s. Backfill mode suppresses the zeroing.
+        self.assertIn("recBBBackfill", self.engine)
+        self.assertIn("dashRecV2SetBackfill", self.engine)
+        zero_zone = self.engine[
+            self.engine.index("uint32_t ageUs = recBBNewestTsUs"):
+            self.engine.index("memset(&recBBSums[recBBLiveBlk], 0,") + 60]
+        self.assertIn("!recBBBackfill", zero_zone)
+        svc = self.dash[self.dash.index("static void dashAlertWatchService()"):
+                        self.dash.rindex("static void handleAlertEvents()")]  # rindex: definition, not fwd decl
+        self.assertIn("dashRecV2SetBackfill(true)", svc)
+        self.assertIn("dashRecV2SetBackfill(false)", svc)
+
+    def test_i4_capacity_budget_covers_lock_post(self) -> None:
+        # SM caps at 60s but the lock keeps streaming its own 30s post:
+        # armed time reaches 90s; the eviction budget must cover it plus
+        # margin (120s), not the bare 60s cap.
+        svc = self.dash[self.dash.index("needBytes"):
+                        self.dash.index("needBytes") + 300]
+        self.assertIn("120", svc)
+
+    def test_m1_eviction_sorts_ascending(self) -> None:
+        # recV2ScanSessions returns directory order; the repo's own
+        # precedent sorts ascending before walking newest-first. Eviction
+        # must delete the OLDEST auto session, never the newest evidence.
+        fn = self.dash[self.dash.index("static uint32_t dashAlertOldestAutoSession"):
+                       self.dash.index("static void dashAlertPatchAutoMarker")]
+        self.assertIn("seqs[k] > key", fn)  # insertion sort, repo-precedent shape
+
+    def test_m6_event_persist_survives_recorder_death(self) -> None:
+        # Events are the surviving-evidence channel; their persistence
+        # must not be gated on the blackbox partition's health.
+        svc = self.dash[self.dash.index("static void dashAlertWatchService()"):
+                        self.dash.rindex("static void handleAlertEvents()")]  # rindex: definition, not fwd decl
+        self.assertLess(svc.index("dashAlertPersistEvents"),
+                        svc.index("!recBBEnabled"))

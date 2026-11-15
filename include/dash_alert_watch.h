@@ -90,8 +90,8 @@ struct DashAlertEvent
 inline bool g_alertWatchEnabled = true; // wiring pref gate (default ON)
 inline void dashAlertWatchSetEnabled(bool on) { g_alertWatchEnabled = on; }
 inline uint32_t g_alertBootSeq = 0;
-inline uint32_t g_alertCaptureSeq = 0;  // capture-severity events ever (SM trigger)
-inline uint32_t g_alertEventTotal = 0;  // events ever (wiring persist marker)
+inline uint32_t g_alertCaptureSeq = 0; // capture-severity events ever (SM trigger)
+inline uint32_t g_alertEventTotal = 0; // events ever (wiring persist marker)
 inline DashAlertEvent g_alertEvents[24] = {};
 inline size_t g_alertEventCount = 0;  // number of valid events (capped at 24)
 inline size_t g_alertEventNext = 0;   // ring write slot
@@ -275,6 +275,12 @@ inline uint8_t *g_alertRingBuf = nullptr;
 inline size_t g_alertRingCap = 0;   // in records
 inline size_t g_alertRingCount = 0; // valid records
 inline size_t g_alertRingNext = 0;  // write slot
+// I2 (final review 2026-11-15): set by the wiring executor while it drains
+// the ring — pushes from the CAN task must pause for the drain (a full
+// ring makes Push's write slot == Pop's read slot: torn 18-byte records
+// and a counter drift across cores; and live frames reach the armed
+// blackbox grid directly, so nothing is lost by pausing).
+inline volatile bool g_alertRingDraining = false;
 
 inline void dashAlertWatchRingInit(uint8_t *buf, size_t capBytes)
 {
@@ -297,6 +303,8 @@ inline bool dashAlertWatchRingPush(uint32_t id, uint8_t dlc, const uint8_t *data
 {
     if (!g_alertWatchEnabled)
         return false;
+    if (g_alertRingDraining)
+        return false; // drain owns the ring (I2)
     if (g_alertRingBuf == nullptr || g_alertRingCap == 0 ||
         data == nullptr || !dashAlertWatchIdWatched(id))
         return false;
