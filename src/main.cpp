@@ -1058,10 +1058,13 @@ static void t2canStalkInjectTick()
 }
 
 // Legacy Model X Scroll DND: 0x399 warning transition -> CAN1 native 0x045
-// scroll ticks, one frame per action. Every frame in a warning episode points
-// the same way and the direction alternates per delivered episode (Plan D,
-// beta07): the beta03..beta05 same-episode +1/-1 pairing always drifted
-// because the car merges same-direction pulses inside one window.
+// scroll ticks as beta02 atomic pairs: positive (+1) -> native confirm ->
+// negative compensation (-1) -> confirm, volume-neutral by construction.
+// The beta07 single-frame/cross-episode-alternation redesign and the beta14
+// in-episode abort recovery were field regressions (wheel DND went silent
+// after ~1 h on beta16) and are reverted to this baseline. The three-pair
+// budget only gates the automatic RetryWait chain; while the warning stays
+// active the Idle path re-arms and keeps clearing (soft budget).
 // The CAN2 0x3C2 implementation remains compiled as a separate newer-vehicle
 // protocol, but it is never selected by this Legacy path.
 
@@ -1119,6 +1122,69 @@ static void t2canWheelDndTick()
         const bool ok = appDriver->send(f);
         dashLegacyWheel045DndCtrl.diag.tx.recordResult(ok);
         dashLegacyWheel045DndCtrl.recordTxResult(ok, now);
+    }
+}
+
+// Legacy 0x045 bit27 clone DND — status declaration, not an action spoof:
+// clones the latest native 0x45 off CAN1 (X197 13/14, the DAS/CH line),
+// sets StW_Cond_Flt bit27, bumps the rolling counter and re-CRCs, every
+// 1500 ms while handsOnState is in the {2..5} window and autopilotState > 3.
+// Window hard-closes at 6+: the module never contests the strike-out domain
+// (see dash_legacy_045_bit27_clone.h and the 2026-11-18 design doc).
+static void t2can045Clone27Tick()
+{
+    const uint32_t now = millis();
+    dashLegacy045Clone27Ctrl.configure(dashClone27Dnd);
+
+    DashLegacy045Clone27Block gateBlock = DashLegacy045Clone27Block::None;
+    if (!canActive || !dashClone27Dnd)
+        gateBlock = DashLegacy045Clone27Block::Disabled;
+    else if (!dashLegacyHandlerActive())
+        gateBlock = DashLegacy045Clone27Block::NotLegacy;
+    else if (dashJitterCtrl.procedureActive())
+        gateBlock = DashLegacy045Clone27Block::StalkOwnedByJitter;
+    else if (vehicleOtaActive)
+        gateBlock = DashLegacy045Clone27Block::OtaGuard;
+    else if (dashHandler && !dashHandler->abortGuard.allowsInjection())
+    {
+        dashHandler->abortGuard.recordBlock(DashAbortGuardBlockPath::Legacy045Bit27Clone);
+        gateBlock = DashLegacy045Clone27Block::AbortGuard;
+    }
+    else if (!appDriver)
+        gateBlock = DashLegacy045Clone27Block::TwaiUnavailable;
+
+#if defined(ESP_PLATFORM) && defined(DRIVER_TWAI)
+    static uint32_t lastTwaiCheckMs = 0;
+    static bool twaiReady = true;
+    if (gateBlock == DashLegacy045Clone27Block::None &&
+        (lastTwaiCheckMs == 0 || now - lastTwaiCheckMs >= 100))
+    {
+        lastTwaiCheckMs = now;
+        TWAIDriver *twai = static_cast<TWAIDriver *>(appDriver.get());
+        DashTwaiDiag twaiDiag = twai->snapshotDiag();
+        twaiReady = twaiDiag.state == DashTwaiState::Running;
+    }
+    if (gateBlock == DashLegacy045Clone27Block::None && !twaiReady)
+        gateBlock = DashLegacy045Clone27Block::TwaiUnavailable;
+#endif
+
+    const bool runtimeAllowed = gateBlock == DashLegacy045Clone27Block::None;
+    dashLegacy045Clone27Ctrl.setRuntimeAllowed(runtimeAllowed, gateBlock);
+    if (!runtimeAllowed)
+        return;
+
+    uint8_t data[8];
+    if (dashLegacy045Clone27Ctrl.nextFrame(now, data))
+    {
+        CanFrame f = {};
+        f.id = DashLegacy045Clone27::kCanId;
+        f.dlc = 8;
+        memcpy(f.data, data, 8);
+        f.bus = CAN_BUS_DEFAULT;
+        dashLegacy045Clone27Ctrl.diag.tx.recordAttempt(f.id, f.bus, f.dlc, f.data, now);
+        const bool ok = appDriver->send(f);
+        dashLegacy045Clone27Ctrl.diag.tx.recordResult(ok);
+        dashLegacy045Clone27Ctrl.recordTxResult(ok, now);
     }
 }
 
@@ -1427,6 +1493,7 @@ static void app_can_task(void *)
         t2canBurstTick();
         t2canStalkInjectTick();
         t2canWheelDndTick();
+        t2can045Clone27Tick();
         t2canJitterTick();
         t2can3eeKeepAliveTick();
 #endif

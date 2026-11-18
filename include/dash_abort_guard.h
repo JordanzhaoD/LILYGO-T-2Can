@@ -13,6 +13,7 @@ enum class DashAbortGuardBlockPath : uint8_t
     LegacyVisionSlider0x438,
     LegacyNag370,
     LegacyWheel045Dnd,
+    Legacy045Bit27Clone,
 };
 
 inline const char *dashAbortGuardBlockPathName(DashAbortGuardBlockPath path)
@@ -29,6 +30,8 @@ inline const char *dashAbortGuardBlockPathName(DashAbortGuardBlockPath path)
         return "legacy_nag_0x370";
     case DashAbortGuardBlockPath::LegacyWheel045Dnd:
         return "legacy_wheel_0x045";
+    case DashAbortGuardBlockPath::Legacy045Bit27Clone:
+        return "legacy_0x045_bit27_clone";
     case DashAbortGuardBlockPath::None:
     default:
         return "none";
