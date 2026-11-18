@@ -1,6 +1,121 @@
 # Changelog
 
-## [Unreleased]
+## [6.0.0-beta17] - 2026-11-18
+
+### Changed (Legacy stalk DND retired → 0x045 bit27 state-clone DND)
+
+- **The beta16 stalk-gesture DND is retired and removed** (`dash_legacy_stalk_045_dnd.h`
+  and its suite/env/UI/NVS `def_st` are gone). Field verdict: like the wheel
+  route it simulated a driver interaction, and accumulated interaction without
+  real torque inevitably escalates to the red REQD_STRUCK_OUT wheel — the
+  gesture route cannot avoid the strike-out by construction.
+- **Replaced by a status-declaration route: 0x045 bit27 clone**
+  (`dash_legacy_045_bit27_clone.h`, new native suite 16/16). Parameters are
+  copied verbatim from a reference firmware's reverse-engineering report,
+  field-verified by its users: clone the latest native 0x45 frame on CAN1
+  (X197 13/14, the DAS/CH line) with `StW_Cond_Flt` (bit27, data[3] bit3)
+  set, rolling counter +1, CRC8-J1850, every **1500 ms**, gated by
+  **DAS_autopilotHandsOnState in {2..5}** and **autopilotState > 3**. The
+  window hard-closes at 6+ so the module never contests the strike-out
+  domain; hands-on nags are prevented at the sensor-state level instead of
+  cleared after the fact.
+- Safety rails carried over from the wheel-DND discipline: 150 ms native
+  freshness, counter continuation, 30 ms own-echo drop, physical scroll
+  frames never cloned as a base (never amplify the human), two consecutive
+  TX failures auto-disarm until the switch is toggled.
+- New `/status` `clone27Diag` telemetry; `/defense_config` field
+  `clone27_dnd` (+ alias `legacy_045_bit27_clone`); NVS key `def_c27`
+  (old `def_st` is not migrated — the switch defaults OFF); UI toggle
+  "Legacy 状态克隆免打扰" replaces the stalk toggle. `scripts/
+  analyze_legacy_stalk_045_capture.py` (sess_137 calibration tool) stays.
+- Design doc: `docs/LEGACY-0X045-BIT27-CLONE-DESIGN-20261118.md`.
+
+### Fixed (Legacy wheel DND: reverted to the beta02 atomic-pair engine)
+
+- **The wheel DND state machine is reverted, line-for-line, to the beta02
+  atomic-pair baseline.** Field regression: on beta16 the wheel DND stopped
+  clearing the hands-on nag after roughly an hour of driving, eventually
+  letting the nag escalate to the red REQD_STRUCK_OUT warning; beta02 ran
+  clean for weeks. Both post-beta02 behaviour changes are reverted: the
+  beta07 "one frame per action / cross-episode direction alternation"
+  redesign and the beta14 in-episode abort recovery + attempt budget.
+- beta02 semantics restored: each warning episode emits positive (+1) →
+  native confirm → negative compensation (−1) → confirm, volume-neutral by
+  construction (`balancedPairs` telemetry); a transient abort latches until
+  the next warning edge (the known "quiet for one nag" trade-off, accepted
+  against the beta16 hour-long silence); the three-pair budget only gates
+  the automatic RetryWait chain — while the warning stays active the Idle
+  path re-arms and keeps clearing (soft budget, which is why beta02 never
+  gave up mid-drive).
+- `/status` wheelDndDiag fields for the beta07/beta14 machinery
+  (`txAttemptsThisEpisode`, `recoveries`, `directionPositive`,
+  `nextDirectionPositive`, `directionFlips`) are replaced by the beta02 pair
+  telemetry (`balancedPairs`, `compensationPending`); the UI wheel cards
+  follow. The stalk DND module (default-OFF, field plan pending) is left
+  untouched by this revert.
+- Native suite rewritten to pin the beta02 pair behaviour: 18/18 — atomic
+  pair flow, volume balance across episodes, 800 ms merge-window cooldown,
+  soft-budget re-arm after EpisodeLimit, abort latch until the next warning
+  edge, auto-disarm across two failed episodes, own-echo drop, counter
+  conflict, release timeout, context staleness.
+
+### Fixed (Legacy wheel + stalk DND: observe red-wheel STRUCK_OUT, never inject)
+
+- **handsState==7 (`DAS_autopilotHandsOnState = REQD_STRUCK_OUT`) is now
+  observed but deliberately never injected against, in both
+  `dash_legacy_wheel_045_dnd.h` and `dash_legacy_stalk_045_dnd.h`.** Field
+  symptom: with stalk DND on, after roughly 1h / 60 km the nag escalates to
+  the red steering-wheel "take over now" warning. State 7 is a Tesla
+  *Autopilot Strikeout* — the system has already decided the driver ignored
+  attention warnings and is forcefully disengaging for the rest of the trip.
+  Injecting a lever/wheel gesture there does not clear it; it risks recording
+  a strikeout (5 strikeouts = 1-week Autosteer suspension) and is precisely
+  the "circumvent driver attentiveness" behaviour Tesla's terms flag for
+  permanent disable + ban.
+- New behaviour: state 7's rising edge increments `diag.struckOutEpisodes`
+  (mirrored into `/status` `wheelDndDiag.struckOutEpisodes`) and aborts any
+  in-flight action (fail-closed), but never arms a new episode. The
+  `isWarningState()` range stays `3..6` + `9..10`.
+- Native tests: `test_struck_out_hands_state_7_is_observed_but_not_injected`
+  in both suites (stalk 13/13, wheel 26/26).
+
+## [6.0.0-beta16] - 2026-11-16
+
+### Added (Legacy stalk DND: 0x045 speed-lever NAG clear, both P4 and T2CAN)
+
+- **Legacy stalk (档杆) DND, parallel to the existing left-scroll-wheel DND.**
+  A second, wheel-independent path for clearing the hands-on NAG: it drives
+  `SpdCtrlLvr_Stat` (0x045 `STW_ACTN_RQ`, data[0] bit0-5) with the speed-set
+  lever gestures — `UP_1ST` (0x50) / `DN_1ST` (0x60) alternating direction —
+  rather than the scroll-wheel tick the wheel DND uses. Because the speed
+  lever's up/down nudge only adjusts set-speed (±1) and never touches the AP
+  engage/disengage axis, the stalk path cannot cancel or restart AP by
+  construction.
+- **Hard forbid of the AP state-changing gestures.** `SpdCtrlLvr_Stat` FWD
+  (0x41, cancels AP) and RWD (0x42, requests AP) are rejected at the encoder
+  level (`isSafeLever`); any forbidden value is counted in the new
+  `forbiddenLeverRejects` diagnostic and never emitted. This is the same
+  two-axis safety framing as the wheel DND, applied to the stalk field.
+- **Field-pinned lever encoding (sess_137).** The UP/DN bit patterns were
+  pinned against a live capture: each physical lever nudge emits a 1–3 frame
+  `1ST` transient pulse then a sustained `2ND` hold (`0x50`→`0x44` up,
+  `0x60`→`0x48` down); data[3] stays constant 0x30 and the switch word stays
+  0, confirming the stalk lives in data[0] alone. The NAG-clearing gesture is
+  the `1ST` transient. Capture was taken with AP=0 (parked calibration), so
+  the gesture is provably AP-state-independent.
+- UI: a new "Legacy 档杆免打扰" toggle sits directly above the "Legacy
+  左滚轮免打扰" toggle on the FSD defense page (bilingual copy, badge
+  「实车路径」), persisting to NVS (`def_st`) and mirrored in `/status`
+  (`stalk_dnd`) and `/defense_config`.
+- New native test env `native_legacy_stalk_045_dnd` (12 cases) and a targeted
+  capture analyzer `scripts/analyze_legacy_stalk_045_capture.py`.
+
+### Fixed (build: non-P4 environments)
+
+- `dashDefenseConfigJson()` unconditionally read `g_alertWatchEnabled`, which
+  only exists under `DRIVER_P4_3CAN` (alert watch is P4-only). This broke
+  every non-P4 build (T2CAN included). The field is now guarded by
+  `#if defined(DRIVER_P4_3CAN)` and emits `alertWatch:false` otherwise.
 
 ## [6.0.0-beta15] - 2026-11-12
 
