@@ -18,6 +18,10 @@ beta17 的 `appendClone27DiagJson` 在 `blockedReason` 处多发了一个闭合�
 `capabilities.can3Available=false`；clone27Diag/wheelDndDiag 完整回读；
 `/defense_config` 保存往返 ✓。
 
+镜像自检（全绿）：0x0=E9 · 0x8000=AA50 · 0x20000=E9 ·
+app_desc=`6.0.0-beta18`（uiBuildId `…-2c9ff57c766a-2026-11-19T09:09:35Z`）·
+SHA256SUMS 五文件逐一复核 ✓ · app 1,228,816 B / full_merged 1,359,888 B。
+
 ## 文件清单与烧录
 
 同 beta17 布局（S3：0x0 / 0x8000 / 0x19000 / 0x20000），见
