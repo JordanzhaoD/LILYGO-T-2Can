@@ -1,5 +1,36 @@
 # Changelog
 
+## [6.0.0-beta19] - 2026-11-19
+
+### Fixed (Legacy wheel DND: first tick fired too early, hitting only ~1/3 of nags)
+
+- **Root cause, from 12 vehicle captures**: the vehicle's nag-clear has a
+  ~930 ms debounce — a scroll tick sent in the first ~135 ms after the
+  hands-warning edge (handsState ≥ 3) is always ignored, while a tick sent
+  at ~927–976 ms always clears it (100% / 100% across every capture). The
+  beta02 engine fired the first +1/−1 pair immediately on the warning edge,
+  so that first pair was always wasted; clearing depended entirely on the
+  second pair surviving the 800 ms cooldown into the clear window. When the
+  warning escalated past that window, or the state machine stalled on the
+  1↔2 handsState chatter, the third pair landed back at a fresh 0 ms edge and
+  the nag ran away — "sometimes works, sometimes doesn't".
+- **Fix**: the first tick is now deferred to the clear-window centre. On a
+  warning edge the engine enters `RetryWait` with `retryAtMs_ = now + 930`
+  (`kFirstTickDelayMs`, measured median 934 ms, range 927–976 ms) instead of
+  `WaitingSource` immediately, so the first +1 tick lands in the window and
+  clears in one shot. The existing `RetryWait` gate still drops the tick
+  cleanly if the warning resolves during the delay.
+- Also fixed: `resetRuntime()` did not clear the `lastHandsState_`
+  strike-out edge latch, so after a red wheel (handsState 7) a toggle
+  re-open could swallow the next 7→edge. `resetRuntime()` now resets it.
+
+### Safety
+
+- No change to tick encoding, rolling counter, CRC8-J1850, the +1/−1
+  balanced-pair engine, or the strike-out (state 7) never-inject guard.
+  `kFirstTickDelayMs` is a named constant so it can be re-tuned per vehicle
+  or firmware generation in the field.
+
 ## [6.0.0-beta18] - 2026-11-19
 
 ### Fixed (P0 hotfix: /status JSON truncated by a stray quote)

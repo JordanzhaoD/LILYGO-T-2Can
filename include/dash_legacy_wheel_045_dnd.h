@@ -189,6 +189,12 @@ struct DashLegacyWheel045Dnd
     // ceiling; native test pins it.
     static constexpr uint32_t kReleaseTimeoutMs = 300;
     static constexpr uint32_t kRetryDelayMs = 800;
+    // Field-derived nag-clear latency (2026-11-19 captures): the vehicle only
+    // accepts a scroll tick as a hands-on acknowledgement ~930 ms after the
+    // warning (handsState>=3) edge. Ticks sent at the edge (0-135 ms) are
+    // dropped 13/13; ticks sent 927-976 ms after clear 7/7. So the first
+    // positive tick is deferred to this window instead of firing at the edge.
+    static constexpr uint32_t kFirstTickDelayMs = 930;
     static constexpr uint32_t kOwnEchoWindowMs = 30;
     static constexpr uint8_t kMaxPairsPerEpisode = 3;
     static constexpr uint8_t kMaxConsecutiveTxFailures = 2;
@@ -322,11 +328,17 @@ struct DashLegacyWheel045Dnd
             positiveThisEpisode_ = 0;
             compensationRemaining_ = 0;
             pendingTx_ = false;
-            retryAtMs_ = nowMs;
+            // Defer the first positive tick to the field-derived nag-clear
+            // window (~930 ms after the warning edge) instead of firing at the
+            // edge, where the vehicle drops it (13/13 in 2026-11-19 captures).
+            // RetryWait's nextFrame path re-arms to WaitingSource once
+            // retryAtMs_ elapses, so the first tick lands in the clear window.
+            retryAtMs_ = nowMs + kFirstTickDelayMs;
+            diag.retryAtMs = retryAtMs_;
             diag.warningEpisodes++;
             diag.firstPositiveMs = 0;
             diag.warningClearLatencyMs = 0;
-            setState(DashLegacyWheel045State::WaitingSource, DashLegacyWheel045Block::NoNative);
+            setState(DashLegacyWheel045State::RetryWait, DashLegacyWheel045Block::None);
             syncEpisodeDiag();
         }
         else if (!warningActive_ && wasWarning)
@@ -554,6 +566,7 @@ struct DashLegacyWheel045Dnd
         retryAtMs_ = 0;
         autoDisarmed_ = false;
         consecutiveTxFailures_ = 0;
+        lastHandsState_ = 0;
         diag.autoDisarmed = false;
         diag.consecutiveTxFailures = 0;
         diag.warningActive = false;

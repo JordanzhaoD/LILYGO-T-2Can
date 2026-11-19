@@ -21,6 +21,11 @@ static void arm(DashLegacyWheel045Dnd &dnd)
 static void seedAndWarn(DashLegacyWheel045Dnd &dnd, uint32_t nowMs = 1000,
                         uint8_t handsState = 3)
 {
+    // The warning edge is raised kFirstTickDelayMs before nowMs, so that a
+    // nextFrame(nowMs) call lands exactly at the end of the deferred first-tick
+    // window (the vehicle only accepts a scroll tick ~930 ms after the edge).
+    const uint32_t edgeMs = nowMs - DashLegacyWheel045Dnd::kFirstTickDelayMs;
+    dnd.onDasStatus(6, handsState, CAN_BUS_VEH, edgeMs);
     dnd.onCan1Frame(kIdleC, 8, nowMs);
     dnd.onDasStatus(6, handsState, CAN_BUS_VEH, nowMs);
 }
@@ -189,7 +194,8 @@ void test_retry_cooldown_blocks_second_pair_until_800ms()
     feedNative(dnd, expectCounter, 1990); // refresh native freshness
     TEST_ASSERT_TRUE(dnd.nextFrame(2000, out)); // cooldown elapsed
     TEST_ASSERT_EQUAL(DashLegacyWheel045State::PositiveTxPending, dnd.diag.state);
-    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.retryCount);
+    // retryCount includes the deferred first tick (1) plus this cooldown retry (2).
+    TEST_ASSERT_EQUAL_UINT32(2, dnd.diag.retryCount);
 }
 
 void test_warning_clear_before_confirm_skips_compensation()
@@ -375,6 +381,9 @@ void test_counter_wrap_preserves_low_nibble()
     uint8_t out[8] = {};
     arm(dnd);
     dnd.onCan1Frame(source, 8, 1000);
+    // Warning edge is raised 930 ms earlier so nextFrame(1000) lands at the
+    // end of the deferred first-tick window.
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1000 - DashLegacyWheel045Dnd::kFirstTickDelayMs);
     dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1000);
     TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
     TEST_ASSERT_EQUAL_HEX8(0x0A, out[6]);
@@ -429,6 +438,63 @@ void test_reset_runtime_clears_pair_state()
     TEST_ASSERT_TRUE(dnd.nextFrame(3000, out));
 }
 
+// Regression: resetRuntime() must clear the strike-out edge latch. Before the
+// fix, lastHandsState_ survived the reset, so a red wheel that was already
+// latched before the toggle would never re-arm the strike-out edge detection
+// (7 == 7 -> no new edge -> no count, and the abort path stayed stale).
+void test_reset_runtime_clears_strike_out_edge_latch()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8] = {};
+    arm(dnd);
+
+    // First red wheel: counted as an edge.
+    dnd.onDasStatus(6, 7, CAN_BUS_VEH, 1000);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.struckOutEpisodes);
+
+    // Toggle the switch off/on (resetRuntime) while the vehicle still reports
+    // the same strike-out state 7. The cumulative counter persists, but the
+    // edge latch must clear.
+    dnd.resetRuntime();
+
+    // The same state 7 is now a fresh edge again and must re-count, proving
+    // the latch was cleared. (Without the fix, lastHandsState_ stayed 7 and
+    // this rising edge was swallowed, leaving the count stuck at 1.)
+    dnd.onDasStatus(6, 7, CAN_BUS_VEH, 1100);
+    TEST_ASSERT_EQUAL_UINT32(2, dnd.diag.struckOutEpisodes);
+
+    // And it never injects against the strike-out.
+    TEST_ASSERT_FALSE(dnd.nextFrame(1100, out));
+}
+
+// The vehicle only accepts a scroll tick ~930 ms after the warning edge
+// (2026-11-19 captures: 0-135 ms ticks dropped 13/13, 927-976 ms cleared 7/7).
+// The first positive tick must therefore be deferred, not fired at the edge.
+void test_first_tick_deferred_to_nag_clear_window()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8] = {};
+    arm(dnd);
+
+    // Warning edge at t=1000.
+    dnd.onCan1Frame(kIdleC, 8, 1000);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1000);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::RetryWait, dnd.diag.state);
+
+    // Inside the defer window: no tick yet.
+    dnd.onCan1Frame(kIdleC, 8, 1500);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1500);
+    TEST_ASSERT_FALSE(dnd.nextFrame(1500, out));
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::RetryWait, dnd.diag.state);
+
+    // At the end of the defer window: first positive tick fires.
+    dnd.onCan1Frame(kIdleC, 8, 1930);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1930);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1930, out));
+    TEST_ASSERT_EQUAL_HEX16(0x0040, DashLegacyWheel045Dnd::switchWord(out));
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::PositiveTxPending, dnd.diag.state);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -450,5 +516,7 @@ int main()
     RUN_TEST(test_ap_inactive_resets_episode);
     RUN_TEST(test_context_stale_blocks_injection);
     RUN_TEST(test_reset_runtime_clears_pair_state);
+    RUN_TEST(test_reset_runtime_clears_strike_out_edge_latch);
+    RUN_TEST(test_first_tick_deferred_to_nag_clear_window);
     return UNITY_END();
 }
