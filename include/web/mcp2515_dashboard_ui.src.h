@@ -1389,13 +1389,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
-      <div class="setting-name"><span data-i18n="Legacy 状态克隆免打扰">Legacy 状态克隆免打扰</span><span class="exp-badge" data-i18n="参考固件参数">参考固件参数</span></div>
-      <div class="setting-desc" data-i18n="0x045 bit27 (StW_Cond_Flt) 状态克隆：handsOn 窗【2,5】+ AP 激活门 + 1.5s 间隔，预防提醒产生而非事后清除；到状态 6 自动停手，永不对抗红色方向盘接管">0x045 bit27 (StW_Cond_Flt) 状态克隆：handsOn 窗【2,5】+ AP 激活门 + 1.5s 间隔，预防提醒产生而非事后清除；到状态 6 自动停手，永不对抗红色方向盘接管</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="def-dnd-clone27-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
-  <div class="setting-row">
-    <div>
       <div class="setting-name"><span data-i18n="Legacy 左滚轮免打扰 ">Legacy 左滚轮免打扰 </span><span class="exp-badge" data-i18n="实车路径">实车路径</span></div>
       <div class="setting-desc" data-i18n="0x399 告警触发；CAN1 原生 0x045 告警持续才反向平衡，清除后立即停止">0x399 告警触发；CAN1 原生 0x045 告警持续才反向平衡，清除后立即停止</div>
     </div>
@@ -2281,7 +2274,7 @@ var I18N={
   '删除':'Delete','暂无插件。新安装默认禁用。':'No plugins yet. New installs start disabled.','目标ID: ':'Target ID: ',
   '详情':'Details','8.3.6防甩机制 ':'8.3.6 Anti-Jerk ','AP/EAP 兼容 ':'AP/EAP Compat ',
   'CAN2 ID 列表 ':'CAN2 ID List ','CAN2 控制 ':'CAN2 Control ','FSD-V14 模式 ':'FSD-V14 Mode ',
-  'Legacy 状态克隆免打扰':'Legacy bit27 Clone DND','参考固件参数':'Reference params','0x045 bit27 (StW_Cond_Flt) 状态克隆：handsOn 窗【2,5】+ AP 激活门 + 1.5s 间隔，预防提醒产生而非事后清除；到状态 6 自动停手，永不对抗红色方向盘接管':'0x045 bit27 (StW_Cond_Flt) state clone: handsOn window [2,5] + AP-active gate + 1.5 s interval — prevents the nag instead of clearing it; stops at state 6, never contests the red-wheel takeover','Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
+  'Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
   '忽略车辆 OTA 守卫 ':'Ignore Vehicle OTA Guard ','最大性能 ':'Max Performance ','爆闪开关 ':'Burst Switch ',
   '自动换挡 ':'Auto Shift ','速度免打扰 ':'Speed DND ','限速覆盖 ':'Limit Override ',
   '防封禁 Ban Shield ':'Ban Shield ','实验臂':'Experiment Arm',
@@ -2789,7 +2782,6 @@ async function loadDefenseConfig(){
   if(tgl)tgl.checked=!!d.slew_rate_enabled;
   var sound=$('def-sound-tgl');if(sound)sound.checked=!!d.sound_warning_suppression;
   var isaOvr=$('def-isa-override-tgl');if(isaOvr)isaOvr.checked=!!d.isa_override;
-  var dndClone27=$('def-dnd-clone27-tgl');if(dndClone27)dndClone27.checked=!!d.clone27_dnd;
   var dndVol=$('def-dnd-vol-tgl');if(dndVol)dndVol.checked=!!d.dnd_volume;
   var nd=$('def-speed-nd-tgl');if(nd)nd.checked=!!d.speed_no_disturb;
   var dndSpd=$('def-dnd-spd-tgl');if(dndSpd)dndSpd.checked=!!d.dnd_speed;
@@ -3178,7 +3170,6 @@ async function saveDefenseConfig(){
   var master=$('def-master-tgl');
   var sound=$('def-sound-tgl');
   var isaOvr=$('def-isa-override-tgl');
-  var dndClone27=$('def-dnd-clone27-tgl');
   var dndVol=$('def-dnd-vol-tgl');
   var nd=$('def-speed-nd-tgl');
   var dndSpd=$('def-dnd-spd-tgl');
@@ -3193,7 +3184,6 @@ async function saveDefenseConfig(){
     enabled:master&&master.checked?'1':'0',
     sound_warning_suppression:sound&&sound.checked?'1':'0',
     isa_override:isaOvr&&isaOvr.checked?'1':'0',
-    clone27_dnd:dndClone27&&dndClone27.checked?'1':'0',
     dnd_volume:dndVol&&dndVol.checked?'1':'0',
     speed_no_disturb:nd&&nd.checked?'1':'0',
     ap_eap_compatible:apeap&&apeap.checked?'1':'0',
