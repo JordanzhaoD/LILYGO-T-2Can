@@ -3049,7 +3049,6 @@ static void appendClone27DiagJson(String &j, unsigned long now)
     j += "\"";
     j += R"JSON(,"blockedReason":")JSON";
     j += dashLegacy045Clone27BlockName(d.blocked);
-    j += "\"";
     j += R"JSON(","tx":)JSON";
     appendTxEvidenceJson(j, d.tx, now);
     j += "}";

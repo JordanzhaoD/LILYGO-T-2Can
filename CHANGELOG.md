@@ -1,5 +1,20 @@
 # Changelog
 
+## [6.0.0-beta18] - 2026-11-19
+
+### Fixed (P0 hotfix: /status JSON truncated by a stray quote)
+
+- `appendClone27DiagJson` emitted `"blockedReason":"…"","tx"` — one extra
+  closing quote — which broke `/status` JSON parsing at the clone27Diag
+  object. Every UI section after that point (CAN diagnostics, speed, runtime
+  state, config echo) fell back to empty data: the WebUI read as "CAN1 dead"
+  with phantom cards, and config saves persisted to NVS but could not be
+  echoed back. The extra quote is removed; the JSON now parses end-to-end.
+  Root cause note: this was a T2CAN-side JSON emission bug only — no P4/3CAN
+  code was ever mixed into the build (binary forensics + serial boot log
+  confirm: TWAI/CAN1 initialised normally, board name and uiBuildId are
+  lilygo_t2can_dual throughout).
+
 ## [6.0.0-beta17] - 2026-11-18
 
 ### Changed (Legacy stalk DND retired → 0x045 bit27 state-clone DND)
