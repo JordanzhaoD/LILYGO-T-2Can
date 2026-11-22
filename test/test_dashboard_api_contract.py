@@ -2497,10 +2497,14 @@ class DashboardApiContractTests(unittest.TestCase):
         )
         # Permit cascade pinned verbatim in the tick (the procedure's license
         # to run; byte-identical to the coordinator wiring it replaced).
+        # beta21: the 0x3EE TX master switch joins the cascade — the JITTER
+        # Bit46Shot is a device 0x3EE write and must stop with the switch off.
         self.assertIn(
             "const bool permit = canActive && dashLegacyHandlerActive() && appDriver &&\n"
             "                        !vehicleOtaActive &&\n"
-            "                        (!dashHandler || dashHandler->abortGuard.allowsInjection());",
+            "                        (!dashHandler || dashHandler->abortGuard.allowsInjection()) &&\n"
+            "                        (!dashHandler || !dashHandler->fsd3eeInjectAllowed ||\n"
+            "                         dashHandler->fsd3eeInjectAllowed());",
             self.main,
         )
         # Real send path: the JITTER tick runs on the CAN task.
