@@ -33,7 +33,7 @@
    `LILYGO-T-2CAN_v6.0.0-beta20_ota_app.bin`
 2. 或命令行（裸 body + X-File-Name 头，勿用 multipart）：
    ```
-   curl -X POST "http://<板子IP>/ota_update" \
+   curl -X POST "http://<板子IP>/update" \
         -H "X-File-Name: LILYGO-T-2CAN_v6.0.0-beta20_ota_app.bin" \
         --data-binary @LILYGO-T-2CAN_v6.0.0-beta20_ota_app.bin
    ```
