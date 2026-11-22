@@ -198,7 +198,7 @@ struct CarManagerBase
     bool (*checkEvd)() = nullptr;
     FsdGateBlockReason (*gateBlockReason)() = nullptr;
     bool (*legacyFsdActivationAllowed)(uint32_t nowMs) = nullptr;
-    // beta19 TX split: the 0x3EE master switch. When the callback exists and
+    // beta20 TX split: the 0x3EE master switch. When the callback exists and
     // returns false, EVERY device 0x3EE write stops (activation injection,
     // keep-alive, and the 0x3EE speed-request path) — native activation only.
     // Deliberately NOT routed through checkAD/injectionAllowed so the A3
@@ -449,7 +449,7 @@ struct LegacyHandler : public CarManagerBase
         if (jitterInhibit3ee && jitterInhibit3ee())
             return; // the jitter procedure owns bit46 while it runs
         if (fsd3eeInjectAllowed && !fsd3eeInjectAllowed())
-            return; // beta19: 0x3EE TX master-off (A3 rides 0x2F8 instead)
+            return; // beta20: 0x3EE TX master-off (A3 rides 0x2F8 instead)
         if (!builtInFsdInjectionAllowed())
             return; // plugin ownership mirror
 
@@ -1250,6 +1250,16 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
                     legacyFsdDiag.health = FsdHealthState::GateBlocked;
                     legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::LegacyFsdSettle;
+                    return;
+                }
+                // beta21: the 0x3EE TX master-off covers the mux1 ride too —
+                // the vehicle's own frame passes untouched (see the mux0
+                // branch). Without this the switch leaked mux1 writes under
+                // TeslaParity / Experimental+mux1 policies.
+                if (fsd3eeInjectAllowed && !fsd3eeInjectAllowed())
+                {
+                    legacyFsdDiag.mux1.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
                     return;
                 }
                 if (!injectionAllowed())
