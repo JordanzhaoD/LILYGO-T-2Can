@@ -1,5 +1,29 @@
 # Changelog
 
+## [6.0.0-beta20] - 2026-11-23
+
+### Added (TX split: dedicated 0x3EE FSD activation-injection switch)
+
+- **New defense-page master switch "0x3EE FSD 激活注入" (default ON, NVS
+  `f3ee`, `/defense_config` field `fsd_3ee_inject`).** Field background: the
+  vehicle moved to native FSD activation, so every device 0x3EE write
+  (activation injection, keep-alive, and the 0x3EE speed-request path) is
+  unwanted — but no pre-beta20 build had a switch with that exact scope, and
+  the switches that did stop 0x3EE also took the Legacy wheel DND and the
+  smart speed offset down with it.
+- **Implementation**: a new `fsd3eeInjectAllowed` callback gates the two
+  device 0x3EE write sites in the Legacy handler (the RX ride path and the
+  keep-alive tick). It is deliberately NOT routed through checkAD /
+  `injectionAllowed()`, so with the switch OFF: the A3 align-mode 0x2F8
+  offset ride, Ban Shield, and the wheel DND keep working unchanged; with it
+  ON the behaviour is byte-identical to beta19. When OFF and a speed offset
+  is requested, `legacySpeedDiag.blockedReason` reports `fsd3eeMasterOff`.
+- Vehicle analysis behind this (2026-11-23, two beta02 field captures):
+  0x399/0x045 inputs were fully healthy (apState 6, warning edges, valid
+  CRC/counter), a replay of the beta02 pair engine over the recordings
+  emits the expected frames, yet zero ticks were on the bus — the
+  kill-switch coupling was firmware-side, not data-side.
+
 ## [6.0.0-beta19] - 2026-11-19
 
 ### Fixed (Legacy wheel DND: first tick fired too early, hitting only ~1/3 of nags)

@@ -198,6 +198,13 @@ struct CarManagerBase
     bool (*checkEvd)() = nullptr;
     FsdGateBlockReason (*gateBlockReason)() = nullptr;
     bool (*legacyFsdActivationAllowed)(uint32_t nowMs) = nullptr;
+    // beta19 TX split: the 0x3EE master switch. When the callback exists and
+    // returns false, EVERY device 0x3EE write stops (activation injection,
+    // keep-alive, and the 0x3EE speed-request path) — native activation only.
+    // Deliberately NOT routed through checkAD/injectionAllowed so the A3
+    // align-mode 0x2F8 offset ride, Ban Shield and the wheel DND keep
+    // working with 0x3EE fully off.
+    bool (*fsd3eeInjectAllowed)() = nullptr;
     // v1.19 JITTER hooks (see dash_jitter_procedure.h). The observe wrapper
     // is fed from the Legacy mux0 branch with the full native frame BEFORE
     // any gate decision — the procedure caches its own one-shot template
@@ -441,6 +448,8 @@ struct LegacyHandler : public CarManagerBase
         }
         if (jitterInhibit3ee && jitterInhibit3ee())
             return; // the jitter procedure owns bit46 while it runs
+        if (fsd3eeInjectAllowed && !fsd3eeInjectAllowed())
+            return; // beta19: 0x3EE TX master-off (A3 rides 0x2F8 instead)
         if (!builtInFsdInjectionAllowed())
             return; // plugin ownership mirror
 
@@ -1089,6 +1098,17 @@ struct LegacyHandler : public CarManagerBase
                     legacyFsdDiag.lastBlockedBy = FsdGateBlockReason::LegacyFsdSettle;
                     if (speedRequested)
                         legacySpeedDiag.blockedReason = "jitterProcedure";
+                    return;
+                }
+                // beta19: 0x3EE TX master-off — the vehicle's own frame
+                // passes untouched; the device writes nothing on 0x3EE.
+                // Speed offset keeps flowing via the A3 0x2F8 ride.
+                if (fsd3eeInjectAllowed && !fsd3eeInjectAllowed())
+                {
+                    legacyFsdDiag.mux0.lastSkip = FsdSkipReason::GateBlocked;
+                    legacyFsdDiag.health = FsdHealthState::GateBlocked;
+                    if (speedRequested)
+                        legacySpeedDiag.blockedReason = "fsd3eeMasterOff";
                     return;
                 }
                 bool activationAllowed = false;
