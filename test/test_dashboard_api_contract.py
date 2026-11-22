@@ -1899,6 +1899,64 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn("dashInstantEngageEnabled", body)
         self.assertNotIn("dashSoftEngageEnabled", body)
 
+    def test_fsd_3ee_master_switch_wiring(self) -> None:
+        """beta20/beta21: the dedicated 0x3EE TX master switch is wired end to
+        end and gates EVERY device 0x3EE write site in the Legacy handler —
+        RX mux0, RX mux1 and the keep-alive tick — while staying OFF the
+        checkAD/injectionAllowed chains (A3 0x2F8 ride, Ban Shield, wheel DND
+        keep working with 0x3EE fully off)."""
+        # Default ON = pre-switch behaviour; NVS round trip on the same prefs.
+        self.assertIn("static bool dashFsd3eeInject = true;", self.dash)
+        self.assertIn('prefs.putBool("f3ee", dashFsd3eeInject);', self.dash)
+        self.assertIn('dashFsd3eeInject = prefs.getBool("f3ee", true);', self.dash)
+        # /defense_config round trip: GET JSON, POST accept, live static.
+        cfg = re.search(r"static String dashDefenseConfigJson\(\).*?\n}", self.dash, re.S)
+        self.assertIsNotNone(cfg)
+        self.assertIn('\\"fsd_3ee_inject\\"', cfg.group(0))
+        defense = re.search(r"static void handleDefenseConfig\(\).*?server\.send\(200", self.dash, re.S)
+        self.assertIsNotNone(defense)
+        self.assertIn('server.hasArg("fsd_3ee_inject")', defense.group(0))
+        self.assertIn('dashFsd3eeInject = dashArgTruthy(server.arg("fsd_3ee_inject"));', defense.group(0))
+        # Callback bound on BOTH install paths (apply-runtime + init pool).
+        self.assertIn(
+            "dashHandler->fsd3eeInjectAllowed = []() { return dashFsd3eeInject; };",
+            self.dash,
+        )
+        self.assertIn(
+            "handlerPool[i]->fsd3eeInjectAllowed = []() { return dashFsd3eeInject; };",
+            self.dash,
+        )
+        # Exactly three gate sites in the Legacy handler: keep-alive tick,
+        # RX mux0, RX mux1 (the beta20 build shipped two — mux1 leaked under
+        # TeslaParity/Experimental+mux1). A fourth site means someone wired
+        # the switch into a shared chain (checkAD/injectionAllowed) and would
+        # take the A3 0x2F8 ride or Ban Shield down with it.
+        self.assertEqual(
+            self.handlers.count("if (fsd3eeInjectAllowed && !fsd3eeInjectAllowed())"),
+            3,
+            "fsd3eeInjectAllowed must gate exactly the three Legacy 0x3EE TX sites",
+        )
+        # It must NOT leak into the shared gate helpers.
+        inj = re.search(r"bool injectionAllowed\(\) const.*?\n    }", self.handlers, re.S)
+        self.assertIsNotNone(inj)
+        self.assertNotIn("fsd3eeInjectAllowed", inj.group(0))
+        # The JITTER Bit46Shot is a device 0x3EE write too: the tick's permit
+        # cascade must consult the switch (native suites cannot compile
+        # main.cpp, so pin it here).
+        self.assertIn(
+            "(!dashHandler || !dashHandler->fsd3eeInjectAllowed ||\n"
+            "                         dashHandler->fsd3eeInjectAllowed());",
+            self.main,
+        )
+        # UI: toggle + load default-true + save field, in BOTH the source and
+        # the regenerated minified blob (bare tokens — the minifier strips
+        # attribute quotes).
+        for body in (self.ui, self.ui_gen):
+            with self.subTest(body="ui tokens"):
+                self.assertIn("def-fsd-3ee-tgl", body)
+                self.assertIn("fsd_3ee_inject", body)
+        self.assertIn("(d.fsd_3ee_inject===undefined)?true:!!d.fsd_3ee_inject", self.ui)
+
     def test_phase3_defense_ui_has_legacy_045_toggle(self) -> None:
         """Defense page keeps active controls and removes Legacy 0x3C2 speed DND.
         """

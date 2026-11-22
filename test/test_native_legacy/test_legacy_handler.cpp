@@ -1526,6 +1526,90 @@ void test_keepalive_template_expiry_stops()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
+// --- beta20/beta21: the 0x3EE TX master switch (fsd3eeInjectAllowed) ---
+// Scope: EVERY device 0x3EE write stops with the switch off — the RX mux0
+// ride, the RX mux1 ride (TeslaParity / Experimental+mux1 leaked in beta20),
+// and the keep-alive tick. The A3 align-mode 0x2F8 mirror-ride must keep
+// flowing (it writes 760, never 1006), and the switch ON must be a no-op.
+
+static bool deny3eeMaster()
+{
+    return false;
+}
+
+static bool allow3eeMaster()
+{
+    return true;
+}
+
+void test_3ee_master_off_stops_mux0_rx_ride()
+{
+    handler.fsd3eeInjectAllowed = deny3eeMaster;
+    CanFrame n0 = makeNative3eeMux0();
+    handler.handleMessage(n0, mock); // unbound baseline sends 1 (see above)
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT((int)FsdSkipReason::GateBlocked,
+                          (int)handler.legacyFsdDiag.mux0.lastSkip);
+    TEST_ASSERT_EQUAL_INT((int)FsdHealthState::GateBlocked,
+                          (int)handler.legacyFsdDiag.health);
+}
+
+void test_3ee_master_off_stops_mux1_rx_ride()
+{
+    handler.legacyFsdDiag.policy = LegacyFsdPolicy::TeslaParity;
+    handler.fsd3eeInjectAllowed = deny3eeMaster;
+    CanFrame n0 = makeNative3eeMux0();
+    CanFrame n1 = makeNative3eeMux1();
+    handler.handleMessage(n0, mock); // gated: no TX (still latches fsdTriggered)
+    handler.handleMessage(n1, mock); // beta20 leak site: mux1 must gate too
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT((int)FsdSkipReason::GateBlocked,
+                          (int)handler.legacyFsdDiag.mux1.lastSkip);
+    TEST_ASSERT_EQUAL_INT((int)FsdHealthState::GateBlocked,
+                          (int)handler.legacyFsdDiag.health);
+}
+
+void test_3ee_master_off_stops_keepalive_tick()
+{
+    handler.fsd3eeInjectAllowed = deny3eeMaster;
+    CanFrame n0 = makeNative3eeMux0();
+    handler.handleMessage(n0, mock); // gated: no TX
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+
+    const uint32_t now = advanceMs(2000); // >= silence trigger
+    handler.keepAliveTick(mock, now);
+    TEST_ASSERT_EQUAL(0, mock.sent.size()); // the tick gates too
+}
+
+void test_3ee_master_off_leaves_2f8_ride_alive()
+{
+    configureLegacySmartSpeed(LegacySmartOffsetMode::Auto);
+    handler.legacyFsdDiag.alignModeEnable = true;
+    handler.fsd3eeInjectAllowed = deny3eeMaster;
+    observeLegacyGpsLimit(12); // 60 kph -> auto bucket +30 kph, ride fires
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(760, mock.sent[0].id); // the A3 ride, not 0x3EE
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacySpeedDiag.ride2f8TxOk);
+
+    // Native 0x3EE traffic keeps arriving: template caches stay fresh but
+    // the device itself must write nothing on 0x3EE.
+    sendLegacySpeedMux0(CAN_BUS_VEH, 1);
+    sendLegacySpeedMux0(CAN_BUS_VEH, 2);
+    sendLegacySpeedMux0(CAN_BUS_VEH, 3);
+    TEST_ASSERT_EQUAL(1, mock.sent.size()); // still only the 760 ride
+    TEST_ASSERT_EQUAL_UINT32(760, mock.sent[0].id);
+}
+
+void test_3ee_master_on_is_noop_for_mux0_ride()
+{
+    handler.fsd3eeInjectAllowed = allow3eeMaster;
+    CanFrame n0 = makeNative3eeMux0();
+    handler.handleMessage(n0, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1006, mock.sent[0].id);
+    TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40); // bit46 rides
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -1615,6 +1699,11 @@ int main()
     RUN_TEST(test_keepalive_yield_on_native_return);
     RUN_TEST(test_keepalive_activation_denied_suppresses_mux0);
     RUN_TEST(test_keepalive_template_expiry_stops);
+    RUN_TEST(test_3ee_master_off_stops_mux0_rx_ride);
+    RUN_TEST(test_3ee_master_off_stops_mux1_rx_ride);
+    RUN_TEST(test_3ee_master_off_stops_keepalive_tick);
+    RUN_TEST(test_3ee_master_off_leaves_2f8_ride_alive);
+    RUN_TEST(test_3ee_master_on_is_noop_for_mux0_ride);
 
     return UNITY_END();
 }
