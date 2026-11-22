@@ -1,5 +1,34 @@
 # Changelog
 
+## [6.0.0-beta21] - 2026-11-23
+
+### Fixed (independent review of the beta20 0x3EE master switch)
+
+- **The mux1 RX ride leaked 0x3EE with the switch off.** beta20 gated
+  only the mux0 ride and the keep-alive tick; the mux1 branch (bit19 /
+  vision-limit clear) kept writing 0x3EE whenever the policy allowed it
+  (TeslaParity, or Experimental + mux1Enable — both runtime-configurable
+  via `/legacy_fsd_config`). The same early-return gate now covers it.
+- **The v1.19 JITTER Bit46Shot leaked 0x3EE with the switch off.** The
+  one-shot is itself a device 0x3EE write; the permit cascade in
+  `t2canJitterTick` now consults `fsd3eeInjectAllowed`, so with the
+  switch off the procedure fullResets ("permitLost") instead of
+  injecting. (Only relevant with jitter enabled — NVS `jtr_on`, default
+  off.)
+- **beta20 asset README named a nonexistent OTA endpoint** (`/ota_update`);
+  the route is `POST /update` with the bare body + `X-File-Name` header.
+  Corrected in place; README files are not covered by SHA256SUMS.
+- New native pins (test_native_legacy): switch off stops the mux0 ride,
+  the mux1 ride and the keep-alive tick; the A3 align-mode 0x2F8
+  mirror-ride keeps flowing; switch on is a no-op. New contract pin:
+  NVS `f3ee` round trip, `/defense_config` field, both callback installs,
+  exactly three gate sites in handlers.h, the JITTER permit clause, and
+  the UI tokens in source + minified blob.
+- Known residual (documented, not gated): a user-installed plugin that
+  is explicitly configured to inject 1006 still writes 0x3EE with the
+  switch off — the plugin engine is a separate opt-in mechanism with its
+  own enable toggle.
+
 ## [6.0.0-beta20] - 2026-11-23
 
 ### Added (TX split: dedicated 0x3EE FSD activation-injection switch)
