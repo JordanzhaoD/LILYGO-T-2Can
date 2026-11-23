@@ -136,6 +136,7 @@ struct DashLegacyWheel045Diag
     uint8_t positiveThisEpisode = 0;
     uint8_t compensationPending = 0;
     uint8_t consecutiveTxFailures = 0;
+    uint32_t disarmHeals = 0;
     uint32_t dasStatusMs = 0;
     uint32_t nativeMs = 0;
     uint32_t nativeRx = 0;
@@ -173,6 +174,14 @@ struct DashLegacyWheel045Dnd
     static constexpr uint32_t kOwnEchoWindowMs = 30;
     static constexpr uint8_t kMaxPairsPerEpisode = 3;
     static constexpr uint8_t kMaxConsecutiveTxFailures = 2;
+    // TX split v2 in-event self-heal: after a disarm the engine revives
+    // itself 800 ms later (single-CAN 2d498da precedent). Rate limit: at
+    // most three heals in any rolling 60 s window — the engine's abort
+    // recovery forces a warning clear+edge between consecutive TX-failure
+    // pairs, so a per-episode budget would reset before it could ever cap.
+    static constexpr uint32_t kHealDelayMs = 800;
+    static constexpr uint8_t kMaxHealsPerWindow = 3;
+    static constexpr uint32_t kHealWindowMs = 60000;
     static constexpr uint16_t kLeftTickMask = 0x03C0;
     static constexpr uint16_t kAnyWheelMask = 0x3FFF;
     static constexpr uint8_t kPositiveNibble = 0x01;
@@ -258,6 +267,10 @@ struct DashLegacyWheel045Dnd
 
     void onDasStatus(uint8_t apState, uint8_t handsState, uint8_t sourceBus, uint32_t nowMs)
     {
+        // Self-heal BEFORE wasWarning is sampled: resetRuntime() clears
+        // warningActive_, so healing after that point would swallow the
+        // edge that should restart the episode (builder-review trap).
+        healTick(nowMs);
         const bool wasWarning = warningActive_;
         apActive_ = apState >= 3 && apState <= 6;
         warningActive_ = isWarningState(handsState);
@@ -304,6 +317,26 @@ struct DashLegacyWheel045Dnd
             syncEpisodeDiag();
             setState(DashLegacyWheel045State::Idle, DashLegacyWheel045Block::WarningClear);
         }
+    }
+
+    // In-event self-heal: revive a disarmed engine 800 ms after the
+    // disarm, rate-limited to kMaxHealsPerWindow inside a rolling
+    // kHealWindowMs window anchored at the window's first heal.
+    void healTick(uint32_t nowMs)
+    {
+        if (!autoDisarmed_)
+            return;
+        if (healsThisWindow_ > 0 && nowMs - healWindowStartMs_ >= kHealWindowMs)
+            healsThisWindow_ = 0; // window slid: budget reopens
+        if (healsThisWindow_ >= kMaxHealsPerWindow)
+            return;
+        if (disarmedAtMs_ == 0 || nowMs - disarmedAtMs_ < kHealDelayMs)
+            return;
+        resetRuntime();
+        if (healsThisWindow_ == 0)
+            healWindowStartMs_ = nowMs;
+        healsThisWindow_++;
+        diag.disarmHeals++;
     }
 
     void onCan1Frame(const uint8_t data[8], uint8_t dlc, uint32_t nowMs)
@@ -474,6 +507,7 @@ struct DashLegacyWheel045Dnd
             {
                 autoDisarmed_ = true;
                 diag.autoDisarmed = true;
+                disarmedAtMs_ = nowMs;
                 setState(DashLegacyWheel045State::AutoDisarmed,
                          DashLegacyWheel045Block::AutoDisarmed);
             }
@@ -544,6 +578,9 @@ private:
     uint8_t positiveThisEpisode_ = 0;
     uint8_t compensationRemaining_ = 0;
     uint8_t consecutiveTxFailures_ = 0;
+    uint32_t disarmedAtMs_ = 0;
+    uint8_t healsThisWindow_ = 0;
+    uint32_t healWindowStartMs_ = 0;
     bool nativeSeen_ = false;
     bool runtimeAllowed_ = false;
     bool apActive_ = false;

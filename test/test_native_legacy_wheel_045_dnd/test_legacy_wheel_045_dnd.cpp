@@ -292,6 +292,106 @@ void test_two_tx_failures_auto_disarm()
     TEST_ASSERT_EQUAL(DashLegacyWheel045Block::AutoDisarmed, dnd.diag.blocked);
 }
 
+// ── TX split v2: in-event disarm self-heal ───────────────────────────────
+
+static void disarmTwice(DashLegacyWheel045Dnd &dnd, uint32_t &nowMs)
+{
+    uint8_t out[8];
+    dnd.onCan1Frame(kIdleC, 8, nowMs);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, nowMs);
+    TEST_ASSERT_TRUE(dnd.nextFrame(nowMs, out));
+    dnd.recordTxResult(false, nowMs);
+    nowMs += 100;
+    dnd.onCan1Frame(kIdleD, 8, nowMs);
+    dnd.onDasStatus(6, 2, CAN_BUS_VEH, nowMs);
+    nowMs += 50;
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, nowMs);
+    TEST_ASSERT_TRUE(dnd.nextFrame(nowMs, out));
+    dnd.recordTxResult(false, nowMs);
+    TEST_ASSERT_TRUE(dnd.diag.autoDisarmed);
+}
+
+void test_disarm_heals_after_800ms()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8];
+    arm(dnd);
+    uint32_t nowMs = 1000;
+    disarmTwice(dnd, nowMs); // disarmed at ~1150
+    // 700 ms later: still disarmed.
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, nowMs + 700);
+    TEST_ASSERT_TRUE(dnd.diag.autoDisarmed);
+    TEST_ASSERT_FALSE(dnd.nextFrame(nowMs + 700, out));
+    // 810 ms later: the heal fires inside onDasStatus and the same
+    // warning edge restarts the episode.
+    dnd.onCan1Frame(kIdleC, 8, nowMs + 810);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, nowMs + 810);
+    TEST_ASSERT_FALSE(dnd.diag.autoDisarmed);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.disarmHeals);
+    TEST_ASSERT_TRUE(dnd.nextFrame(nowMs + 810, out));
+}
+
+void test_disarm_heal_capped_three_per_window()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8];
+    arm(dnd);
+    uint32_t nowMs = 1000;
+    for (int round = 0; round < 3; round++)
+    {
+        disarmTwice(dnd, nowMs);
+        nowMs += 810;
+        dnd.onCan1Frame(kIdleC, 8, nowMs);
+        dnd.onDasStatus(6, 3, CAN_BUS_VEH, nowMs);
+        TEST_ASSERT_FALSE(dnd.diag.autoDisarmed); // healed
+    }
+    TEST_ASSERT_EQUAL_UINT32(3, dnd.diag.disarmHeals);
+    // Fourth disarm inside the 60 s window: the cap holds.
+    disarmTwice(dnd, nowMs);
+    nowMs += 810;
+    dnd.onCan1Frame(kIdleC, 8, nowMs);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, nowMs);
+    TEST_ASSERT_TRUE(dnd.diag.autoDisarmed); // window cap held
+    TEST_ASSERT_EQUAL_UINT32(3, dnd.diag.disarmHeals);
+}
+
+void test_disarm_heal_window_slides_reopens()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8];
+    arm(dnd);
+    uint32_t nowMs = 1000;
+    for (int round = 0; round < 4; round++)
+    {
+        disarmTwice(dnd, nowMs);
+        nowMs += 810;
+        dnd.onCan1Frame(kIdleC, 8, nowMs);
+        dnd.onDasStatus(6, 3, CAN_BUS_VEH, nowMs);
+    }
+    TEST_ASSERT_EQUAL_UINT32(3, dnd.diag.disarmHeals);
+    TEST_ASSERT_TRUE(dnd.diag.autoDisarmed); // capped at three
+    // Once the 60 s window slides past, the budget reopens.
+    nowMs += 61000;
+    dnd.onCan1Frame(kIdleC, 8, nowMs);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, nowMs);
+    TEST_ASSERT_FALSE(dnd.diag.autoDisarmed);
+    TEST_ASSERT_EQUAL_UINT32(4, dnd.diag.disarmHeals);
+}
+
+void test_healthy_engine_edge_no_heal_reset()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8];
+    arm(dnd);
+    seedAndWarn(dnd, 1000);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.warningEpisodes);
+    TEST_ASSERT_EQUAL_UINT32(0, dnd.diag.disarmHeals);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
+    dnd.recordTxResult(true, 1000);
+    TEST_ASSERT_FALSE(dnd.diag.autoDisarmed);
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.warningEpisodes); // untouched
+}
+
 void test_gateway_mirror_is_diagnostic_only()
 {
     DashLegacyWheel045Dnd dnd;
@@ -385,6 +485,10 @@ int main()
     RUN_TEST(test_expected_duplicate_and_counter_conflict_are_distinct);
     RUN_TEST(test_physical_wheel_input_aborts_active_sequence);
     RUN_TEST(test_two_tx_failures_auto_disarm);
+    RUN_TEST(test_disarm_heals_after_800ms);
+    RUN_TEST(test_disarm_heal_capped_three_per_window);
+    RUN_TEST(test_disarm_heal_window_slides_reopens);
+    RUN_TEST(test_healthy_engine_edge_no_heal_reset);
     RUN_TEST(test_gateway_mirror_is_diagnostic_only);
     RUN_TEST(test_release_timeout_aborts_without_free_running_send);
     RUN_TEST(test_warning_episode_is_limited_to_three_positive_attempts);
