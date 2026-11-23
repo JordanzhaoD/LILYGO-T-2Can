@@ -9,7 +9,7 @@
 
 **LILYGO T-2CAN（lilygo_t2can_dual / ESP32-S3 16MB）生产资产。**
 源码 `e29aa9d`（main）。uiBuildId =
-`6.1.0-beta02-lilygo_t2can_dual-e29aa9dfc222-2026-11-23T00:xxZ`。
+`6.1.0-beta02-lilygo_t2can_dual-e29aa9d80928-2026-11-23T01:00:06Z`。
 
 ## 版本系列说明（必读）
 
