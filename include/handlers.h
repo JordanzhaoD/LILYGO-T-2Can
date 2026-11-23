@@ -70,8 +70,6 @@ struct LegacySpeedRuntimeDiag
     uint32_t txFail = 0;
     uint32_t offsetOnlyTxOk = 0;
     uint32_t offsetOnlyTxFail = 0;
-    uint32_t ride2f8TxOk = 0; // A3 mirror-ride fallback (0x3EE master off)
-    const char *rideBlockedReason = "off";
     bool runtimeActive = false;
     const char *blockedReason = "off";
 };
@@ -788,44 +786,6 @@ struct LegacyHandler : public CarManagerBase
             legacySpeedDiag.gpsSpeedLastMs = nowMs;
             legacySpeedDiag.gpsSpeedCount++;
 
-            // A3 mirror-ride (6.1.0, ported from the field-calibrated A3.2
-            // design): when the 0x3EE master switch is OFF, carry the smart
-            // speed offset on the native UI_userSpeedOffset field (data[5]
-            // bits 0-5, raw = kph+30) of the frame the car just sent. Pure
-            // mirror-ride — one field rewritten, cadence stays the car's own,
-            // never a free-run frame. Bits 6-7 preserved (bit7 = the MPH/KPH
-            // unit flag the car itself set). With the switch ON this block is
-            // dormant: beta02 keeps its 0x3EE speed-request path untouched.
-            if (fsd3eeInjectAllowed && !fsd3eeInjectAllowed() &&
-                legacySpeedOffsetRequested() && injectionAllowed() &&
-                abortGuard.allowsInjection() &&
-                !(jitterInhibit3ee && jitterInhibit3ee()))
-            {
-                const uint8_t rideOffsetKph = computeLegacySpeedOffset(nowMs);
-                if (rideOffsetKph > 0)
-                {
-                    CanFrame ride = frame;
-                    ride.data[5] = static_cast<uint8_t>(
-                        (frame.data[5] & 0xC0U) |
-                        static_cast<uint8_t>((rideOffsetKph + 30U) & 0x3FU));
-                    if (driver.send(ride))
-                    {
-                        ++legacySpeedDiag.ride2f8TxOk;
-                        legacySpeedDiag.lastSentOffsetKph = rideOffsetKph;
-                        legacySpeedDiag.lastSentOffsetRaw =
-                            static_cast<uint8_t>(rideOffsetKph + 30U);
-                        legacySpeedDiag.rideBlockedReason = "none";
-                    }
-                    else
-                    {
-                        legacySpeedDiag.rideBlockedReason = "txFail";
-                    }
-                }
-                else
-                {
-                    legacySpeedDiag.rideBlockedReason = legacySpeedDiag.result.blockedReason;
-                }
-            }
             legacySpeedDiag.blockedReason = "waiting3ee";
             return;
         }

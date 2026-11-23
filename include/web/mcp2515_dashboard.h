@@ -2643,8 +2643,6 @@ static void appendLegacySmartSpeedJson(String &j, unsigned long now)
     bool configured = dashLegacySmartMode != LegacySmartOffsetMode::Off;
     j += R"JSON(,"fsd3eeInject":)JSON";
     j += dashFsd3eeInject ? "true" : "false";
-    j += R"JSON(,"ride2f8TxOk":)JSON";
-    j += dashHandler ? dashHandler->legacySpeedDiag.ride2f8TxOk : 0;
     j += R"JSON(,"legacySmartSpeed":{"configured":)JSON";
     j += configured ? "true" : "false";
     j += R"JSON(,"legacyHandler":)JSON";
