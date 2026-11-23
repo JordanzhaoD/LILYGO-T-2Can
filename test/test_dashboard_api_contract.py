@@ -180,6 +180,20 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("var map=[3,0,1,2];", self.ui)
         self.assertIn("if (v <= 3 && v != hwMode)", self.dash)
 
+    def test_status_ci_is_pure_fsd3ee_inject(self) -> None:
+        """TX split v2: /status ci mirrors ONLY the 0x3EE master switch.
+
+        The homepage toggle's state source must not mix in canActive —
+        a board left canActive=0 by the retired one-switch-kills-all
+        toggle would bounce the switch closed while injection was on.
+        """
+        m = re.search(r'j \+= ",\\"ci\\":";(?:\s*//[^\n]*\n|\s*\n|.*?//.*?\n)*?\s*j \+= ([^;]+);', self.dash)
+        self.assertIsNotNone(m, "ci JSON append not found")
+        expr = m.group(1)
+        self.assertIn("dashFsd3eeInject", expr)
+        self.assertNotIn("canActive", expr)
+        self.assertNotIn("canOnline", expr)
+
     def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
         """Device status must show which firmware/UI and handler mode are running."""
         for token in [

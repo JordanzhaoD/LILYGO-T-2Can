@@ -3044,11 +3044,12 @@ static void handleStatus()
     j += ",\"can\":";
     j += canOnline ? "true" : "false";
     j += ",\"ci\":";
-    // 6.1.0-beta02: the UI master toggle now switches the 0x3EE FSD
-    // activation injection only (fsd_3ee_inject), so "ci" reflects whether
-    // 0x3EE injection can actually flow: the underlying CAN enable AND the
-    // 0x3EE master switch both on.
-    j += (canActive && dashFsd3eeInject) ? "true" : "false";
+    // TX split v2: "ci" is the PURE fsd_3ee_inject single source. The
+    // homepage toggle's state must not mix in canActive — a board left
+    // canActive=0 by the retired one-switch-kills-all toggle would bounce
+    // the switch closed while the 0x3EE setting was on. Bus connectivity
+    // stays the topbar's business via "can".
+    j += dashFsd3eeInject ? "true" : "false";
     j += ",\"bootCan\":";
     j += bootCanActive ? "true" : "false";
     bool storedCan = canActive;
