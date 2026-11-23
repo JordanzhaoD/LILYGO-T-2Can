@@ -1,5 +1,48 @@
 # Changelog
 
+## [6.1.0-beta.05] - 2026-11-23
+
+### TX split v2 — all-ride architecture (field-data redesign)
+
+beta.04 field verdict: with both switches OFF the wheel DND and the smart
+speed offset both died — the 0x2F8 mirror-ride fallback was physically
+impossible on the X197 single line (0 host frames in 1080 s of captures;
+the fallback was ported from the three-bus Atlas P4 without verifying
+host presence). The wheel DND failure was intermittent and unrelated to
+the switch (TX-failure disarm with no self-heal; segment ② of the same
+capture shows DND alive with both switches off).
+
+- **Master-off now routes mux0 speed to the beta02 offsetOnly channel**
+  (`include/handlers.h`): the field-verified writer
+  (`dashWriteLegacyOffsetTo3eeMux0` — offset in b3 bits1-6, `b5|=0x03`
+  unlock pattern, b7 percent) with the full gate chain
+  (abortGuard → jitter → busLock → injectionAllowed → plugin). mux1
+  stays silent under master-off. Byte-parity with the switch-ON
+  offsetOnly output is pinned in tests. The dead 0x2F8 ride and its
+  diagnostics are removed.
+- **Wheel DND in-event self-heal**: a TX-failure disarm revives after
+  800 ms (single-CAN 2d498da precedent), rate-limited to 3 heals per
+  rolling 60 s window. The plan's per-episode budget was unreachable
+  (the engine's abort recovery forces a warning clear between
+  consecutive TX-failure pairs); the window semantics keep the
+  anti-loop intent.
+- **bit27 nagKill — parallel DND path (experimental, default OFF)**:
+  single frame per warning edge riding the next native 0x045 (clone +
+  bit27 + counter+1 + CRC8-J1850), hands window [3,5], hard-off at 6+.
+  Per the Jordan-provided reference pseudocode, deliberately MORE
+  conservative than the retired beta17-21 line (edge-triggered
+  single-shot, not 1500 ms cadence; window starts at 3, not 2).
+  Coordination with the wheel DND: bit27-tagged frames are siblings
+  (no nativeFresh refresh, no pair trigger) and the DND yields its
+  nextFrame beat while a clone is in flight. Fresh NVS key `nk27`.
+- **/status ci is the pure fsd_3ee_inject single source** (drops the
+  canActive coupling that made the two switch entries disagree).
+- Diagnostics: `nagKillDiag` (cloned/echoSuppressed/disarmHeals/
+  blockedReason) and `offsetOnlyTxOk` exposed on /status.
+- UI: 「bit27 状态克隆免打扰」 toggle above the wheel DND (experimental
+  badge, default off); the 0x3EE switch description now states the
+  offsetOnly channel and the anti-jerk inclusion.
+
 ## [6.1.0-beta.04] - 2026-11-23
 
 ### Fixed (bench-check finding on the beta03 UI)
