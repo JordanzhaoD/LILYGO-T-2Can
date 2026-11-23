@@ -1707,8 +1707,11 @@ static void dashApplyRuntimeState()
         // parallel with the wheel DND; sibling/yield coordination is
         // bound once here (both engines are static-duration globals).
         dashLegacyWheel045DndCtrl.setSiblingCloneFilter(DashLegacyNagKill045::isCloneFrame);
+        // I1 fix: the yield is beat-generational, not 20 ms — the DND waits
+        // for the NEXT idle native frame after a clone (the cached one is
+        // the clone's own source; pairing from it would repeat the counter).
         dashLegacyWheel045DndCtrl.setYieldGate(
-            [](uint32_t nowMs) { return dashNagKillCtrl.cloneInFlight(nowMs); });
+            [](uint32_t nowMs) { return dashNagKillCtrl.siblingOwnsBeat(nowMs); });
         dashNagKillCtrl.configure(dashNagKillEnabled);
         dashNagKillCtrl.setRuntimeAllowed(canActive && dashLegacyHandlerActive());
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
@@ -2679,6 +2682,8 @@ static void appendLegacySmartSpeedJson(String &j, unsigned long now)
     j += dashFsd3eeInject ? "true" : "false";
     j += R"JSON(,"offsetOnlyTxOk":)JSON";
     j += dashHandler ? dashHandler->legacySpeedDiag.offsetOnlyTxOk : 0;
+    j += R"JSON(,"offsetOnlyTxFail":)JSON";
+    j += dashHandler ? dashHandler->legacySpeedDiag.offsetOnlyTxFail : 0;
     j += R"JSON(,"legacySmartSpeed":{"configured":)JSON";
     j += configured ? "true" : "false";
     j += R"JSON(,"legacyHandler":)JSON";

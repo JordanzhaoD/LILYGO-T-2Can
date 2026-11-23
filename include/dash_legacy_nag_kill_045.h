@@ -34,6 +34,7 @@ struct DashLegacyNagKillDiag
     uint32_t cloned = 0;
     uint32_t txFail = 0;
     uint32_t echoSuppressed = 0;
+    uint32_t actionFrameSkipped = 0;
     uint32_t disarmHeals = 0;
     uint8_t consecutiveTxFailures = 0;
     const char *blockedReason = "disabled";
@@ -83,27 +84,57 @@ struct DashLegacyNagKill045
         return (data[3] & 0x08U) != 0;
     }
 
+    // True when the frame carries no wheel/stalk action payload — the
+    // same switch-word shape (b4 | b5<<8, wheel mask 0x3FFF) the DND
+    // engine requires before it will use a frame as source.
+    static bool isIdleActionFrame(const uint8_t data[8])
+    {
+        const uint16_t wheel = static_cast<uint16_t>(
+            data[4] | (static_cast<uint16_t>(data[5]) << 8));
+        return (wheel & 0x3FFFU) == 0;
+    }
+
     bool cloneInFlight(uint32_t nowMs) const
     {
         return lastCloneMs_ != 0 && nowMs - lastCloneMs_ < kCloneInFlightMs;
+    }
+
+    // Beat ownership for the DND yield gate (final-review I1): the clone
+    // owns the beat until a FRESH idle native frame has been observed
+    // after it. Time alone cannot release the slot — the DND's cached
+    // native frame is the one the clone was built on, and pairing from
+    // it would repeat the clone's counter.
+    bool siblingOwnsBeat(uint32_t /*nowMs*/) const
+    {
+        return lastCloneMs_ != 0 && lastIdleNativeMs_ <= lastCloneMs_;
     }
 
     void onDasStatus(uint8_t /*apState*/, uint8_t handsState, uint32_t nowMs)
     {
         healTick(nowMs);
         diag.handsState = handsState;
+        const bool inWindow = handsState >= kHandsMin && handsState <= kHandsMax;
+        const bool wasInWindow = lastHandsState_ >= kHandsMin && lastHandsState_ <= kHandsMax;
+        lastHandsState_ = handsState;
         if (!enabled_ || !runtimeAllowed_ || disarmed_)
             return;
-        if (handsState >= kHandsMin && handsState <= kHandsMax)
+        if (handsState >= 6)
         {
+            // Strike-out escalation domain: hard off. An armed trigger is
+            // cleared immediately (final-review C2) and no new edge can
+            // arm while the domain persists.
+            trigger_ = false;
+            diag.triggerArmed = false;
+            return;
+        }
+        if (inWindow && !wasInWindow)
+        {
+            // EDGE only (final-review C1): entering the window arms;
+            // staying inside it does NOT re-arm a consumed trigger —
+            // a sustained warning yields ONE clone, not ~2 Hz of them.
             trigger_ = true;
             triggerAtMs_ = nowMs;
             diag.triggerArmed = true;
-        }
-        else
-        {
-            // Edge over (or never in window): nothing to arm. Existing
-            // triggers expire with kTriggerExpireMs in onNative045.
         }
     }
 
@@ -128,10 +159,21 @@ struct DashLegacyNagKill045
         }
         if (isCloneFrame(data))
         {
-            // Our own echo (or a sibling's tagged frame): never chain.
+            // Our own echo (or a sibling's tagged frame): never chain and
+            // never count as a fresh native beat.
             diag.echoSuppressed++;
             return false;
         }
+        if (!isIdleActionFrame(data))
+        {
+            // Wheel-DND tick echoes / jitter stalk frames carry a
+            // functional payload — cloning those would re-send another
+            // engine's action with bit27 stitched on (final-review I2).
+            diag.actionFrameSkipped++;
+            return false;
+        }
+        // A fresh idle native beat: this is what releases the yield slot.
+        lastIdleNativeMs_ = nowMs;
         if (!trigger_)
         {
             diag.blockedReason = "idle";
@@ -220,8 +262,10 @@ private:
     bool runtimeAllowed_ = false;
     bool disarmed_ = false;
     bool trigger_ = false;
+    uint8_t lastHandsState_ = 0;
     uint32_t triggerAtMs_ = 0;
     uint32_t lastCloneMs_ = 0;
+    uint32_t lastIdleNativeMs_ = 0;
     uint32_t disarmedAtMs_ = 0;
     uint8_t consecutiveTxFailures_ = 0;
     uint8_t healsThisWindow_ = 0;
