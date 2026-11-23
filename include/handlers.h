@@ -854,13 +854,86 @@ struct LegacyHandler : public CarManagerBase
                 return;
             }
 
-            // TX split: 0x3EE master-off — the vehicle's own frame passes
-            // untouched and the device writes nothing on 0x3EE (mux0/mux1).
-            // The smart speed offset keeps flowing via the A3 0x2F8 ride.
+            // TX split v2: 0x3EE master-off kills the ACTIVATION engine
+            // only. mux1 stays silent; mux0 keeps the beta02 offsetOnly
+            // speed write (field-verified writer) so the smart offset
+            // survives the switch — the 0x2F8 fallback never existed on
+            // the X197 single line. Activation-side diag updates
+            // (fsdTriggered/ADEnabled, mux0 activation diag,
+            // jitterObserve3ee) stay skipped, matching beta.04.
             if (fsd3eeInjectAllowed && !fsd3eeInjectAllowed())
             {
-                if (legacySpeedOffsetRequested())
+                if (readMuxID(frame) != 0)
+                    return; // mux1: zero device writes under master-off
+                if (!legacySpeedOffsetRequested())
+                {
                     legacySpeedDiag.blockedReason = "fsd3eeMasterOff";
+                    return;
+                }
+                if (!abortGuard.allowsInjection())
+                {
+                    abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyFsdMux0);
+                    legacySpeedDiag.blockedReason = "abortGuard";
+                    return;
+                }
+                if (jitterInhibit3ee && jitterInhibit3ee())
+                {
+                    legacySpeedDiag.blockedReason = "jitterProcedure";
+                    return;
+                }
+                const bool speedBusAllowed = legacySpeedBus.accept(frame, nowMs);
+                if (legacySpeedBus.ambiguous)
+                {
+                    legacySpeedDiag.blockedReason = "busAmbiguous";
+                    return;
+                }
+                if (!speedBusAllowed)
+                {
+                    legacySpeedDiag.blockedReason = legacySpeedBus.selectedBus == CAN_BUS_ANY
+                                                        ? "busLearning"
+                                                        : "busMismatch";
+                    return;
+                }
+                if (!injectionAllowed())
+                {
+                    legacySpeedDiag.blockedReason = "gateBlocked";
+                    return;
+                }
+                if (!builtInFsdInjectionAllowed())
+                {
+                    legacySpeedDiag.blockedReason = "pluginOwner";
+                    return;
+                }
+                const uint8_t rideOffsetKph = computeLegacySpeedOffset(nowMs);
+                if (rideOffsetKph == 0)
+                    return;
+                CanFrame ride = frame;
+                dashWriteLegacyOffsetTo3eeMux0(ride.data, rideOffsetKph,
+                                               legacySpeedDiag.outputOffsetPct);
+                legacySpeedDiag.mux0RxByte3 = frame.data[3];
+                legacySpeedDiag.mux0TxByte3 = ride.data[3];
+                legacySpeedDiag.mux0RxByte5 = frame.data[5];
+                legacySpeedDiag.mux0TxByte5 = ride.data[5];
+                legacySpeedDiag.mux0RxByte7 = frame.data[7];
+                legacySpeedDiag.mux0TxByte7 = ride.data[7];
+                framesSent++;
+                const bool ok = driver.send(ride);
+                legacySpeedDiag.lastSentOffsetRaw =
+                    static_cast<uint8_t>(rideOffsetKph + 30U);
+                legacySpeedDiag.lastSentOffsetKph = rideOffsetKph;
+                legacySpeedDiag.runtimeActive = ok;
+                if (ok)
+                {
+                    legacySpeedDiag.offsetOnlyTxOk++;
+                    legacySpeedDiag.blockedReason = "none";
+                }
+                else
+                {
+                    legacySpeedDiag.offsetOnlyTxFail++;
+                    legacySpeedDiag.blockedReason = "txFail";
+                }
+                if (onSend)
+                    onSend(0, ok);
                 return;
             }
 

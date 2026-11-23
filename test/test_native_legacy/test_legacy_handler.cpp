@@ -1181,6 +1181,7 @@ static bool t3eeAllowCb() { return t3eeAllow; }
 static CanFrame makeMux0Frame()
 {
     CanFrame frame = {.id = 1006, .dlc = 8};
+    frame.bus = CAN_BUS_VEH;
     return frame; // mux id 0
 }
 
@@ -1226,6 +1227,58 @@ void test_3ee_callback_unbound_is_noop()
     CanFrame mux0c = makeMux0Frame();
     handler.handleMessage(mux0c, mock);
     TEST_ASSERT_EQUAL_UINT32(1, mock.sent.size());
+}
+
+// ── TX split v2: master-off routes mux0 speed to the offsetOnly channel ──
+
+static void configureManualOffset3ee(uint8_t kph)
+{
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Manual;
+    handler.legacySmartOffsetConfig.manualOffsetKph = kph;
+    handler.legacySpeedBus.setMode(LegacySpeedBusMode::Can1);
+}
+
+void test_3ee_master_off_rides_offset_via_offsetonly()
+{
+    resetHandlerFor3ee();
+    configureManualOffset3ee(5);
+    forceActivateRuntime = true; // user runs activation; master switch OFF
+    t3eeAllow = false;
+    CanFrame mux0 = makeMux0Frame();
+    handler.handleMessage(mux0, mock);
+    TEST_ASSERT_EQUAL_UINT32(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1006, mock.sent[0].id);
+    // Field-verified writer: b3 = bit0 kept | 0x80 | (kph+30)<<1
+    TEST_ASSERT_EQUAL_UINT8(0xC6, mock.sent[0].data[3]);
+    // b5 |= 0x03 unlock pattern; bit46 (b5 bit6) stays native (neutral)
+    TEST_ASSERT_EQUAL_UINT8(0x03, mock.sent[0].data[5]);
+    // b7 low 6 bits = offset percent (Manual keeps the computed pct, 0 here)
+    TEST_ASSERT_EQUAL_UINT8(0x00, mock.sent[0].data[7] & 0x3F);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacySpeedDiag.offsetOnlyTxOk);
+    TEST_ASSERT_EQUAL_UINT8(5, handler.legacySpeedDiag.lastSentOffsetKph);
+}
+
+void test_3ee_master_off_offset_parity_with_switch_on()
+{
+    // Switch ON, not triggered (no force, no UI bit) + Manual offset →
+    // the beta02 offsetOnly channel output.
+    resetHandlerFor3ee();
+    configureManualOffset3ee(5);
+    forceActivateRuntime = false;
+    CanFrame mux0a = makeMux0Frame();
+    handler.handleMessage(mux0a, mock);
+    TEST_ASSERT_EQUAL_UINT32(1, mock.sent.size());
+    CanFrame switchOnFrame = mock.sent[0];
+    // Switch OFF, activation requested anyway → the master-off route.
+    resetHandlerFor3ee();
+    configureManualOffset3ee(5);
+    forceActivateRuntime = true;
+    t3eeAllow = false;
+    CanFrame mux0b = makeMux0Frame();
+    handler.handleMessage(mux0b, mock);
+    TEST_ASSERT_EQUAL_UINT32(1, mock.sent.size());
+    for (int i = 0; i < 8; i++)
+        TEST_ASSERT_EQUAL_UINT8(switchOnFrame.data[i], mock.sent[0].data[i]);
 }
 
 int main()
@@ -1302,6 +1355,8 @@ int main()
 
     RUN_TEST(test_3ee_master_on_mux0_injects_like_beta02);
     RUN_TEST(test_3ee_master_off_mux1_zero_and_offset_off_mux0_zero);
+    RUN_TEST(test_3ee_master_off_rides_offset_via_offsetonly);
+    RUN_TEST(test_3ee_master_off_offset_parity_with_switch_on);
     RUN_TEST(test_3ee_callback_unbound_is_noop);
     return UNITY_END();
 }
