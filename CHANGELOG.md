@@ -1,5 +1,21 @@
 # Changelog
 
+## [6.1.0-beta.04] - 2026-11-23
+
+### Fixed (bench-check finding on the beta03 UI)
+
+- **Defense page layout: the 0x3EE master-switch row no longer splits the
+  wheel-DND engine from its own diagnostics.** The new "0x3EE FSD 激活注入"
+  row was inserted between the "Legacy 左滚轮免打扰" toggle and the
+  `wheel-*` diag grid (alert status / native 0x045 / pair counters / echo),
+  so the wheel diagnostics visually attached to the 0x3EE switch — the
+  numbers belonged to a different engine. Row order is now wheel toggle →
+  wheel diag grid → 0x3EE toggle → speed DND, asserted in the built blob.
+- The 0x3EE switch description now states it shares one state with the
+  homepage master toggle ("两个入口，一个状态"), zh + en, closing the
+  "duplicate switch?" confusion. No firmware behavior change: gates,
+  NVS keys and handlers are untouched (dashboard 11/11, legacy 68/68).
+
 ## [6.1.0-beta03] - 2026-11-23
 
 ### Fixed (independent-review findings on the 6.1.0 TX split)

@@ -1339,13 +1339,6 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <label class="tgl"><input type="checkbox" id="def-dnd-vol-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
-  <div class="setting-row">
-    <div>
-      <div class="setting-name"><span data-i18n="0x3EE FSD 激活注入">0x3EE FSD 激活注入</span><span class="exp-badge" data-i18n="TX 分路">TX 分路</span></div>
-      <div class="setting-desc" data-i18n="默认开。关闭后本机 0x3EE 全部停发，配合车辆原生激活使用；速度智能偏移自动改走 0x2F8 骑载不受影响，左滚轮免打扰不受影响">默认开。关闭后本机 0x3EE 全部停发，配合车辆原生激活使用；速度智能偏移自动改走 0x2F8 骑载不受影响，左滚轮免打扰不受影响</div>
-    </div>
-    <label class="tgl"><input type="checkbox" id="def-fsd-3ee-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
-  </div>
   <div class="diag-grid" style="margin:6px 0 4px">
     <div class="diag-item"><span class="lbl" data-i18n="告警状态">告警状态</span><span class="v-dim" id="wheel-hands-state">--</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="原生 0x045">原生 0x045</span><span class="v-dim" id="wheel-native-3c2" data-i18n="等待">等待</span></div>
@@ -1354,6 +1347,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     <div class="diag-item"><span class="lbl" data-i18n="重复/冲突">重复/冲突</span><span class="v-dim" id="wheel-counter-state">0 / 0</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="回声/镜像">回声/镜像</span><span class="v-dim" id="wheel-echo-state">0 / 0</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="阻断原因">阻断原因</span><span class="v-dim" id="wheel-blocked-reason">disabled</span></div>
+  </div>
+  <div class="setting-row">
+    <div>
+      <div class="setting-name"><span data-i18n="0x3EE FSD 激活注入">0x3EE FSD 激活注入</span><span class="exp-badge" data-i18n="TX 分路">TX 分路</span></div>
+      <div class="setting-desc" data-i18n="默认开。关闭后本机 0x3EE 全部停发，配合车辆原生激活使用；速度智能偏移自动改走 0x2F8 骑载不受影响，左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。">默认开。关闭后本机 0x3EE 全部停发，配合车辆原生激活使用；速度智能偏移自动改走 0x2F8 骑载不受影响，左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-fsd-3ee-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
   <div class="setting-row">
     <div>
@@ -2139,7 +2139,7 @@ var I18N={
   '删除':'Delete','暂无插件。新安装默认禁用。':'No plugins yet. New installs start disabled.','目标ID: ':'Target ID: ',
   '详情':'Details','8.3.6防甩机制 ':'8.3.6 Anti-Jerk ','AP/EAP 兼容 ':'AP/EAP Compat ',
   'CAN2 ID 列表 ':'CAN2 ID List ','CAN2 控制 ':'CAN2 Control ','FSD-V14 模式 ':'FSD-V14 Mode ',
-  'Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','0x3EE FSD 激活注入':'0x3EE FSD Activation Injection','TX 分路':'TX Split','默认开。关闭后本机 0x3EE 全部停发，配合车辆原生激活使用；速度智能偏移自动改走 0x2F8 骑载不受影响，左滚轮免打扰不受影响':'Default ON. OFF stops every device 0x3EE write for native-activation driving; the smart speed offset auto-falls back to the 0x2F8 mirror-ride and the wheel DND is unaffected','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
+  'Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','0x3EE FSD 激活注入':'0x3EE FSD Activation Injection','TX 分路':'TX Split','默认开。关闭后本机 0x3EE 全部停发，配合车辆原生激活使用；速度智能偏移自动改走 0x2F8 骑载不受影响，左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。':'Default ON. OFF stops every device 0x3EE write for native-activation driving; the smart speed offset auto-falls back to the 0x2F8 mirror-ride and the wheel DND is unaffected. Same switch as the home-page master toggle — two entries, one state.','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
   '忽略车辆 OTA 守卫 ':'Ignore Vehicle OTA Guard ','最大性能 ':'Max Performance ','爆闪开关 ':'Burst Switch ',
   '自动换挡 ':'Auto Shift ','速度免打扰 ':'Speed DND ','限速覆盖 ':'Limit Override ',
   '未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。':'Unknown / invalid / SNA gears block injection by default; AP disconnect resets gate timing instantly. Enforced server-side in C++ (handlers.h) — the web UI cannot bypass it.',
