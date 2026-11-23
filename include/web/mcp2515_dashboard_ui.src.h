@@ -2655,9 +2655,13 @@ async function toggleFsd(){
   if(next&&!confirm(T('确认开启 FSD 注入（0x3EE）？'))){poll();return}
   // 6.1.0-beta02: 首页主开关只切换 0x3EE FSD 激活注入（TX 分路）——
   // 滚轮免打扰与速度智能偏移（A3 0x2F8 骑载）不受影响。
+  // 6.1.0-beta03: enable 时无条件补发 can+force+bootCan。原来用 !S.can
+  // （=canOnline 总线在线）做条件：canActive=0 而总线在线的板子（旧总开关
+  // 留下的状态）永远走不到恢复分支，ci 卡 0、开关回弹。canActive 已开时
+  // 该 POST 在 handleConfig 中为幂等 no-op，无副作用。
   try{
     await postForm('/defense_config',{fsd_3ee_inject:next?'1':'0'});
-    if(next&&!S.can){await postForm('/config',{can:'1',bootCan:'1'});}
+    if(next){await postForm('/config',{can:'1',force:'1',bootCan:'1'});}
   }catch(e){return}
   S.ci=!!next;
   S.bootCan=S.bootCan||!!next;
