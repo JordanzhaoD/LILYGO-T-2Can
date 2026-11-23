@@ -229,6 +229,11 @@ static bool dashLegacyHandlerActive();
 
 // --- FSD runtime switch NVS staging (loaded before handlerPool init) ---
 static bool nvsAutoModeEnabled = false;
+// TX split (6.1.0): 0x3EE FSD activation injection master switch. OFF stops
+// every device 0x3EE write; the smart speed offset falls back to the A3
+// 0x2F8 mirror-ride; the wheel DND is unaffected (independent tick).
+// Default ON = beta02 behaviour.
+static bool dashFsd3eeInject = true;
 static bool nvsTlsscBypass = false;
 static bool nvsEmergencyVehicleDetection = true;
 static bool nvsIsaChimeSuppress = false;
@@ -1673,6 +1678,7 @@ static void dashApplyRuntimeState()
         dashHandler->checkAD = dashCheckADEnabled;
         dashHandler->gateBlockReason = dashCurrentGateBlockReason;
         dashHandler->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
+        dashHandler->fsd3eeInjectAllowed = []() { return dashFsd3eeInject; };
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->jitterObserve3ee = dashJitterObserve3ee;
         dashHandler->jitterInhibit3ee = dashJitterInhibit3ee;
@@ -1799,6 +1805,7 @@ static void dashSavePrefs()
     if (dashHandler)
     {
         prefs.putBool("fa", (bool)dashHandler->autoModeEnabled);
+        prefs.putBool("f3ee", dashFsd3eeInject);
         prefs.putBool("fb", (bool)dashHandler->tlsscBypass);
         prefs.putBool("fc", (bool)dashHandler->emergencyVehicleDetection);
         prefs.putBool("fd", (bool)dashHandler->isaChimeSuppress);
@@ -2072,6 +2079,7 @@ static void dashLoadPrefs()
     bool ep = prefs.getBool("eprn", true);
     // --- FSD runtime switches (staged, applied after handlerPool init) ---
     nvsAutoModeEnabled = prefs.getBool("fa", false);
+    dashFsd3eeInject = prefs.getBool("f3ee", true);
     nvsTlsscBypass = prefs.getBool("fb", false);
     nvsEmergencyVehicleDetection = prefs.getBool("fc", true);
     nvsIsaChimeSuppress = prefs.getBool("fd", false);
@@ -2633,6 +2641,10 @@ static void appendLegacySmartSpeedJson(String &j, unsigned long now)
     }
     uint8_t effectiveHw = hwMode == 3 ? DASH_DEFAULT_HW : hwMode;
     bool configured = dashLegacySmartMode != LegacySmartOffsetMode::Off;
+    j += R"JSON(,"fsd3eeInject":)JSON";
+    j += dashFsd3eeInject ? "true" : "false";
+    j += R"JSON(,"ride2f8TxOk":)JSON";
+    j += dashHandler ? dashHandler->legacySpeedDiag.ride2f8TxOk : 0;
     j += R"JSON(,"legacySmartSpeed":{"configured":)JSON";
     j += configured ? "true" : "false";
     j += R"JSON(,"legacyHandler":)JSON";
@@ -4047,6 +4059,8 @@ static String dashDefenseConfigJson()
     j += dashHandler ? ((bool)dashHandler->isaOverride ? "true" : "false") : (nvsIsaOverride ? "true" : "false");
     j += ",\"dnd_volume\":";
     j += dashDndVolume ? "true" : "false";
+    j += ",\"fsd_3ee_inject\":";
+    j += dashFsd3eeInject ? "true" : "false";
     j += ",\"legacy_scroll_dnd\":";
     j += dashDndVolume ? "true" : "false";
     j += ",\"speed_no_disturb\":";
@@ -4081,6 +4095,7 @@ static void handleDefenseConfig()
     if (server.hasArg("enabled") ||
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
+        server.hasArg("fsd_3ee_inject") ||
         server.hasArg("legacy_scroll_dnd") ||
         server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
         server.hasArg("abort_guard") ||
@@ -4109,6 +4124,8 @@ static void handleDefenseConfig()
             dashDndVolume = dashArgTruthy(server.arg("legacy_scroll_dnd"));
         else if (server.hasArg("dnd_volume"))
             dashDndVolume = dashArgTruthy(server.arg("dnd_volume"));
+        if (server.hasArg("fsd_3ee_inject"))
+            dashFsd3eeInject = dashArgTruthy(server.arg("fsd_3ee_inject"));
         if (server.hasArg("speed_no_disturb"))
             dashSpeedNoDisturb = dashArgTruthy(server.arg("speed_no_disturb"));
         if (server.hasArg("dnd_speed"))
@@ -7760,6 +7777,7 @@ static void dashInitHandlers()
         handlerPool[i]->onFrame = mcpDashOnFrame;
         handlerPool[i]->gateBlockReason = dashCurrentGateBlockReason;
         handlerPool[i]->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
+        handlerPool[i]->fsd3eeInjectAllowed = []() { return dashFsd3eeInject; };
         handlerPool[i]->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
     }
 }

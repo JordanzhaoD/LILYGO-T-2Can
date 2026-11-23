@@ -1172,6 +1172,93 @@ void test_legacy_nag_replays_real_capture_with_counter_gaps()
     TEST_ASSERT_EQUAL_UINT8(0, (echo.data[4] >> 6) & 0x03);
 }
 
+
+// ── TX split: 0x3EE master switch (6.1.0 design 2026-11-23) ──────────────
+
+static bool t3eeAllow = true;
+static bool t3eeAllowCb() { return t3eeAllow; }
+
+static CanFrame makeMux0Frame()
+{
+    CanFrame frame = {.id = 1006, .dlc = 8};
+    return frame; // mux id 0
+}
+
+static CanFrame makeGps2f8Frame()
+{
+    CanFrame frame = {.id = 760, .dlc = 7};
+    frame.data[5] = 0x80; // user offset field raw 0, MPH/KPH bit set
+    frame.data[6] = 0x14; // mpp limit raw
+    return frame;
+}
+
+static void resetHandlerFor3ee()
+{
+    handler = LegacyHandler();
+    mock.sent.clear();
+    t3eeAllow = true;
+    handler.fsd3eeInjectAllowed = t3eeAllowCb;
+}
+
+void test_3ee_master_on_mux0_injects_like_beta02()
+{
+    resetHandlerFor3ee();
+    forceActivateRuntime = true;
+    CanFrame mux0 = makeMux0Frame();
+    handler.handleMessage(mux0, mock);
+    TEST_ASSERT_EQUAL_UINT32(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1006, mock.sent[0].id);
+}
+
+void test_3ee_master_off_stops_all_0x3ee_writes()
+{
+    resetHandlerFor3ee();
+    forceActivateRuntime = true;
+    t3eeAllow = false;
+    CanFrame mux0b = makeMux0Frame();
+    handler.handleMessage(mux0b, mock);
+    TEST_ASSERT_EQUAL_UINT32(0, mock.sent.size());
+}
+
+void test_3ee_master_off_rides_offset_on_native_2f8()
+{
+    resetHandlerFor3ee();
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Manual;
+    handler.legacySmartOffsetConfig.manualOffsetKph = 5;
+    t3eeAllow = false;
+    CanFrame gps = makeGps2f8Frame();
+    handler.handleMessage(gps, mock);
+    TEST_ASSERT_EQUAL_UINT32(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(760, mock.sent[0].id);
+    // Only data[5] bits 0-5 rewritten; bits 6-7 preserved (MPH/KPH flag).
+    TEST_ASSERT_EQUAL_UINT8(0x80, mock.sent[0].data[5] & 0xC0);
+    TEST_ASSERT_EQUAL_UINT8(5 + 30, mock.sent[0].data[5] & 0x3F);
+    // The native field bytes other than data[5] untouched.
+    TEST_ASSERT_EQUAL_UINT8(gps.data[6], mock.sent[0].data[6]);
+    TEST_ASSERT_EQUAL_UINT32(1, handler.legacySpeedDiag.ride2f8TxOk);
+}
+
+void test_3ee_master_on_never_rides_2f8()
+{
+    resetHandlerFor3ee();
+    handler.legacySmartOffsetConfig.mode = LegacySmartOffsetMode::Manual;
+    handler.legacySmartOffsetConfig.manualOffsetKph = 5;
+    CanFrame gpsOn = makeGps2f8Frame();
+    handler.handleMessage(gpsOn, mock);
+    TEST_ASSERT_EQUAL_UINT32(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(0, handler.legacySpeedDiag.ride2f8TxOk);
+}
+
+void test_3ee_callback_unbound_is_noop()
+{
+    resetHandlerFor3ee();
+    handler.fsd3eeInjectAllowed = nullptr;
+    forceActivateRuntime = true;
+    CanFrame mux0c = makeMux0Frame();
+    handler.handleMessage(mux0c, mock);
+    TEST_ASSERT_EQUAL_UINT32(1, mock.sent.size());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -1244,5 +1331,10 @@ int main()
 
     RUN_TEST(test_legacy_ignores_unrelated_can_id);
 
+    RUN_TEST(test_3ee_master_on_mux0_injects_like_beta02);
+    RUN_TEST(test_3ee_master_off_stops_all_0x3ee_writes);
+    RUN_TEST(test_3ee_master_off_rides_offset_on_native_2f8);
+    RUN_TEST(test_3ee_master_on_never_rides_2f8);
+    RUN_TEST(test_3ee_callback_unbound_is_noop);
     return UNITY_END();
 }

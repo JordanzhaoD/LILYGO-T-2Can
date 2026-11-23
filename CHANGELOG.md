@@ -1,5 +1,33 @@
 # Changelog
 
+## [6.1.0-beta01] - 2026-11-23
+
+### Changed (clean-slate series on the beta02 baseline: TX split)
+
+- **Project rollback**: the 6.0.0-beta03..beta21 line is retired entirely
+  (field verdict: the beta21 build reproduced the red REQD_STRUCK_OUT wheel;
+  the beta02 pair engine remains the only field-proven DND baseline). Main
+  was hard-reset to the beta02 release commit (archived under
+  `archive/pre-rollback-beta21` for forensics). One build-only adaptation:
+  `-Wno-error=dangling-reference` for the newer toolchain's misfire on
+  beta02-era code.
+- **New: "0x3EE FSD 激活注入" master switch** (default ON = beta02
+  behaviour, byte-identical; NVS `f3ee`, `/defense_config` field
+  `fsd_3ee_inject`). OFF stops every device 0x3EE write (mux0 + mux1, gated
+  at the single `0x1006` dispatch entry) for native-activation driving.
+  The wheel DND is untouched by design (independent tick in beta02).
+- **A3 mirror-ride fallback for the smart speed offset**: with the switch
+  OFF, the offset rides the native 0x2F8 `UI_userSpeedOffset` field
+  (data[5] bits 0-5, raw = kph+30, bits 6-7 preserved) on the frame the
+  car just sent — the field-calibrated A3.2 design, ported as a fallback
+  only; with the switch ON it stays dormant and beta02's 0x3EE
+  speed-request path is unchanged. Telemetry: `legacySmartSpeed.ride2f8TxOk`,
+  `blockedReason=fsd3eeMasterOff` marks the handoff.
+- Native pins (native_legacy +5, 68/68): switch-off → zero 0x3EE sends;
+  switch-off + manual offset → exactly one 0x2F8 ride with only data[5]
+  bits 0-5 rewritten; switch-on → beta02 behaviour; unbound callback →
+  no-op. Design: `docs/TX-SPLIT-0X3EE-MASTER-SWITCH-DESIGN-20261123.md`.
+
 ## [6.0.0-beta02] - 2026-10-25
 
 ### Fixed
