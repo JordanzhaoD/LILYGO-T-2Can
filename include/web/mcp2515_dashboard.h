@@ -47,6 +47,7 @@
 #include "dash_3ee_cadence.h"
 #include "dash_wheel_dnd.h"
 #include "dash_legacy_wheel_045_dnd.h"
+#include "dash_legacy_nag_kill_045.h"
 #include "dash_jitter_procedure.h"
 #include "dash_tx_evidence.h"
 #include "dash_capabilities.h"
@@ -186,6 +187,8 @@ static uint8_t dashLightingCount = 3;
 static uint8_t dashLightingFrequency = 1; // 0=slow, 1=medium, 2=fast
 static DashWheelDND dashWheelDndCtrl;     // Phase 3 wheel DND controller instance
 static DashLegacyWheel045Dnd dashLegacyWheel045DndCtrl;
+// TX split v2: bit27 nagKill — parallel DND path riding the native 0x045.
+static DashLegacyNagKill045 dashNagKillCtrl;
 // v1.19 JITTER procedure (4.5.0-beta15): the LittleGong-aligned anti-jerk
 // machine, ported verbatim from the single-CAN v1.19.2 firmware where it was
 // field-validated (hundreds of FSD opens, zero steering jerks; mechanism
@@ -234,6 +237,7 @@ static bool nvsAutoModeEnabled = false;
 // 0x2F8 mirror-ride; the wheel DND is unaffected (independent tick).
 // Default ON = beta02 behaviour.
 static bool dashFsd3eeInject = true;
+static bool dashNagKillEnabled = false; // NVS nk27 — experimental, default OFF
 static bool nvsTlsscBypass = false;
 static bool nvsEmergencyVehicleDetection = true;
 static bool nvsIsaChimeSuppress = false;
@@ -1115,7 +1119,26 @@ static void mcpDashOnFrame(const CanFrame &f)
     dashRecordCanFrame(f, 'R');
     if (f.id == DashLegacyWheel045Dnd::kCanId && f.dlc >= 8 &&
         (f.bus == CAN_BUS_CH || f.bus == CAN_BUS_VEH))
+    {
         dashLegacyWheel045DndCtrl.onCan1Frame(f.data, f.dlc, static_cast<uint32_t>(now));
+        // TX split v2: bit27 nagKill rides the same native beat (VEH only —
+        // a CH view double-feeding the cloner would double-fire). The clone
+        // goes out in-line, one beat behind the native frame, exactly like
+        // the beta02 offsetOnly writer on 0x3EE.
+        if (f.bus == CAN_BUS_VEH && appDriver)
+        {
+            uint8_t clone[8];
+            if (dashNagKillCtrl.onNative045(f.data, f.dlc, static_cast<uint32_t>(now), clone))
+            {
+                CanFrame out = f;
+                memcpy(out.data, clone, 8);
+                const bool ok = appDriver->send(out);
+                dashNagKillCtrl.recordTxResult(ok, static_cast<uint32_t>(now));
+                if (ok)
+                    txCount++;
+            }
+        }
+    }
     else if (f.id == DashLegacyWheel045Dnd::kGatewayMirrorId && f.dlc >= 8 &&
              f.bus == CAN_BUS_PARTY)
         dashLegacyWheel045DndCtrl.observeGatewayMirror(f.data, f.dlc,
@@ -1135,6 +1158,7 @@ static void mcpDashOnFrame(const CanFrame &f)
         const uint8_t handsState = static_cast<uint8_t>((f.data[5] >> 2) & 0x0F);
         dashLegacyWheel045DndCtrl.onDasStatus(apState, handsState, f.bus,
                                               static_cast<uint32_t>(now));
+        dashNagKillCtrl.onDasStatus(apState, handsState, static_cast<uint32_t>(now));
         dashJitterCtrl.observeDasStatus(apState, static_cast<uint32_t>(now));
     }
     // 0x488 (1160) DAS steering control: JITTER abort watch (already admitted
@@ -1679,6 +1703,14 @@ static void dashApplyRuntimeState()
         dashHandler->gateBlockReason = dashCurrentGateBlockReason;
         dashHandler->legacyFsdActivationAllowed = dashLegacyFsdActivationAllowed;
         dashHandler->fsd3eeInjectAllowed = []() { return dashFsd3eeInject; };
+        // TX split v2: bit27 nagKill rides the native 0x045 stream in
+        // parallel with the wheel DND; sibling/yield coordination is
+        // bound once here (both engines are static-duration globals).
+        dashLegacyWheel045DndCtrl.setSiblingCloneFilter(DashLegacyNagKill045::isCloneFrame);
+        dashLegacyWheel045DndCtrl.setYieldGate(
+            [](uint32_t nowMs) { return dashNagKillCtrl.cloneInFlight(nowMs); });
+        dashNagKillCtrl.configure(dashNagKillEnabled);
+        dashNagKillCtrl.setRuntimeAllowed(canActive && dashLegacyHandlerActive());
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->jitterObserve3ee = dashJitterObserve3ee;
         dashHandler->jitterInhibit3ee = dashJitterInhibit3ee;
@@ -1806,6 +1838,7 @@ static void dashSavePrefs()
     {
         prefs.putBool("fa", (bool)dashHandler->autoModeEnabled);
         prefs.putBool("f3ee", dashFsd3eeInject);
+        prefs.putBool("nk27", dashNagKillEnabled);
         prefs.putBool("fb", (bool)dashHandler->tlsscBypass);
         prefs.putBool("fc", (bool)dashHandler->emergencyVehicleDetection);
         prefs.putBool("fd", (bool)dashHandler->isaChimeSuppress);
@@ -2080,6 +2113,7 @@ static void dashLoadPrefs()
     // --- FSD runtime switches (staged, applied after handlerPool init) ---
     nvsAutoModeEnabled = prefs.getBool("fa", false);
     dashFsd3eeInject = prefs.getBool("f3ee", true);
+    dashNagKillEnabled = prefs.getBool("nk27", false);
     nvsTlsscBypass = prefs.getBool("fb", false);
     nvsEmergencyVehicleDetection = prefs.getBool("fc", true);
     nvsIsaChimeSuppress = prefs.getBool("fd", false);
@@ -2643,6 +2677,8 @@ static void appendLegacySmartSpeedJson(String &j, unsigned long now)
     bool configured = dashLegacySmartMode != LegacySmartOffsetMode::Off;
     j += R"JSON(,"fsd3eeInject":)JSON";
     j += dashFsd3eeInject ? "true" : "false";
+    j += R"JSON(,"offsetOnlyTxOk":)JSON";
+    j += dashHandler ? dashHandler->legacySpeedDiag.offsetOnlyTxOk : 0;
     j += R"JSON(,"legacySmartSpeed":{"configured":)JSON";
     j += configured ? "true" : "false";
     j += R"JSON(,"legacyHandler":)JSON";
@@ -3151,6 +3187,28 @@ static void handleStatus()
 #endif
     appendServiceDiagJson(j, now);
     appendWheelDndDiagJson(j, now);
+    {
+        const DashLegacyNagKillDiag &n = dashNagKillCtrl.diag;
+        j += R"JSON(,"nagKillDiag":{"enabled":)JSON";
+        j += n.enabled ? "true" : "false";
+        j += R"JSON(,"disarmed":)JSON";
+        j += n.disarmed ? "true" : "false";
+        j += R"JSON(,"triggerArmed":)JSON";
+        j += n.triggerArmed ? "true" : "false";
+        j += R"JSON(,"handsState":)JSON";
+        j += n.handsState;
+        j += R"JSON(,"cloned":)JSON";
+        j += n.cloned;
+        j += R"JSON(,"txFail":)JSON";
+        j += n.txFail;
+        j += R"JSON(,"echoSuppressed":)JSON";
+        j += n.echoSuppressed;
+        j += R"JSON(,"disarmHeals":)JSON";
+        j += n.disarmHeals;
+        j += R"JSON(,"blockedReason":")JSON";
+        j += n.blockedReason;
+        j += R"JSON("})JSON";
+    }
     appendLegacySmartSpeedJson(j, now);
     dashAppendLegacySafetyControlsJson(j);
     // ── Phase 1 新增状态字段 ──────────────────────────────────────────
@@ -4064,6 +4122,8 @@ static String dashDefenseConfigJson()
     j += dashDndVolume ? "true" : "false";
     j += ",\"fsd_3ee_inject\":";
     j += dashFsd3eeInject ? "true" : "false";
+    j += ",\"nag_kill\":";
+    j += dashNagKillEnabled ? "true" : "false";
     j += ",\"legacy_scroll_dnd\":";
     j += dashDndVolume ? "true" : "false";
     j += ",\"speed_no_disturb\":";
@@ -4129,6 +4189,11 @@ static void handleDefenseConfig()
             dashDndVolume = dashArgTruthy(server.arg("dnd_volume"));
         if (server.hasArg("fsd_3ee_inject"))
             dashFsd3eeInject = dashArgTruthy(server.arg("fsd_3ee_inject"));
+        if (server.hasArg("nag_kill"))
+        {
+            dashNagKillEnabled = dashArgTruthy(server.arg("nag_kill"));
+            dashNagKillCtrl.configure(dashNagKillEnabled);
+        }
         if (server.hasArg("speed_no_disturb"))
             dashSpeedNoDisturb = dashArgTruthy(server.arg("speed_no_disturb"));
         if (server.hasArg("dnd_speed"))

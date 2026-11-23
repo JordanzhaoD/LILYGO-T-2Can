@@ -137,6 +137,8 @@ struct DashLegacyWheel045Diag
     uint8_t compensationPending = 0;
     uint8_t consecutiveTxFailures = 0;
     uint32_t disarmHeals = 0;
+    uint32_t siblingCloneRx = 0;
+    uint32_t siblingYields = 0;
     uint32_t dasStatusMs = 0;
     uint32_t nativeMs = 0;
     uint32_t nativeRx = 0;
@@ -339,6 +341,21 @@ struct DashLegacyWheel045Dnd
         diag.disarmHeals++;
     }
 
+    // TX split v2: the bit27 nagKill engine tags its clones with bit27
+    // (byte3 bit3). Such frames are a sibling's, not the physical wheel:
+    // they neither refresh nativeFresh nor feed the pair logic.
+    void setSiblingCloneFilter(bool (*fn)(const uint8_t *))
+    {
+        siblingCloneFilter_ = fn;
+    }
+
+    // The nagKill clone contends the 0x045 counter for one beat: while the
+    // gate returns true, nextFrame stays silent (no counter race).
+    void setYieldGate(bool (*fn)(uint32_t))
+    {
+        yieldGate_ = fn;
+    }
+
     void onCan1Frame(const uint8_t data[8], uint8_t dlc, uint32_t nowMs)
     {
         diag.nativeRx++;
@@ -347,6 +364,11 @@ struct DashLegacyWheel045Dnd
             diag.nativeInvalid++;
             if (isActionActive())
                 abort(DashLegacyWheel045Block::InvalidNative, true);
+            return;
+        }
+        if (siblingCloneFilter_ && siblingCloneFilter_(data))
+        {
+            diag.siblingCloneRx++;
             return;
         }
         if (hasTxFingerprint_ && nowMs - txFingerprintMs_ <= kOwnEchoWindowMs &&
@@ -436,6 +458,11 @@ struct DashLegacyWheel045Dnd
             if (diag.configured && runtimeAllowed_ && !autoDisarmed_ && !contextFresh(nowMs))
                 setState(DashLegacyWheel045State::WaitingSource, DashLegacyWheel045Block::ContextStale);
             return false;
+        }
+        if (yieldGate_ && yieldGate_(nowMs))
+        {
+            diag.siblingYields++;
+            return false; // sibling clone owns this beat
         }
 
         if (diag.state == DashLegacyWheel045State::RetryWait)
@@ -581,6 +608,8 @@ private:
     uint32_t disarmedAtMs_ = 0;
     uint8_t healsThisWindow_ = 0;
     uint32_t healWindowStartMs_ = 0;
+    bool (*siblingCloneFilter_)(const uint8_t *) = nullptr;
+    bool (*yieldGate_)(uint32_t) = nullptr;
     bool nativeSeen_ = false;
     bool runtimeAllowed_ = false;
     bool apActive_ = false;

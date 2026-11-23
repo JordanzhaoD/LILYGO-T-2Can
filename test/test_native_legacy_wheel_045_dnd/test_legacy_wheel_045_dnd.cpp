@@ -294,6 +294,52 @@ void test_two_tx_failures_auto_disarm()
 
 // ── TX split v2: in-event disarm self-heal ───────────────────────────────
 
+// ── TX split v2: bit27 nagKill sibling coordination ─────────────────────
+
+static bool siblingSaysClone(const uint8_t data[8])
+{
+    return (data[3] & 0x08U) != 0; // bit27 tag
+}
+
+static bool yieldNever(uint32_t) { return false; }
+
+void test_dnd_ignores_bit27_sibling_frames()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8];
+    arm(dnd);
+    dnd.setSiblingCloneFilter(siblingSaysClone);
+    seedAndWarn(dnd, 1000);
+    TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
+    dnd.recordTxResult(true, 1000);
+    // A bit27-tagged frame arrives: recognised as a sibling clone —
+    // it must NOT refresh nativeFresh nor start feeding the engine.
+    uint8_t tagged[8];
+    memcpy(tagged, kIdleD, 8);
+    tagged[3] |= 0x08;
+    tagged[7] = DashLegacyWheel045Dnd::crc8J1850(tagged, 7);
+    uint32_t nativeMsBefore = dnd.diag.nativeMs;
+    dnd.onCan1Frame(tagged, 8, 1200);
+    TEST_ASSERT_EQUAL_UINT32(nativeMsBefore, dnd.diag.nativeMs);
+    TEST_ASSERT_TRUE(dnd.diag.siblingCloneRx >= 1);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045State::WaitingIdleAfterPositive, dnd.diag.state);
+}
+
+void test_dnd_yields_slot_while_sibling_clone_in_flight()
+{
+    DashLegacyWheel045Dnd dnd;
+    uint8_t out[8];
+    arm(dnd);
+    static bool yielding = true;
+    dnd.setYieldGate([](uint32_t) { return yielding; });
+    seedAndWarn(dnd, 1000);
+    TEST_ASSERT_FALSE(dnd.nextFrame(1000, out)); // sibling owns this slot
+    TEST_ASSERT_EQUAL_UINT32(1, dnd.diag.siblingYields);
+    yielding = false;
+    TEST_ASSERT_TRUE(dnd.nextFrame(1010, out)); // slot released
+    yielding = true;
+}
+
 static void disarmTwice(DashLegacyWheel045Dnd &dnd, uint32_t &nowMs)
 {
     uint8_t out[8];
@@ -486,6 +532,8 @@ int main()
     RUN_TEST(test_physical_wheel_input_aborts_active_sequence);
     RUN_TEST(test_two_tx_failures_auto_disarm);
     RUN_TEST(test_disarm_heals_after_800ms);
+    RUN_TEST(test_dnd_ignores_bit27_sibling_frames);
+    RUN_TEST(test_dnd_yields_slot_while_sibling_clone_in_flight);
     RUN_TEST(test_disarm_heal_capped_three_per_window);
     RUN_TEST(test_disarm_heal_window_slides_reopens);
     RUN_TEST(test_healthy_engine_edge_no_heal_reset);
