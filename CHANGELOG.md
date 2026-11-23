@@ -1,5 +1,31 @@
 # Changelog
 
+## [6.1.0-beta.05] - 2026-11-24
+
+### Final-review fixes (whole-branch review, pre-release)
+
+- **nagKill is now truly EDGE-triggered**: `onDasStatus` arms only on an
+  outside→[3,5] transition. The first implementation re-armed on every
+  0x399 — a sustained warning produced ~2 Hz of bit27 clones (review
+  simulation measured 13 clones over a 6 s warning), the exact
+  un-isolated beta21 exposure the "more conservative" story promised
+  could not happen.
+- **hands ≥ 6 hard-off implemented**: escalation into the strike-out
+  domain clears an armed trigger immediately (was: a 4→6 escalation
+  inside the 500 ms window still cloned).
+- **DND yield is beat-generational**: the wheel DND resumes only after
+  the NEXT idle native 0x045 following a clone (was: 20 ms — the DND
+  could re-send the clone's counter from its cached source frame).
+- **Idle-only riding**: frames carrying a wheel/stalk action payload
+  (DND tick echoes, jitter stalk frames) are never cloned.
+- **Full runtime gate chain** (`t2canNagKillTick`): canActive /
+  config / legacy handler / jitter procedure / vehicle OTA / abortGuard /
+  TWAI health — the config-time gate alone let clones flow during a
+  vehicle OTA or a tripped abortGuard.
+- Field check closed: 10,024 native 0x045 frames across the nine
+  beta.04 captures carry bit27 zero times — the sibling filter cannot
+  starve the DND's nativeFresh on this vehicle.
+
 ## [6.1.0-beta.05] - 2026-11-23
 
 ### TX split v2 — all-ride architecture (field-data redesign)
