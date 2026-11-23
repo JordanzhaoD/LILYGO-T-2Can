@@ -606,9 +606,15 @@ static void t2canWheelDndTick()
 static void t2canJitterTick()
 {
     const uint32_t now = millis();
+    // 6.1.0-beta03: the 0x3EE TX master switch is part of the permit cascade —
+    // the JITTER Bit46Shot IS a device 0x3EE write, so with the switch off
+    // the procedure fullResets ("permitLost") instead of leaking frames.
+    // (Ported back from the retired beta21 line, which carried the same fix.)
     const bool permit = canActive && dashLegacyHandlerActive() && appDriver &&
                         !vehicleOtaActive &&
-                        (!dashHandler || dashHandler->abortGuard.allowsInjection());
+                        (!dashHandler || dashHandler->abortGuard.allowsInjection()) &&
+                        (!dashHandler || !dashHandler->fsd3eeInjectAllowed ||
+                         dashHandler->fsd3eeInjectAllowed());
     // v1.19.1: the gear signal (P) is the drive-session boundary for the
     // JITTER failed-cycle budget — a rising Park edge re-opens it.
     dashJitterCtrl.setVehicleParked(dashHandler && (bool)dashHandler->Parked);
