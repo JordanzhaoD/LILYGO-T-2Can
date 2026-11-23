@@ -1,4 +1,4 @@
-LILYGO-T-2CAN_latest_ota_app.bin  = 6.1.0-beta.05 (uiBuildId 6.1.0-beta.05-lilygo_t2can_dual-6492135e3b1e)
-LILYGO-T-2CAN_latest_full_merged.bin = 6.1.0-beta.05
-6b6bda2165e23d04ad064fc2478112a31f31d1d66d0dd39e916c38c117d4ee27  firmware-assets/LILYGO-T-2CAN_latest_ota_app.bin
-9039fac61245993c55053f1dc61bb5df32cd55ee1259398b9cc0f60553465b02  firmware-assets/LILYGO-T-2CAN_latest_full_merged.bin
+LILYGO-T-2CAN_latest_ota_app.bin  = 6.1.0-beta.05 review-fixed (uiBuildId 6.1.0-beta.05-lilygo_t2can_dual-5535204287ad)
+LILYGO-T-2CAN_latest_full_merged.bin = 6.1.0-beta.05 review-fixed
+b645d2914bde5e68943532979057d48b976c3e44fa3752d06c89611883b32f21  firmware-assets/LILYGO-T-2CAN_latest_ota_app.bin
+178250331568965341979469f772f4b45f0222f6ac2fd218352547ec594eea65  firmware-assets/LILYGO-T-2CAN_latest_full_merged.bin

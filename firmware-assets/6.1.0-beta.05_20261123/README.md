@@ -15,7 +15,7 @@
 >    真源（去 canActive 耦合）。
 
 **LILYGO T-2CAN（lilygo_t2can_dual / ESP32-S3 16MB）生产资产。**
-uiBuildId = `6.1.0-beta.05-lilygo_t2can_dual-6492135e3b1e`
+uiBuildId = `6.1.0-beta.05-lilygo_t2can_dual-5535204287ad`
 （已从本目录 ota_app.bin 内嵌字符串核对）。
 
 ## 版本系列说明（必读）
@@ -44,7 +44,7 @@ curl -X POST "http://<板子IP>/update" \
 ```
 
 升级后核对 `/status` 的 uiBuildId 为
-`6.1.0-beta.05-lilygo_t2can_dual-6492135e3b1e`。
+`6.1.0-beta.05-lilygo_t2can_dual-5535204287ad`。
 
 ## 田野验证清单
 
