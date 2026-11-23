@@ -8,10 +8,10 @@
 #include <stdint.h>
 
 #ifndef DASH_UI_BUILD_ID
-#define DASH_UI_BUILD_ID "6.1.0-beta.05-lilygo_t2can_dual-6492135e3b1e-2026-11-23T15:49:04Z"
+#define DASH_UI_BUILD_ID "6.1.0-beta.05-lilygo_t2can_dual-5535204287ad-2026-11-23T16:09:34Z"
 #endif
 #ifndef DASH_UI_BUILD_UTC
-#define DASH_UI_BUILD_UTC "2026-11-23T15:49:04Z"
+#define DASH_UI_BUILD_UTC "2026-11-23T16:09:34Z"
 #endif
 
 #ifndef ESP_PLATFORM
