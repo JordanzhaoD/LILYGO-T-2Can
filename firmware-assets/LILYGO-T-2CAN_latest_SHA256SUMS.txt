@@ -1,5 +1,4 @@
-6.1.0-beta03_20261123/825307feda20c38a8d9ef81bdbade0999ce206aecfa353813778e0b8965200d6  LILYGO-T-2CAN_bootloader.bin
-6.1.0-beta03_20261123/d7cca4968173011e2563bc81b8969ff183af13b2e494ed61ec4016d007d8e946  partitions.bin
-6.1.0-beta03_20261123/7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f  ota_data_initial.bin
-6.1.0-beta03_20261123/bf78b87fc77cd3f344ac5aa74efd68f83bebef0eaebc325e166e58d877f3edea  LILYGO-T-2CAN_v6.1.0-beta03_ota_app.bin
-6.1.0-beta03_20261123/110959c8d06acb032abf18497e20c796f15b59af21cdf0ad11a2d560632b85a8  LILYGO-T-2CAN_v6.1.0-beta03_full_merged.bin
+LILYGO-T-2CAN_latest_ota_app.bin  = 6.1.0-beta.04 (ad0e4b6, uiBuildId 6.1.0-beta.04-lilygo_t2can_dual-31c3766880a6)
+LILYGO-T-2CAN_latest_full_merged.bin = 6.1.0-beta.04 (ad0e4b6)
+bb4c1bf0e62dfa8620d4cef595700658bf0f0911f8f42f6c39658b8f7d19e7f3  firmware-assets/LILYGO-T-2CAN_latest_ota_app.bin
+793a8f994687255382cf00cce1b1f7f33e7c9b10f127fd8c2c7438000d4a2de9  firmware-assets/LILYGO-T-2CAN_latest_full_merged.bin
