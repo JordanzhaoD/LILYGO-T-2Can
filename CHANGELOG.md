@@ -1,5 +1,31 @@
 # Changelog
 
+## [6.1.0-beta03] - 2026-11-23
+
+### Fixed (independent-review findings on the 6.1.0 TX split)
+
+- **JITTER Bit46Shot now joins the 0x3EE master-switch permit cascade**
+  (`t2canJitterTick`, `src/main.cpp`): with the switch OFF the v1.19
+  anti-jerk one-shot could still transmit its patched 0x3EE mux0 clone —
+  a device 0x3EE write outside the `0x1006` dispatch gate, breaking the
+  "OFF stops every device 0x3EE write" invariant. The permit cascade now
+  includes `fsd3eeInjectAllowed`; the procedure fullResets
+  ("permitLost") instead of leaking frames — the identical fix the
+  retired beta21 line carried. Reachable only with anti-jerk explicitly
+  enabled (`jtr_on`, default off). main.cpp has no native harness; field
+  check: jitter ON + master OFF → 0x3EE TX evidence stays empty.
+- **Homepage master enable re-arms the CAN enable unconditionally**: the
+  beta02 guard `!S.can` compared against `canOnline` (bus traffic), not
+  `canActive` — a board left with `canActive=0` by the OLD master toggle
+  (bus still online, the original field-report state) could never
+  recover from the homepage: the `/config can:1` post was skipped, `ci`
+  stayed 0 and the toggle bounced back. Enable now posts
+  `can:1+force:1+bootCan:1` every time (idempotent no-op in
+  `handleConfig` when already armed; same enable semantics as before
+  6.1.0). OFF still switches `fsd_3ee_inject` only.
+- docs: corrected the 6.1.0-beta02 README uiBuildId (sed casualty:
+  `e29aa9dfc222` → `e29aa9d80928`, `T00:xx` → `T01:00:06Z`).
+
 ## [6.1.0-beta02] - 2026-11-23
 
 ### Fixed (homepage master toggle was a hidden kill-switch)
