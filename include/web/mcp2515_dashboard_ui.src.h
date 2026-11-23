@@ -1334,6 +1334,13 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
+      <div class="setting-name"><span data-i18n="bit27 状态克隆免打扰 ">bit27 状态克隆免打扰 </span><span class="exp-badge" data-i18n="实验">实验</span></div>
+      <div class="setting-desc" data-i18n="警告沿单帧骑载：克隆下一个原生 0x045，置 bit27 状态位+续 counter+重算 CRC，预防而非清除警告；hands 3-5 窗外与 6+ 硬关。与下方滚轮免打扰并行，可单独开启；实验功能默认关">警告沿单帧骑载：克隆下一个原生 0x045，置 bit27 状态位+续 counter+重算 CRC，预防而非清除警告；hands 3-5 窗外与 6+ 硬关。与下方滚轮免打扰并行，可单独开启；实验功能默认关</div>
+    </div>
+    <label class="tgl"><input type="checkbox" id="def-nag-kill-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="setting-row">
+    <div>
       <div class="setting-name"><span data-i18n="Legacy 左滚轮免打扰 ">Legacy 左滚轮免打扰 </span><span class="exp-badge" data-i18n="实车路径">实车路径</span></div>
       <div class="setting-desc" data-i18n="0x399 告警触发；CAN1 原生 0x045 告警持续才反向平衡，清除后立即停止">0x399 告警触发；CAN1 原生 0x045 告警持续才反向平衡，清除后立即停止</div>
     </div>
@@ -1351,7 +1358,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name"><span data-i18n="0x3EE FSD 激活注入">0x3EE FSD 激活注入</span><span class="exp-badge" data-i18n="TX 分路">TX 分路</span></div>
-      <div class="setting-desc" data-i18n="默认开。关闭后本机 0x3EE 全部停发，配合车辆原生激活使用；速度智能偏移自动改走 0x2F8 骑载不受影响，左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。">默认开。关闭后本机 0x3EE 全部停发，配合车辆原生激活使用；速度智能偏移自动改走 0x2F8 骑载不受影响，左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。</div>
+      <div class="setting-desc" data-i18n="默认开。关闭后本机 0x3EE 激活注入停发（含防甩程序——其 0x3EE 写入同样受本开关管辖），配合车辆原生激活使用；速度智能偏移继续经 0x3EE 纯速度通道写入速度字段、不碰激活位，不受影响；左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。">默认开。关闭后本机 0x3EE 激活注入停发（含防甩程序——其 0x3EE 写入同样受本开关管辖），配合车辆原生激活使用；速度智能偏移继续经 0x3EE 纯速度通道写入速度字段、不碰激活位，不受影响；左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-fsd-3ee-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
@@ -2139,7 +2146,7 @@ var I18N={
   '删除':'Delete','暂无插件。新安装默认禁用。':'No plugins yet. New installs start disabled.','目标ID: ':'Target ID: ',
   '详情':'Details','8.3.6防甩机制 ':'8.3.6 Anti-Jerk ','AP/EAP 兼容 ':'AP/EAP Compat ',
   'CAN2 ID 列表 ':'CAN2 ID List ','CAN2 控制 ':'CAN2 Control ','FSD-V14 模式 ':'FSD-V14 Mode ',
-  'Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','0x3EE FSD 激活注入':'0x3EE FSD Activation Injection','TX 分路':'TX Split','默认开。关闭后本机 0x3EE 全部停发，配合车辆原生激活使用；速度智能偏移自动改走 0x2F8 骑载不受影响，左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。':'Default ON. OFF stops every device 0x3EE write for native-activation driving; the smart speed offset auto-falls back to the 0x2F8 mirror-ride and the wheel DND is unaffected. Same switch as the home-page master toggle — two entries, one state.','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
+  'Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','bit27 状态克隆免打扰 ':'bit27 State-Clone DND ','实验':'Experimental','警告沿单帧骑载：克隆下一个原生 0x045，置 bit27 状态位+续 counter+重算 CRC，预防而非清除警告；hands 3-5 窗外与 6+ 硬关。与下方滚轮免打扰并行，可单独开启；实验功能默认关':'Single-frame-per-warning-edge ride: clones the next native 0x045 with the bit27 state flag set, counter+1, CRC recomputed — prevention, not clearing; hard-off outside hands 3-5 and at 6+. Runs in parallel with the wheel DND below; experimental, default OFF.','0x3EE FSD 激活注入':'0x3EE FSD Activation Injection','TX 分路':'TX Split','默认开。关闭后本机 0x3EE 激活注入停发（含防甩程序——其 0x3EE 写入同样受本开关管辖），配合车辆原生激活使用；速度智能偏移继续经 0x3EE 纯速度通道写入速度字段、不碰激活位，不受影响；左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。':'Default ON. OFF stops the device 0x3EE activation injection (anti-jerk included — its 0x3EE writes answer to this switch too) for native-activation driving; the smart speed offset keeps flowing through the pure-speed 0x3EE channel (speed field only, activation bits untouched) and the wheel DND is unaffected. Same switch as the home-page master toggle — two entries, one state.','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
   '忽略车辆 OTA 守卫 ':'Ignore Vehicle OTA Guard ','最大性能 ':'Max Performance ','爆闪开关 ':'Burst Switch ',
   '自动换挡 ':'Auto Shift ','速度免打扰 ':'Speed DND ','限速覆盖 ':'Limit Override ',
   '未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。':'Unknown / invalid / SNA gears block injection by default; AP disconnect resets gate timing instantly. Enforced server-side in C++ (handlers.h) — the web UI cannot bypass it.',
@@ -2612,6 +2619,7 @@ async function loadDefenseConfig(){
   var isaOvr=$('def-isa-override-tgl');if(isaOvr)isaOvr.checked=!!d.isa_override;
   var dndVol=$('def-dnd-vol-tgl');if(dndVol)dndVol.checked=!!d.dnd_volume;
   var fsd3eeT=$('def-fsd-3ee-tgl');if(fsd3eeT)fsd3eeT.checked=(d.fsd_3ee_inject===undefined)?true:!!d.fsd_3ee_inject;
+  var nkT=$('def-nag-kill-tgl');if(nkT)nkT.checked=(d.nag_kill===undefined)?false:!!d.nag_kill;
   var nd=$('def-speed-nd-tgl');if(nd)nd.checked=!!d.speed_no_disturb;
   var dndSpd=$('def-dnd-spd-tgl');if(dndSpd)dndSpd.checked=!!d.dnd_speed;
   var apeap=$('def-apeap-tgl');if(apeap)apeap.checked=!!d.ap_eap_compatible;
@@ -2654,7 +2662,7 @@ async function toggleFsd(){
   var next=S.ci?0:1;
   if(next&&!confirm(T('确认开启 FSD 注入（0x3EE）？'))){poll();return}
   // 6.1.0-beta02: 首页主开关只切换 0x3EE FSD 激活注入（TX 分路）——
-  // 滚轮免打扰与速度智能偏移（A3 0x2F8 骑载）不受影响。
+  // 滚轮免打扰与速度智能偏移（0x3EE offsetOnly 纯速度通道）不受影响。
   // 6.1.0-beta03: enable 时无条件补发 can+force+bootCan。原来用 !S.can
   // （=canOnline 总线在线）做条件：canActive=0 而总线在线的板子（旧总开关
   // 留下的状态）永远走不到恢复分支，ci 卡 0、开关回弹。canActive 已开时
@@ -3016,6 +3024,7 @@ async function saveDefenseConfig(){
     isa_override:isaOvr&&isaOvr.checked?'1':'0',
     dnd_volume:dndVol&&dndVol.checked?'1':'0',
     fsd_3ee_inject:(function(){var t=$('def-fsd-3ee-tgl');return t&&t.checked?'1':'0';})(),
+    nag_kill:(function(){var t=$('def-nag-kill-tgl');return t&&t.checked?'1':'0';})(),
     speed_no_disturb:nd&&nd.checked?'1':'0',
     ap_eap_compatible:apeap&&apeap.checked?'1':'0',
     abort_guard:abortTgl&&abortTgl.checked?'1':'0',
