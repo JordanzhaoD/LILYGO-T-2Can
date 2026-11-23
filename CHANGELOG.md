@@ -1,5 +1,24 @@
 # Changelog
 
+## [6.1.0-beta02] - 2026-11-23
+
+### Fixed (homepage master toggle was a hidden kill-switch)
+
+- **Root cause found for the original "flip one switch, lose three
+  features" field report**: the homepage "模块总开关" (ov-master-tgl →
+  `toggleFsd()`) posted `/config {can:0}`, which clears `canActive` — the
+  underlying enable for EVERY injection (0x3EE AND the wheel DND tick AND
+  the smart speed offset). Its copy ("控制当前 FSD 注入模块启停") read as
+  "FSD injection only", so it was flipped to stop 0x3EE and took the DND
+  and the speed offset down with it.
+- **The homepage master toggle now switches the 0x3EE FSD activation
+  injection only** (posts `/defense_config fsd_3ee_inject`, same source as
+  the defense-page switch; if the CAN enable was off it is turned back on
+  when enabling). With it OFF: 0x3EE stops, the wheel DND keeps working,
+  the smart speed offset keeps flowing via the A3 0x2F8 ride. `/config`'s
+  `ci` now reports `canActive && fsd_3ee_inject` so the toggle reflects
+  whether 0x3EE injection can actually flow.
+
 ## [6.1.0-beta01] - 2026-11-23
 
 ### Changed (clean-slate series on the beta02 baseline: TX split)

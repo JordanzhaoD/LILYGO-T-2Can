@@ -2652,12 +2652,15 @@ async function loadDefenseConfig(){
 // ── FSD Toggle ─────────────────────────────────────────────
 async function toggleFsd(){
   var next=S.ci?0:1;
-  if(next&&!confirm(T('确认开启 FSD 注入？'))){poll();return}
-  // 主开关同时更新当前会话和开机默认值，重启后保持一致。
-  try{await postForm('/config',{can:next?'1':'0',force:next?'1':'0',bootCan:next?'1':'0'});}
-  catch(e){return}
+  if(next&&!confirm(T('确认开启 FSD 注入（0x3EE）？'))){poll();return}
+  // 6.1.0-beta02: 首页主开关只切换 0x3EE FSD 激活注入（TX 分路）——
+  // 滚轮免打扰与速度智能偏移（A3 0x2F8 骑载）不受影响。
+  try{
+    await postForm('/defense_config',{fsd_3ee_inject:next?'1':'0'});
+    if(next&&!S.can){await postForm('/config',{can:'1',bootCan:'1'});}
+  }catch(e){return}
   S.ci=!!next;
-  S.bootCan=!!next;
+  S.bootCan=S.bootCan||!!next;
   var masterTgl=$('ov-master-tgl');
   if(masterTgl)masterTgl.checked=S.ci;
   var mFsdTgl=$('m-fsd-tgl');
