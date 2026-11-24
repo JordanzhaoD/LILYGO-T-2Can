@@ -541,7 +541,12 @@ static void t2canStalkInjectTick()
 static void t2canRightWheelPressTick()
 {
     const uint32_t now = millis();
-    bool allowed = canActive && dashRightWheelPressEnabled && dashLegacyHandlerActive() &&
+    // The DND engines ride the native 0x045 stream — they are independent of
+    // the FSD-injection master switch (canActive). Gating on canActive meant
+    // the DND died whenever the FSD master switch was off, so it required a
+    // bogus "open-then-close" toggle to take effect. Gate on canOnline (bus
+    // connectivity) instead, plus the per-feature switch.
+    bool allowed = canOnline && dashRightWheelPressEnabled && dashLegacyHandlerActive() &&
                    !dashJitterCtrl.procedureActive() && !vehicleOtaActive;
     if (allowed && dashHandler && !dashHandler->abortGuard.allowsInjection())
     {
@@ -565,7 +570,7 @@ static void t2canWheelDndTick()
     dashLegacyWheel045DndCtrl.configure(dashDndVolume);
 
     DashLegacyWheel045Block gateBlock = DashLegacyWheel045Block::None;
-    if (!canActive || !dashDndVolume)
+    if (!canOnline || !dashDndVolume)
         gateBlock = DashLegacyWheel045Block::Disabled;
     else if (!dashLegacyHandlerActive())
         gateBlock = DashLegacyWheel045Block::NotLegacy;

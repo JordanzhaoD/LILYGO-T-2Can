@@ -1713,7 +1713,7 @@ static void dashApplyRuntimeState()
         dashLegacyWheel045DndCtrl.setYieldGate(
             [](uint32_t nowMs) { return dashRightWheelPressCtrl.siblingOwnsBeat(nowMs); });
         dashRightWheelPressCtrl.configure(dashRightWheelPressEnabled);
-        dashRightWheelPressCtrl.setRuntimeAllowed(canActive && dashLegacyHandlerActive());
+        dashRightWheelPressCtrl.setRuntimeAllowed(canOnline && dashLegacyHandlerActive());
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->jitterObserve3ee = dashJitterObserve3ee;
         dashHandler->jitterInhibit3ee = dashJitterInhibit3ee;

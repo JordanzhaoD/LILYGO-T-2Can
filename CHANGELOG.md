@@ -26,6 +26,14 @@ on-road captures plus the opendbc DBC:
 Test suite rewritten to 12 cases pinning the [2,7] ladder, the 0x20 press
 bit, and the 500 ms debounced release.
 
+- **DND decoupled from the FSD master switch.** The wheel DND engines were
+  gated on `canActive` (the FSD-injection master switch), so with the master
+  switch OFF the DND died and required a bogus "open-then-close" toggle to
+  take effect. The DND engines now gate on `canOnline` (bus connectivity)
+  instead of `canActive` — they ride the native 0x045 stream and are
+  independent of the FSD-injection switch, matching the original design
+  intent ("the wheel DND is unaffected — independent tick").
+
 ## [6.1.0-beta.07] - 2026-11-24
 
 ### Right-wheel PRESS DND (replaces the failed bit27 state-clone)
