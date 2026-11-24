@@ -1,5 +1,4 @@
-4f8b8220bac0f7d6d17fa572bbef6bca64b334c0332219d16697bfd13bc4ea29  LILYGO-T-2CAN_bootloader.bin
-23b7e2b895a1d1c01f1d47322313ff91071682f92ec8777e36946e3684495e02  LILYGO-T-2CAN_v6.1.0-beta.09_full_merged.bin
-584c358027e5037262248252255c262063e2c73c0900dfe228dd5e896fc85da7  LILYGO-T-2CAN_v6.1.0-beta.09_ota_app.bin
-7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f  ota_data_initial.bin
-d7cca4968173011e2563bc81b8969ff183af13b2e494ed61ec4016d007d8e946  partitions.bin
+LILYGO-T-2CAN_latest_ota_app.bin = 6.1.0-beta.10 (uiBuildId 6.1.0-beta.10-lilygo_t2can_dual-47bc051b65c4)
+LILYGO-T-2CAN_latest_full_merged.bin = 6.1.0-beta.10
+d9191d48074f14dc1cd56eacbba959e2cbc00aa3c8586d2502ed9984518c7eb1  LILYGO-T-2CAN_v6.1.0-beta.10_ota_app.bin
+22869a4c82d9e9aa82ccd8e3b28e0aa3612d733352e528b4bc4e226ceffb4438  LILYGO-T-2CAN_v6.1.0-beta.10_full_merged.bin
