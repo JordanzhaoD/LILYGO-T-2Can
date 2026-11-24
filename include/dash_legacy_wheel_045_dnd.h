@@ -341,15 +341,16 @@ struct DashLegacyWheel045Dnd
         diag.disarmHeals++;
     }
 
-    // TX split v2: the bit27 nagKill engine tags its clones with bit27
-    // (byte3 bit3). Such frames are a sibling's, not the physical wheel:
-    // they neither refresh nativeFresh nor feed the pair logic.
+    // TX split v3: the right-wheel PRESS engine tags its press frames with
+    // the press bit (switch word bit 4). Such frames are a sibling's, not
+    // the physical wheel: they neither refresh nativeFresh nor feed the
+    // pair logic.
     void setSiblingCloneFilter(bool (*fn)(const uint8_t *))
     {
         siblingCloneFilter_ = fn;
     }
 
-    // The nagKill clone contends the 0x045 counter for one beat: while the
+    // The press engine contends the 0x045 counter for one beat: while the
     // gate returns true, nextFrame stays silent (no counter race).
     void setYieldGate(bool (*fn)(uint32_t))
     {

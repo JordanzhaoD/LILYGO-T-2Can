@@ -294,16 +294,16 @@ void test_two_tx_failures_auto_disarm()
 
 // ── TX split v2: in-event disarm self-heal ───────────────────────────────
 
-// ── TX split v2: bit27 nagKill sibling coordination ─────────────────────
+// ── TX split v3: right-wheel PRESS sibling coordination ─────────────────
 
 static bool siblingSaysClone(const uint8_t data[8])
 {
-    return (data[3] & 0x08U) != 0; // bit27 tag
+    return (data[4] & 0x10U) != 0; // right-wheel press bit (switch word bit4)
 }
 
 static bool yieldNever(uint32_t) { return false; }
 
-void test_dnd_ignores_bit27_sibling_frames()
+void test_dnd_ignores_right_press_sibling_frames()
 {
     DashLegacyWheel045Dnd dnd;
     uint8_t out[8];
@@ -312,11 +312,11 @@ void test_dnd_ignores_bit27_sibling_frames()
     seedAndWarn(dnd, 1000);
     TEST_ASSERT_TRUE(dnd.nextFrame(1000, out));
     dnd.recordTxResult(true, 1000);
-    // A bit27-tagged frame arrives: recognised as a sibling clone —
+    // A right-press frame arrives: recognised as a sibling press —
     // it must NOT refresh nativeFresh nor start feeding the engine.
     uint8_t tagged[8];
     memcpy(tagged, kIdleD, 8);
-    tagged[3] |= 0x08;
+    tagged[4] |= 0x10;
     tagged[7] = DashLegacyWheel045Dnd::crc8J1850(tagged, 7);
     uint32_t nativeMsBefore = dnd.diag.nativeMs;
     dnd.onCan1Frame(tagged, 8, 1200);
@@ -532,7 +532,7 @@ int main()
     RUN_TEST(test_physical_wheel_input_aborts_active_sequence);
     RUN_TEST(test_two_tx_failures_auto_disarm);
     RUN_TEST(test_disarm_heals_after_800ms);
-    RUN_TEST(test_dnd_ignores_bit27_sibling_frames);
+    RUN_TEST(test_dnd_ignores_right_press_sibling_frames);
     RUN_TEST(test_dnd_yields_slot_while_sibling_clone_in_flight);
     RUN_TEST(test_disarm_heal_capped_three_per_window);
     RUN_TEST(test_disarm_heal_window_slides_reopens);

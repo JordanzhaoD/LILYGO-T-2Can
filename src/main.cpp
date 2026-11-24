@@ -534,14 +534,14 @@ static void t2canStalkInjectTick()
 // The CAN2 0x3C2 implementation remains compiled as a separate newer-vehicle
 // protocol, but it is never selected by this Legacy path.
 
-// TX split v2: bit27 nagKill per-beat runtime gate — mirrors the wheel-DND
-// tick's full gate chain (final-review I3): config-time canActive alone let
-// clones flow during vehicle OTA, a tripped abortGuard, or a jitter
+// TX split v3: right-wheel PRESS DND per-beat runtime gate — mirrors the
+// wheel-DND tick's full gate chain: config-time canActive alone would let
+// press frames flow during vehicle OTA, a tripped abortGuard, or a jitter
 // procedure that owns 0x045.
-static void t2canNagKillTick()
+static void t2canRightWheelPressTick()
 {
     const uint32_t now = millis();
-    bool allowed = canActive && dashNagKillEnabled && dashLegacyHandlerActive() &&
+    bool allowed = canActive && dashRightWheelPressEnabled && dashLegacyHandlerActive() &&
                    !dashJitterCtrl.procedureActive() && !vehicleOtaActive;
     if (allowed && dashHandler && !dashHandler->abortGuard.allowsInjection())
     {
@@ -555,8 +555,8 @@ static void t2canNagKillTick()
         allowed = twai->snapshotDiag().state == DashTwaiState::Running;
     }
 #endif
-    dashNagKillCtrl.setRuntimeAllowed(allowed);
-    dashNagKillCtrl.healTick(now);
+    dashRightWheelPressCtrl.setRuntimeAllowed(allowed);
+    dashRightWheelPressCtrl.healTick(now);
 }
 
 static void t2canWheelDndTick()
@@ -774,7 +774,7 @@ static void app_can_task(void *)
         t2canBurstTick();
         t2canStalkInjectTick();
         t2canWheelDndTick();
-        t2canNagKillTick();
+        t2canRightWheelPressTick();
         t2canJitterTick();
 #endif
         appCanTaskLoops = appCanTaskLoops + 1;

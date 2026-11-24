@@ -1,5 +1,37 @@
 # Changelog
 
+## [6.1.0-beta.07] - 2026-11-24
+
+### Right-wheel PRESS DND (replaces the failed bit27 state-clone)
+
+beta.06 field verdict: the bit27 state-clone nagKill caused widespread
+vehicle alarms when enabled — the "state valid" assertion path is dead.
+New direction, built on the field-stable left-wheel DND: a PARALLEL
+right-wheel PRESS engine. Physically pressing the right scroll wheel
+clears a hands-on NAG (Jordan's on-road captures confirm: switch word
+bit 4 = 0x0010, i.e. data[4] |= 0x10).
+
+- **Right-wheel PRESS engine** (`dash_legacy_wheel_045_press.h`): while a
+  warning is active (hands ∈ [3,6] or [9,10], same window as the
+  left-wheel DND), every native idle 0x045 is cloned 1:1 with the press
+  bit set (counter+1, CRC8-J1850), re-sent in-line one beat behind. Clear
+  drops the level immediately. No balancing pair (a press has no
+  cumulative volume side effect, unlike a tick).
+- **bit27 nagKill removed entirely**: `dash_legacy_nag_kill_045.h`,
+  `test_native_nag_kill`, NVS key `nk27`, `/status nagKillDiag`,
+  `/defense_config nag_kill`, and the UI toggle are all gone.
+- **Parallel + mutual yield**: the right-press engine tags its frames as
+  siblings of the left-wheel DND; the two never contend the 0x045 counter
+  (beat-generational yield). Independent switches and diagnostics.
+- Safety gates retained: idle-only riding, own-echo suppression, DND
+  sibling recognition, TX-failure disarm self-heal (800 ms / 3-per-60 s).
+- UI: new "右滚轮按压免打扰" toggle (field-path badge) replaces the
+  bit27 toggle; `/status rightWheelPressDiag`, `/defense_config
+  right_wheel_press`, NVS `rwp`.
+- Test suite: 9 native cases pin press encoding, level semantics,
+  warning window, echo no-chain, action-frame rejection, disarm heal,
+  and beat-yield.
+
 ## [6.1.0-beta.06] - 2026-11-24
 
 ### nagKill → level-type 1:1 follow (field verdict)
