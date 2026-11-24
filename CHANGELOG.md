@@ -1,5 +1,41 @@
 # Changelog
 
+## [6.1.0-beta.09] - 2026-11-24
+
+### Right-wheel press: revert to the field-stable EDGE + episode semantics
+
+beta.08 field verdict: the right-wheel press "frequently clears, which then
+escalates the warning until steering assist is disabled". Two captures prove
+the cause:
+
+- 221001: hands sat in 1↔2 (jittering every 9-50 ms) the whole drive, and
+  the engine blasted a side-button press frame every idle beat for **96.9 s
+  uninterrupted** (853 frames) — because beta.08 gated on `hands=2`.
+- 221005: the vehicle then escalated ap 6→8→9→1→14 (steering-assist
+  disabled).
+
+**Root cause: `hands=2` (DAS_autopilotHandsOnState `NOT_DETECTED`) is the
+persistent "hands off wheel" baseline while AP is engaged — it is NOT a
+prompt.** The prompt is the visual/chime ladder starting at `hands=3`
+(VISUAL). Gating on `hands=2` made the engine intervene for the entire
+engagement, which the vehicle read as repeated-abuse of the side button and
+struck out.
+
+The fix reverts to the semantics the left-wheel DND has held stable for six
+weeks:
+
+- Warning window back to `[3,6] ∪ [9,10]` (identical to the left-wheel DND);
+  `hands=2` no longer triggers.
+- EDGE trigger: only a warning ENTRY opens an episode; a sustained warning
+  no longer re-fires per beat.
+- Episode-limited: at most 3 presses per episode, one per fresh idle beat.
+- Clear stops immediately (the 500 ms debounce — which existed only to paper
+  over the wrong `[2,7]` window — is removed).
+
+Test suite rewritten to 15 cases pinning hands=2-does-not-trigger, the
+[3,6]∪[9,10] prompt ladder, edge + episode-bounded pressing, and the safety
+gates.
+
 ## [6.1.0-beta.08] - 2026-11-24
 
 ### Right-wheel press: correct warning window + side-button bit + debounce

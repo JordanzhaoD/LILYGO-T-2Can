@@ -1,4 +1,4 @@
-// dash_legacy_wheel_045_press.h — right-wheel PRESS DND (TX split v3.1).
+// dash_legacy_wheel_045_press.h — right-wheel PRESS DND (TX split v3.2).
 //
 // Field basis (2026-11-24, Jordan's on-road captures): physically pressing
 // the RIGHT scroll wheel's LEFT side (side button B) clears a hands-on NAG.
@@ -8,29 +8,30 @@
 // (bits 6..9); the press path is a PARALLEL sibling engine that rides the
 // side-button press bit instead.
 //
-// Warning window (v3.1 fix): the retired window [3,6] ∪ [9,10] was WRONG.
-// Per the opendbc DAS_autopilotHandsOnState ladder, the real NAG ladder is
-// 2 = NOT_DETECTED (the initial NAG state, by far the most common), 3 =
-// VISUAL, 4/5 = CHIME, 7 = STRUCK_OUT (AP lockout). The window is now
-// [2,7] — hands=2 triggers immediately, and hands=7 is a hard off (never
-// contest the strike-out domain). Field data shows hands sitting in 2 most
-// of the time, only briefly reaching 3 — the old window therefore almost
-// never fired, which is the "occasionally fails" root cause.
+// v3.2 — REVERT the [2,7] level-frenzy to the field-stable EDGE + episode
+// semantics. Field verdict on beta.08: gating on hands==2 (NOT_DETECTED)
+// is WRONG. hands==2 is the persistent "hands not on wheel" baseline while
+// AP is engaged — it is NOT a prompt. It sits in 2 for the entire drive and
+// jitters 1<->2 at 9-50 ms (detector noise), not NAG transitions. Gating on
+// it made the engine blast a press frame every idle beat for the WHOLE
+// engagement (96.9 s uninterrupted in capture 221001, 853 frames), which
+// the vehicle read as repeated-abuse of the side button and escalated to a
+// strike-out (ap 6->8->9->1->14, steering-assist disabled in 221005).
 //
-// Debounced release (v3.1 fix): field data shows hands jittering 1↔2 every
-// 21-26 ms. A naive "stop when clear" re-arms and stops at that rate, so
-// the NAG flickers back. Release is therefore debounced: pressing starts
-// the instant hands enters [2,7] (no start delay), but only stops once
-// hands has stayed in [0,1] for kReleaseDebounceMs (500 ms) — any re-entry
-// to [2,7] resets the debounce timer. Short jitter no longer interrupts a
-// sustained press.
+// The correct semantics — the ones the left-wheel DND has held stable for
+// six weeks — are: wait for the actual PROMPT. The prompt is the visual /
+// chime ladder, hands==3 (VISUAL) upward. So:
+//   - warning window is [3,6] ∪ [9,10] (identical to the left-wheel DND);
+//   - EDGE trigger: only a warning ENTRY (was not warning, now warning)
+//     starts an episode — a sustained hands==3 does NOT re-fire;
+//   - episode-limited: at most kMaxPressesPerEpisode press frames per
+//     episode, each riding the next fresh idle native beat, one beat apart;
+//   - clear stops immediately (no debounce — the debounce existed only to
+//     paper over the wrong [2,7] level window).
 //
-// Unlike the left-wheel tick (which shifts volume and therefore needs a
-// compensating -1), a press has no cumulative side effect: a single
-// sustained press is volume-neutral by nature, so there is no balancing
-// pair. The "hold until clear" shape is RX-synchronized — identical to the
-// left-wheel DND's ride-the-native-stream architecture and the 0x3EE
-// offsetOnly speed writer, both field-verified.
+// Unlike the left-wheel tick (which shifts volume and needs a compensating
+// -1), a press has no cumulative side effect, so there is no balancing
+// pair — only a bounded number of presses per episode.
 //
 // Safety gates retained (same discipline as the left-wheel DND):
 //   - idle-only riding (a frame carrying a wheel/stalk action payload is
@@ -56,6 +57,8 @@ struct DashLegacyWheel045PressDiag
     bool apActive = false;
     uint8_t apState = 0;
     uint8_t handsState = 0;
+    uint8_t pressesThisEpisode = 0;
+    uint32_t warningEpisodes = 0;
     uint32_t pressed = 0;
     uint32_t txFail = 0;
     uint32_t echoSuppressed = 0;
@@ -74,10 +77,15 @@ struct DashLegacyWheel045Press
     // Any wheel/stalk action bits that make a frame non-idle (same mask the
     // left-wheel DND uses to reject action frames).
     static constexpr uint16_t kAnyWheelMask = 0x3FFF;
-    // Debounced release: pressing starts instantly on warning entry, but
-    // only stops once hands has stayed in [0,1] this long (a re-entry to
-    // [2,7] resets the timer).
-    static constexpr uint32_t kReleaseDebounceMs = 500;
+    // Episode budget: at most this many press frames per warning episode.
+    // Mirrors the left-wheel DND's kMaxPairsPerEpisode shape — a bounded
+    // intervention, never a sustained blast.
+    static constexpr uint8_t kMaxPressesPerEpisode = 3;
+    // A press frame is owned by the engine for one beat after it is sent;
+    // the left-wheel DND yields its slot this long (beat-generational, the
+    // actual release is the next fresh idle native frame — see
+    // siblingOwnsBeat).
+    static constexpr uint32_t kCloneInFlightMs = 20;
     // TX-failure disarm self-heal (same shape as the left-wheel DND).
     static constexpr uint8_t kMaxConsecutiveTxFailures = 2;
     static constexpr uint32_t kHealDelayMs = 800;
@@ -86,17 +94,25 @@ struct DashLegacyWheel045Press
 
     DashLegacyWheel045PressDiag diag;
 
+    static uint8_t crc8J1850(const uint8_t *data, uint8_t length)
+    {
+        uint8_t crc = 0xFF;
+        for (uint8_t i = 0; i < length; ++i)
+        {
+            crc ^= data[i];
+            for (uint8_t bit = 0; bit < 8; ++bit)
+                crc = static_cast<uint8_t>((crc & 0x80) ? ((crc << 1) ^ 0x1D) : (crc << 1));
+        }
+        return static_cast<uint8_t>(crc ^ 0xFF);
+    }
+
     void configure(bool enabled)
     {
         enabled_ = enabled;
         diag.enabled = enabled;
         if (!enabled)
         {
-            warningActive_ = false;
-            apActive_ = false;
-            releaseSinceMs_ = 0;
-            diag.warningActive = false;
-            diag.apActive = false;
+            resetEpisode();
             diag.blockedReason = "disabled";
         }
     }
@@ -106,11 +122,7 @@ struct DashLegacyWheel045Press
         runtimeAllowed_ = allowed;
         diag.runtimeAllowed = allowed;
         if (!allowed)
-        {
-            warningActive_ = false;
-            releaseSinceMs_ = 0;
-            diag.warningActive = false;
-        }
+            resetEpisode();
     }
 
     // A press frame is identified by the side-button press bit (switch word
@@ -144,49 +156,48 @@ struct DashLegacyWheel045Press
         return lastPressMs_ != 0 && lastIdleNativeMs_ <= lastPressMs_;
     }
 
+    // EDGE trigger, identical to the left-wheel DND's onDasStatus episode
+    // entry: a warning ENTRY (was not warning -> now warning) opens an
+    // episode; staying inside the warning ladder does NOT re-open it. Leaving
+    // the window (or AP out, or engine down) closes the episode immediately.
     void onDasStatus(uint8_t apState, uint8_t handsState, uint32_t nowMs)
     {
         healTick(nowMs);
+        const bool wasWarning = warningActive_;
+        apActive_ = apState >= 3 && apState <= 6;
+        warningActive_ = isWarningState(handsState);
         diag.apState = apState;
         diag.handsState = handsState;
-        apActive_ = apState >= 3 && apState <= 6;
         diag.apActive = apActive_;
-        const bool inWindow = isWarningState(handsState);
+        diag.warningActive = warningActive_;
+
         if (!enabled_ || !runtimeAllowed_ || disarmed_ || !apActive_)
         {
-            // Engine down (or AP out): the level drops immediately and the
-            // debounce timer resets so the next entry arms cleanly.
-            warningActive_ = false;
-            diag.warningActive = false;
-            releaseSinceMs_ = 0;
+            resetEpisode();
             return;
         }
-        if (inWindow)
+
+        if (warningActive_ && !wasWarning)
         {
-            // Entering (or staying in) the warning ladder arms instantly and
-            // clears any pending release.
-            warningActive_ = true;
-            releaseSinceMs_ = 0;
+            // Fresh warning edge: open the episode, reset the press budget,
+            // and arm for the next idle native beat.
+            episodeActive_ = true;
+            pressesThisEpisode_ = 0;
+            diag.pressesThisEpisode = 0;
+            diag.warningEpisodes++;
+            diag.blockedReason = "waiting_native";
         }
-        else if (warningActive_)
+        else if (!warningActive_ && wasWarning)
         {
-            // hands left the window: start (or extend) the release debounce.
-            // Pressing continues until hands has STAYED out for the full
-            // kReleaseDebounceMs — short 1↔2 jitter does not stop it.
-            if (releaseSinceMs_ == 0)
-                releaseSinceMs_ = nowMs;
-            if (nowMs - releaseSinceMs_ >= kReleaseDebounceMs)
-            {
-                warningActive_ = false;
-                releaseSinceMs_ = 0;
-            }
+            // Warning cleared (hands back to 0/1/2, or AP out): close it.
+            resetEpisode();
+            diag.blockedReason = "warning_clear";
         }
-        diag.warningActive = warningActive_;
     }
 
     // Returns true and fills `out` when a press frame should be transmitted
-    // for this native frame. LEVEL semantics: presses every idle native beat
-    // while the warning is active — no single-shot consumption.
+    // for this native frame. EDGE + episode-limited: at most
+    // kMaxPressesPerEpisode presses, each riding a fresh idle native beat.
     bool onNative045(const uint8_t data[8], uint8_t dlc, uint32_t nowMs, uint8_t out[8])
     {
         if (!enabled_)
@@ -221,9 +232,16 @@ struct DashLegacyWheel045Press
         }
         // A fresh idle native beat: this is what releases the yield slot.
         lastIdleNativeMs_ = nowMs;
-        if (!warningActive_)
+        if (!episodeActive_ || !warningActive_ || !apActive_)
         {
             diag.blockedReason = "idle";
+            return false;
+        }
+        if (pressesThisEpisode_ >= kMaxPressesPerEpisode)
+        {
+            // Episode budget exhausted: stop intervening for this warning.
+            episodeActive_ = false;
+            diag.blockedReason = "episode_limit";
             return false;
         }
         if (dlc < 8)
@@ -235,6 +253,8 @@ struct DashLegacyWheel045Press
                                       ((((out[6] >> 4) + 1U) & 0x0FU) << 4));
         out[7] = crc8J1850(out, 7);
         lastPressMs_ = nowMs;
+        pressesThisEpisode_++;
+        diag.pressesThisEpisode = pressesThisEpisode_;
         diag.pressed++;
         diag.blockedReason = "armed";
         return true;
@@ -253,6 +273,7 @@ struct DashLegacyWheel045Press
                 disarmed_ = true;
                 diag.disarmed = true;
                 disarmedAtMs_ = nowMs;
+                resetEpisode();
                 diag.blockedReason = "disarmed";
             }
             return;
@@ -281,29 +302,28 @@ struct DashLegacyWheel045Press
         diag.disarmHeals++;
     }
 
-    // CRC8 SAE J1850 (same polynomial/init/final-xor as the 0x045 wheel
-    // vectors).
-    static uint8_t crc8J1850(const uint8_t *data, uint8_t length)
-    {
-        uint8_t crc = 0xFF;
-        for (uint8_t i = 0; i < length; i++)
-        {
-            crc ^= data[i];
-            for (uint8_t bit = 0; bit < 8; bit++)
-                crc = static_cast<uint8_t>((crc & 0x80) ? ((crc << 1) ^ 0x1D) : (crc << 1));
-        }
-        return static_cast<uint8_t>(crc ^ 0xFF);
-    }
-
 private:
-    static constexpr uint32_t kCloneInFlightMs = 20;
-
     static bool isWarningState(uint8_t handsState)
     {
-        // Full NAG ladder per opendbc DAS_autopilotHandsOnState:
-        // 2 = NOT_DETECTED (initial NAG), 3 = VISUAL, 4/5 = CHIME,
-        // 7 = STRUCK_OUT (AP lockout). 0/1 = normal, 8 = suspended.
-        return handsState >= 2 && handsState <= 7;
+        // The PROMPT ladder — identical to the field-stable left-wheel DND.
+        // hands==2 (NOT_DETECTED) is the persistent "hands off wheel"
+        // baseline, NOT a prompt: it must never trigger an intervention
+        // (the beta.08 [2,7] regression). The prompt starts at hands==3
+        // (VISUAL) and escalates 4/5 (CHIME) to 7 (STRUCK_OUT). 9/10 are
+        // the escalated warning domain the left-wheel DND also covers.
+        return (handsState >= 3 && handsState <= 6) ||
+               (handsState >= 9 && handsState <= 10);
+    }
+
+    void resetEpisode()
+    {
+        episodeActive_ = false;
+        warningActive_ = false;
+        apActive_ = false;
+        pressesThisEpisode_ = 0;
+        diag.warningActive = false;
+        diag.apActive = false;
+        diag.pressesThisEpisode = 0;
     }
 
     bool enabled_ = false;
@@ -311,7 +331,8 @@ private:
     bool disarmed_ = false;
     bool warningActive_ = false;
     bool apActive_ = false;
-    uint32_t releaseSinceMs_ = 0;
+    bool episodeActive_ = false;
+    uint8_t pressesThisEpisode_ = 0;
     uint32_t lastPressMs_ = 0;
     uint32_t lastIdleNativeMs_ = 0;
     uint32_t disarmedAtMs_ = 0;
