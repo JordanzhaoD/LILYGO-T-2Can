@@ -75,6 +75,7 @@ class SimState:
         self.defense_enabled = True
         self.dnd_volume = True
         self.dnd_speed = True
+        self.right_wheel_press = False
         self.ap_eap_compatible = False
         self.abort_guard = False
         self.jitter = False
@@ -602,6 +603,7 @@ class Handler(BaseHTTPRequestHandler):
                     "enabled": STATE.defense_enabled,
                     "dnd_volume": STATE.dnd_volume,
                     "legacy_scroll_dnd": STATE.dnd_volume,
+                    "right_wheel_press": STATE.right_wheel_press,
                     "dnd_speed": STATE.dnd_speed,
                     "ap_eap_compatible": STATE.ap_eap_compatible,
                     "abort_guard": STATE.abort_guard,
@@ -1101,6 +1103,8 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.dnd_volume = self.form_bool(form["dnd_volume"])
             if "legacy_scroll_dnd" in form:
                 STATE.dnd_volume = self.form_bool(form["legacy_scroll_dnd"])
+            if "right_wheel_press" in form:
+                STATE.right_wheel_press = self.form_bool(form["right_wheel_press"])
             if "dnd_speed" in form:
                 STATE.dnd_speed = self.form_bool(form["dnd_speed"])
             if "ap_eap_compatible" in form:
