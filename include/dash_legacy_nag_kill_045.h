@@ -1,21 +1,29 @@
-// dash_legacy_nag_kill_045.h — bit27 "nagKill" parallel DND path (TX split v2).
+// dash_legacy_nag_kill_045.h — bit27 "nagKill" parallel DND path (TX split v3).
 //
-// Reference implementation (Jordan-provided reverse-engineered pseudocode,
-// 2026-11-23): on a 0x399 warning edge with hands in [3,5], arm a trigger
-// flag; when the NEXT native 0x045 (STW_ACTN_RQ) arrives, clone that frame
-// with StW_Cond_Flt bit27 set (byte3 bit3, LSB-first), counter+1 (b6 high
-// nibble) and a recomputed CRC8-J1850, then re-send it. ONE frame per
-// warning edge — no interval re-fire (the retired 11-18 line's 1500 ms
-// cadence is deliberately NOT ported).
+// Field verdict (2026-11-24): the v2 single-shot-per-edge form is dead. A
+// lone bit27 frame buried in the 10 Hz native 0x045 stream does nothing —
+// the "steering-wheel state valid" claim only holds if it is asserted
+// CONTINUOUSLY, one clone riding every native beat while hands ∈ [3,5].
 //
-// Differences from the retired beta17-21 clone (field incident, cause
-// never isolated): window starts at hands==3 (not 2), single-shot per
-// edge (not periodic), strictly RX-driven (rides the native cadence,
-// never free-runs), default OFF, fresh NVS key.
+// v3 semantics (level, not edge): while handsState ∈ [3,5] persists, every
+// native idle 0x045 that arrives is cloned 1:1 (bit27 set, counter+1,
+// recomputed CRC8-J1850) and re-sent in-line, one beat behind the native
+// frame. When hands leaves the window (or reaches ≥6, the strike-out
+// domain) the engine stops immediately — no trigger to consume, no expiry,
+// no free-run. This is the same RX-synchronized "ride the native stream"
+// shape as the wheel-DND pair engine and the 0x3EE offsetOnly speed writer,
+// both field-verified.
+//
+// Unchanged from v2: window starts at hands==3 (not 2); strictly RX-driven
+// (never free-runs); default OFF; fresh NVS key nk27.
+//
+// Safety gates retained: idle-only riding, own-echo suppression, DND
+// sibling recognition + beat yield, TX-failure disarm self-heal.
 //
 // Coordination with the wheel DND engine (beta02): the DND engine treats
 // a bit27-tagged frame as a sibling — it must not refresh nativeFresh nor
-// start a pair — and yields its nextFrame slot while cloneInFlight().
+// start a pair — and yields its nextFrame slot while the clone owns the
+// beat (beat-generational yield, final-review I1).
 
 #pragma once
 
@@ -29,7 +37,7 @@ struct DashLegacyNagKillDiag
     bool enabled = false;
     bool runtimeAllowed = false;
     bool disarmed = false;
-    bool triggerArmed = false;
+    bool inWindow = false;
     uint8_t handsState = 0;
     uint32_t cloned = 0;
     uint32_t txFail = 0;
@@ -47,8 +55,6 @@ struct DashLegacyNagKill045
     // is a hard off — the engine never contests that domain.
     static constexpr uint8_t kHandsMin = 3;
     static constexpr uint8_t kHandsMax = 5;
-    // The trigger flag expires if no native frame shows up to ride.
-    static constexpr uint32_t kTriggerExpireMs = 500;
     // Clone-in-flight window: the DND engine yields its slot this long
     // after a clone so the two TX writers never contend the counter.
     static constexpr uint32_t kCloneInFlightMs = 20;
@@ -66,8 +72,8 @@ struct DashLegacyNagKill045
         diag.enabled = enabled;
         if (!enabled)
         {
-            trigger_ = false;
-            diag.triggerArmed = false;
+            inWindow_ = false;
+            diag.inWindow = false;
             diag.blockedReason = "disabled";
         }
     }
@@ -113,33 +119,32 @@ struct DashLegacyNagKill045
     {
         healTick(nowMs);
         diag.handsState = handsState;
-        const bool inWindow = handsState >= kHandsMin && handsState <= kHandsMax;
-        const bool wasInWindow = lastHandsState_ >= kHandsMin && lastHandsState_ <= kHandsMax;
         lastHandsState_ = handsState;
         if (!enabled_ || !runtimeAllowed_ || disarmed_)
+        {
+            // Engine is down: the level drops to out-of-window so no clone
+            // can leak through while blocked.
+            inWindow_ = false;
+            diag.inWindow = false;
             return;
+        }
         if (handsState >= 6)
         {
-            // Strike-out escalation domain: hard off. An armed trigger is
-            // cleared immediately (final-review C2) and no new edge can
-            // arm while the domain persists.
-            trigger_ = false;
-            diag.triggerArmed = false;
+            // Strike-out escalation domain: hard off (final-review C2).
+            // Level drops immediately — a prior in-window level is voided.
+            inWindow_ = false;
+            diag.inWindow = false;
             return;
         }
-        if (inWindow && !wasInWindow)
-        {
-            // EDGE only (final-review C1): entering the window arms;
-            // staying inside it does NOT re-arm a consumed trigger —
-            // a sustained warning yields ONE clone, not ~2 Hz of them.
-            trigger_ = true;
-            triggerAtMs_ = nowMs;
-            diag.triggerArmed = true;
-        }
+        // LEVEL, not edge: inWindow_ tracks the current hands level. While
+        // hands stays in [3,5], every native idle beat clones (1:1 follow).
+        inWindow_ = handsState >= kHandsMin && handsState <= kHandsMax;
+        diag.inWindow = inWindow_;
     }
 
     // Returns true and fills `out` when a clone should be transmitted for
-    // this native frame. Single-shot: the trigger is consumed.
+    // this native frame. LEVEL semantics: clones every idle native beat
+    // while hands ∈ [3,5] — no single-shot consumption.
     bool onNative045(const uint8_t data[8], uint8_t dlc, uint32_t nowMs, uint8_t out[8])
     {
         if (!enabled_)
@@ -174,23 +179,14 @@ struct DashLegacyNagKill045
         }
         // A fresh idle native beat: this is what releases the yield slot.
         lastIdleNativeMs_ = nowMs;
-        if (!trigger_)
+        if (!inWindow_)
         {
             diag.blockedReason = "idle";
-            return false;
-        }
-        if (nowMs - triggerAtMs_ > kTriggerExpireMs)
-        {
-            trigger_ = false;
-            diag.triggerArmed = false;
-            diag.blockedReason = "triggerExpired";
             return false;
         }
         if (dlc < 8)
             return false;
 
-        trigger_ = false;
-        diag.triggerArmed = false;
         memcpy(out, data, 8);
         out[3] = static_cast<uint8_t>(out[3] | 0x08U); // bit27
         out[6] = static_cast<uint8_t>(((out[6] & 0x0FU)) |
@@ -261,9 +257,8 @@ private:
     bool enabled_ = false;
     bool runtimeAllowed_ = false;
     bool disarmed_ = false;
-    bool trigger_ = false;
+    bool inWindow_ = false;
     uint8_t lastHandsState_ = 0;
-    uint32_t triggerAtMs_ = 0;
     uint32_t lastCloneMs_ = 0;
     uint32_t lastIdleNativeMs_ = 0;
     uint32_t disarmedAtMs_ = 0;

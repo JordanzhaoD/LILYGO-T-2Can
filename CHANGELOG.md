@@ -1,5 +1,35 @@
 # Changelog
 
+## [6.1.0-beta.06] - 2026-11-24
+
+### nagKill → level-type 1:1 follow (field verdict)
+
+The beta.05 edge-triggered single-shot bit27 nagKill was judged dead on
+field grounds: one bit27 frame per warning edge, buried in the 10 Hz
+native 0x045 stream, never asserts "steering-wheel state valid" — the
+claim only holds if it is continuously overwritten, one clone riding
+every native idle beat while hands ∈ [3,5]. This is the same
+RX-synchronized "ride the native stream" shape as the wheel-DND pair
+engine and the 0x3EE offsetOnly speed writer, both field-verified.
+
+- **Level, not edge**: `onDasStatus` now tracks the hands level
+  (`inWindow_`) instead of arming a single-shot trigger. While hands
+  stays in [3,5], every native idle 0x045 clones 1:1 (bit27 + counter+1
+  + CRC8-J1850). Out-of-window or hands ≥ 6 drops the level immediately
+  (no clone leaks).
+- **Trigger-expiry gate removed**: `kTriggerExpireMs` (500 ms) was an
+  edge-triggered residue — under level semantics the window state is
+  driven by the 0x399 stream itself, so an expiry is meaningless. Related
+  tests migrated.
+- **Safety gates retained**: idle-only riding, own-echo suppression, DND
+  sibling recognition + beat-generational yield, TX-failure disarm
+  self-heal (800 ms / 3-per-60 s).
+- **Diagnostics**: `triggerArmed` replaced by `inWindow` in
+  `nagKillDiag` (the /status JSON contract).
+- Test suite rewritten to pin level semantics: sustained-warning
+  clone-every-beat, out-of-window stop, hands-6 hard-off, re-enter
+  resume, echo no-chain, disarm heal. 12/12 native.
+
 ## [6.1.0-beta.05] - 2026-11-24
 
 ### Final-review fixes (whole-branch review, pre-release)

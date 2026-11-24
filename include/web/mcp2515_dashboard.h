@@ -3198,8 +3198,8 @@ static void handleStatus()
         j += n.enabled ? "true" : "false";
         j += R"JSON(,"disarmed":)JSON";
         j += n.disarmed ? "true" : "false";
-        j += R"JSON(,"triggerArmed":)JSON";
-        j += n.triggerArmed ? "true" : "false";
+        j += R"JSON(,"inWindow":)JSON";
+        j += n.inWindow ? "true" : "false";
         j += R"JSON(,"handsState":)JSON";
         j += n.handsState;
         j += R"JSON(,"cloned":)JSON";
