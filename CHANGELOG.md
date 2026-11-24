@@ -1,5 +1,31 @@
 # Changelog
 
+## [6.1.0-beta.08] - 2026-11-24
+
+### Right-wheel press: correct warning window + side-button bit + debounce
+
+beta.07 field verdict: the right-wheel press DND "partially works, partially
+fails, and prompts still appear". Two root causes found in Jordan's four
+on-road captures plus the opendbc DBC:
+
+- **Wrong warning window.** The retired `[3,6] ∪ [9,10]` never caught
+  `hands=2` (DAS_autopilotHandsOnState `NOT_DETECTED`), which is the initial
+  and by far most common NAG state. Field data shows hands sitting in 2 most
+  of the time, only briefly reaching 3. The window is now `[2,7]` — the full
+  NAG ladder (2=NOT_DETECTED, 3=VISUAL, 4/5=CHIME, 7=STRUCK_OUT), with
+  hands=7 kept as a hard-off.
+- **Wrong press bit.** beta.07 pressed the center (bit4 0x0010); the correct
+  "left-side press" is the side button (bit5 0x0020, 99 hits in the
+  stationary capture).
+- **No debounce on release.** Field data shows hands jittering 1↔2 every
+  21-26 ms; a naive "stop when clear" churned at that rate and let the NAG
+  flicker back. Release is now debounced: pressing starts instantly on
+  warning entry, but only stops once hands has stayed in [0,1] for 500 ms
+  (any re-entry resets the timer).
+
+Test suite rewritten to 12 cases pinning the [2,7] ladder, the 0x20 press
+bit, and the 500 ms debounced release.
+
 ## [6.1.0-beta.07] - 2026-11-24
 
 ### Right-wheel PRESS DND (replaces the failed bit27 state-clone)

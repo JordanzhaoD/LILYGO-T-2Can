@@ -1,18 +1,29 @@
-// dash_legacy_wheel_045_press.h — right-wheel PRESS DND (TX split v3).
+// dash_legacy_wheel_045_press.h — right-wheel PRESS DND (TX split v3.1).
 //
 // Field basis (2026-11-24, Jordan's on-road captures): physically pressing
-// the RIGHT scroll wheel clears a hands-on NAG. On the wire this is the
-// switch-word (b4 | b5<<8) bit 4 = 0x0010, i.e. data[4] |= 0x10. The left
-// wheel DND already rides this same native 0x045 stream with a balanced
-// +/- tick pair (bits 6..9); the press path is a PARALLEL sibling engine
-// that rides the press bit instead.
+// the RIGHT scroll wheel's LEFT side (side button B) clears a hands-on NAG.
+// On the wire this is the switch-word (b4 | b5<<8) bit 5 = 0x0020, i.e.
+// data[4] |= 0x20 (99 hits in the stationary 60 s capture). The left-wheel
+// DND rides the same native 0x045 stream with a balanced +/- tick pair
+// (bits 6..9); the press path is a PARALLEL sibling engine that rides the
+// side-button press bit instead.
 //
-// Semantics (LEVEL, not edge): while a warning is active (hands ∈ [3,6] or
-// [9,10], the same window as the left-wheel DND), every native idle 0x045
-// that arrives is cloned 1:1 with the press bit set, counter+1, recomputed
-// CRC8-J1850, and re-sent in-line one beat behind the native frame. When the
-// warning clears (hands leaves the window, or AP drops out), the engine
-// stops immediately — no trigger to consume, no expiry, no free-run.
+// Warning window (v3.1 fix): the retired window [3,6] ∪ [9,10] was WRONG.
+// Per the opendbc DAS_autopilotHandsOnState ladder, the real NAG ladder is
+// 2 = NOT_DETECTED (the initial NAG state, by far the most common), 3 =
+// VISUAL, 4/5 = CHIME, 7 = STRUCK_OUT (AP lockout). The window is now
+// [2,7] — hands=2 triggers immediately, and hands=7 is a hard off (never
+// contest the strike-out domain). Field data shows hands sitting in 2 most
+// of the time, only briefly reaching 3 — the old window therefore almost
+// never fired, which is the "occasionally fails" root cause.
+//
+// Debounced release (v3.1 fix): field data shows hands jittering 1↔2 every
+// 21-26 ms. A naive "stop when clear" re-arms and stops at that rate, so
+// the NAG flickers back. Release is therefore debounced: pressing starts
+// the instant hands enters [2,7] (no start delay), but only stops once
+// hands has stayed in [0,1] for kReleaseDebounceMs (500 ms) — any re-entry
+// to [2,7] resets the debounce timer. Short jitter no longer interrupts a
+// sustained press.
 //
 // Unlike the left-wheel tick (which shifts volume and therefore needs a
 // compensating -1), a press has no cumulative side effect: a single
@@ -57,11 +68,16 @@ struct DashLegacyWheel045PressDiag
 struct DashLegacyWheel045Press
 {
     static constexpr uint32_t kCanId = 0x045;
-    // The press bit in the switch word (b4 | b5<<8): bit 4 -> data[4] 0x10.
-    static constexpr uint16_t kPressMask = 0x0010;
+    // The side-button (left-press) bit in the switch word (b4 | b5<<8):
+    // bit 5 -> data[4] 0x20.
+    static constexpr uint16_t kPressMask = 0x0020;
     // Any wheel/stalk action bits that make a frame non-idle (same mask the
     // left-wheel DND uses to reject action frames).
     static constexpr uint16_t kAnyWheelMask = 0x3FFF;
+    // Debounced release: pressing starts instantly on warning entry, but
+    // only stops once hands has stayed in [0,1] this long (a re-entry to
+    // [2,7] resets the timer).
+    static constexpr uint32_t kReleaseDebounceMs = 500;
     // TX-failure disarm self-heal (same shape as the left-wheel DND).
     static constexpr uint8_t kMaxConsecutiveTxFailures = 2;
     static constexpr uint32_t kHealDelayMs = 800;
@@ -78,6 +94,7 @@ struct DashLegacyWheel045Press
         {
             warningActive_ = false;
             apActive_ = false;
+            releaseSinceMs_ = 0;
             diag.warningActive = false;
             diag.apActive = false;
             diag.blockedReason = "disabled";
@@ -91,11 +108,13 @@ struct DashLegacyWheel045Press
         if (!allowed)
         {
             warningActive_ = false;
+            releaseSinceMs_ = 0;
             diag.warningActive = false;
         }
     }
 
-    // A press frame is identified by the press bit (switch word bit 4).
+    // A press frame is identified by the side-button press bit (switch word
+    // bit 5).
     static bool isPressFrame(const uint8_t data[8])
     {
         const uint16_t wheel = static_cast<uint16_t>(data[4]) |
@@ -132,24 +151,37 @@ struct DashLegacyWheel045Press
         diag.handsState = handsState;
         apActive_ = apState >= 3 && apState <= 6;
         diag.apActive = apActive_;
-        const bool wasWarning = warningActive_;
-        warningActive_ = isWarningState(handsState) && apActive_;
+        const bool inWindow = isWarningState(handsState);
+        if (!enabled_ || !runtimeAllowed_ || disarmed_ || !apActive_)
+        {
+            // Engine down (or AP out): the level drops immediately and the
+            // debounce timer resets so the next entry arms cleanly.
+            warningActive_ = false;
+            diag.warningActive = false;
+            releaseSinceMs_ = 0;
+            return;
+        }
+        if (inWindow)
+        {
+            // Entering (or staying in) the warning ladder arms instantly and
+            // clears any pending release.
+            warningActive_ = true;
+            releaseSinceMs_ = 0;
+        }
+        else if (warningActive_)
+        {
+            // hands left the window: start (or extend) the release debounce.
+            // Pressing continues until hands has STAYED out for the full
+            // kReleaseDebounceMs — short 1↔2 jitter does not stop it.
+            if (releaseSinceMs_ == 0)
+                releaseSinceMs_ = nowMs;
+            if (nowMs - releaseSinceMs_ >= kReleaseDebounceMs)
+            {
+                warningActive_ = false;
+                releaseSinceMs_ = 0;
+            }
+        }
         diag.warningActive = warningActive_;
-        if (!enabled_ || !runtimeAllowed_ || disarmed_)
-        {
-            warningActive_ = false;
-            diag.warningActive = false;
-            return;
-        }
-        if (!apActive_)
-        {
-            warningActive_ = false;
-            diag.warningActive = false;
-            return;
-        }
-        // LEVEL semantics: nothing to arm — while warningActive_ holds, every
-        // idle native beat presses. Clear drops the level immediately.
-        (void)wasWarning;
     }
 
     // Returns true and fills `out` when a press frame should be transmitted
@@ -198,7 +230,7 @@ struct DashLegacyWheel045Press
             return false;
 
         memcpy(out, data, 8);
-        out[4] = static_cast<uint8_t>(out[4] | 0x10U); // press bit (switch word bit4)
+        out[4] = static_cast<uint8_t>(out[4] | 0x20U); // side-button press bit (switch word bit5)
         out[6] = static_cast<uint8_t>(((out[6] & 0x0FU)) |
                                       ((((out[6] >> 4) + 1U) & 0x0FU) << 4));
         out[7] = crc8J1850(out, 7);
@@ -268,8 +300,10 @@ private:
 
     static bool isWarningState(uint8_t handsState)
     {
-        return (handsState >= 3 && handsState <= 6) ||
-               (handsState >= 9 && handsState <= 10);
+        // Full NAG ladder per opendbc DAS_autopilotHandsOnState:
+        // 2 = NOT_DETECTED (initial NAG), 3 = VISUAL, 4/5 = CHIME,
+        // 7 = STRUCK_OUT (AP lockout). 0/1 = normal, 8 = suspended.
+        return handsState >= 2 && handsState <= 7;
     }
 
     bool enabled_ = false;
@@ -277,6 +311,7 @@ private:
     bool disarmed_ = false;
     bool warningActive_ = false;
     bool apActive_ = false;
+    uint32_t releaseSinceMs_ = 0;
     uint32_t lastPressMs_ = 0;
     uint32_t lastIdleNativeMs_ = 0;
     uint32_t disarmedAtMs_ = 0;

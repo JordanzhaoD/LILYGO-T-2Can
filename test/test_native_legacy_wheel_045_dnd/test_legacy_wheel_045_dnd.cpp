@@ -298,7 +298,7 @@ void test_two_tx_failures_auto_disarm()
 
 static bool siblingSaysClone(const uint8_t data[8])
 {
-    return (data[4] & 0x10U) != 0; // right-wheel press bit (switch word bit4)
+    return (data[4] & 0x20U) != 0; // right-wheel side-button press bit (switch word bit5)
 }
 
 static bool yieldNever(uint32_t) { return false; }
@@ -316,7 +316,7 @@ void test_dnd_ignores_right_press_sibling_frames()
     // it must NOT refresh nativeFresh nor start feeding the engine.
     uint8_t tagged[8];
     memcpy(tagged, kIdleD, 8);
-    tagged[4] |= 0x10;
+    tagged[4] |= 0x20;
     tagged[7] = DashLegacyWheel045Dnd::crc8J1850(tagged, 7);
     uint32_t nativeMsBefore = dnd.diag.nativeMs;
     dnd.onCan1Frame(tagged, 8, 1200);
