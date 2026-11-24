@@ -1,5 +1,47 @@
 # Changelog
 
+## [6.1.0-beta.10] - 2026-11-25
+
+### Right-wheel press: back to the CENTER button, as a click
+
+Field verdict across beta.05-09 (23 captures, 2026-11-23/24):
+
+| press signal | version | warning episodes | result |
+|---|---|---|---|
+| CENTER 0x0010 | beta.07 | 6 | 6/6 cleared, two with a SINGLE frame (9-26 ms) |
+| SIDE 0x0020 | beta.09 | 8 | 6 not cleared (warning lasted 6-15 s); 2 were self-clearing blips |
+| SIDE, hands=2 gate | beta.08 | - | 96.9 s / 853-frame blast -> strike-out |
+
+Both engines share one frame skeleton, so the button bit alone decides.
+beta.08 moved the press from the center button to the side button; that
+move is what made beta.09 ineffective. The press bit is back to the
+center button (`data[4] 0x10`).
+
+- **Click shape: press frame + immediate release frame.** A center press
+  pops the head-unit menu (it popped on every press in the field). The
+  engine used to leave the button held for about 100 ms, until the car's
+  own next native frame released it. A physical click is a press frame
+  followed by a released frame back to back, so each click is now exactly
+  that: the shortest click the bus can express. Whether the head unit
+  treats it as too short to open the menu is the open field question.
+- **Two clicks per warning episode** (was three presses). A second click
+  requires the release sent, a fresh idle native frame after it, and
+  150 ms since the release. A press whose TX failed drops its release.
+- **Left-wheel DND yield** holds until the first idle native frame after
+  the release (was: after the press).
+- **Status grid** under the toggle, mirroring the left-wheel DND grid:
+  warning state, native 0x045 age and counter, state / clicks this round
+  / cap, press / release / TX fail, echo / action frames, warning rounds
+  / heals, block reason. Also on `/status` under `rightWheelPressDiag`.
+- UI badge back to Experimental while the menu question is open.
+- Trigger semantics unchanged: the prompt ladder hands in [3,6] U [9,10],
+  edge entry, clear stops at once; hands=2 never triggers.
+- Tests: 20 native cases. Contract pin for the wheel-DND gate updated to
+  the beta.08 `canOnline` semantics (it still asserted the pre-decouple
+  `canActive` gate). Restores i18n entries dropped by an earlier edit
+  (0x3EE FSD Activation Injection, TX Split, Release Online Update,
+  Double-Stalk Burst) — the English UI showed raw keys for those.
+
 ## [6.1.0-beta.09] - 2026-11-24
 
 ### Right-wheel press: revert to the field-stable EDGE + episode semantics
