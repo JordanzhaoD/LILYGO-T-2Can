@@ -1136,6 +1136,18 @@ static void mcpDashOnFrame(const CanFrame &f)
                 dashRightWheelPressCtrl.recordTxResult(ok, static_cast<uint32_t>(now));
                 if (ok)
                     txCount++;
+                // v3.3 click shape: a press frame alone reads as a HELD
+                // button (and pops the center-button menu). A physical click
+                // is press + released frame back to back, so emit the
+                // release right behind the press. recordTxResult() dropped
+                // it if the press failed.
+                uint8_t release[8];
+                if (dashRightWheelPressCtrl.popRelease(release, static_cast<uint32_t>(now)))
+                {
+                    memcpy(out.data, release, 8);
+                    if (appDriver->send(out))
+                        txCount++;
+                }
             }
         }
     }
@@ -3202,12 +3214,37 @@ static void handleStatus()
         j += n.handsState;
         j += R"JSON(,"pressed":)JSON";
         j += n.pressed;
+        j += R"JSON(,"released":)JSON";
+        j += n.released;
         j += R"JSON(,"txFail":)JSON";
         j += n.txFail;
         j += R"JSON(,"echoSuppressed":)JSON";
         j += n.echoSuppressed;
+        j += R"JSON(,"actionFrameSkipped":)JSON";
+        j += n.actionFrameSkipped;
         j += R"JSON(,"disarmHeals":)JSON";
         j += n.disarmHeals;
+        // Status-grid observability (same contract shape as wheelDndDiag).
+        j += R"JSON(,"warningActive":)JSON";
+        j += n.warningActive ? "true" : "false";
+        j += R"JSON(,"apActive":)JSON";
+        j += n.apActive ? "true" : "false";
+        j += R"JSON(,"warningEpisodes":)JSON";
+        j += n.warningEpisodes;
+        j += R"JSON(,"pressesThisEpisode":)JSON";
+        j += n.pressesThisEpisode;
+        j += R"JSON(,"maxPressesPerEpisode":)JSON";
+        j += DashLegacyWheel045Press::kMaxPressesPerEpisode;
+        j += R"JSON(,"sequenceState":")JSON";
+        j += n.sequenceState;
+        j += R"JSON(","native045Seen":)JSON";
+        j += n.native045Seen ? "true" : "false";
+        j += R"JSON(,"native045AgeMs":)JSON";
+        j += n.native045Seen ? static_cast<unsigned long>(now - n.native045Ms) : 0;
+        j += R"JSON(,"nativeCounter":)JSON";
+        j += n.nativeCounter;
+        j += R"JSON(,"dasStatusAgeMs":)JSON";
+        j += n.dasStatusMs != 0 ? static_cast<unsigned long>(now - n.dasStatusMs) : 0;
         j += R"JSON(,"blockedReason":")JSON";
         j += n.blockedReason;
         j += R"JSON("})JSON";

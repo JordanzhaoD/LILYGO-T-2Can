@@ -1334,10 +1334,19 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   </div>
   <div class="setting-row">
     <div>
-      <div class="setting-name"><span data-i18n="右滚轮按压免打扰 ">右滚轮按压免打扰 </span><span class="exp-badge" data-i18n="实车路径">实车路径</span></div>
-      <div class="setting-desc" data-i18n="NAG 提醒时合成右滚轮按压帧（0x045 开关字 bit4）消除提示；骑原生帧 1:1 跟发、续 counter+重算 CRC。与下方左滚轮免打扰并行、互让路，可单独开启；实验功能默认关">NAG 提醒时合成右滚轮按压帧（0x045 开关字 bit4）消除提示；骑原生帧 1:1 跟发、续 counter+重算 CRC。与下方左滚轮免打扰并行、互让路，可单独开启；实验功能默认关</div>
+      <div class="setting-name"><span data-i18n="右滚轮按压免打扰 ">右滚轮按压免打扰 </span><span class="exp-badge" data-i18n="实验">实验</span></div>
+      <div class="setting-desc" data-i18n="NAG 提醒时合成右滚轮中央键点击（0x045 开关字 bit4，按下帧+松开帧）；每轮提醒最多 2 次点击，提示消除即停。按压会触发车机中央键菜单，是否能避免尚待实车验证。与下方左滚轮免打扰并行、可单独开启；默认关">NAG 提醒时合成右滚轮中央键点击（0x045 开关字 bit4，按下帧+松开帧）；每轮提醒最多 2 次点击，提示消除即停。按压会触发车机中央键菜单，是否能避免尚待实车验证。与下方左滚轮免打扰并行、可单独开启；默认关</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-right-press-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
+  </div>
+  <div class="diag-grid" style="margin:6px 0 4px">
+    <div class="diag-item"><span class="lbl" data-i18n="告警状态">告警状态</span><span class="v-dim" id="rp-hands-state">--</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="原生 0x045">原生 0x045</span><span class="v-dim" id="rp-native-045" data-i18n="等待">等待</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="状态/本轮点击/上限">状态/本轮点击/上限</span><span class="v-dim" id="rp-sequence-state">idle / 0 / 2</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="按下/松开/发送失败">按下/松开/发送失败</span><span class="v-dim" id="rp-click-counts">0 / 0 / 0</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="回声/动作帧">回声/动作帧</span><span class="v-dim" id="rp-echo-state">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="提醒轮次/自愈">提醒轮次/自愈</span><span class="v-dim" id="rp-episode-state">0 / 0</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="阻断原因">阻断原因</span><span class="v-dim" id="rp-blocked-reason">disabled</span></div>
   </div>
   <div class="setting-row">
     <div>
@@ -2051,7 +2060,7 @@ var I18N={
   '后台流式写入，不阻塞 CAN':'Background streaming write, no CAN blocking','含 Model X CAN1 0x045 滚轮 RX/TX 及只读网关别名 0x238 / 0x292':'Model X CAN1 0x045 wheel RX/TX plus read-only gateway aliases 0x238 / 0x292','启动保存: ':'Boot save: ',
   '启用':'Enable','启用双拨触发':'Enable Double-Stalk Trigger','启用后按配置执行多次拨杆注入':'When enabled, runs multi-shot stalk injection per config',
   '启用自动偏移':'Enable Auto Offset','告警':'Alert','告警状态':'Alert Status',
-  '回声/镜像':'Echo/Mirror','固件按当前 speedLimit 自动选择偏移比例，适合日常使用':'Firmware picks the offset ratio from the current speedLimit — good for daily use','固件版本':'Firmware Version',
+  '回声/镜像':'Echo/Mirror','状态/本轮点击/上限':'State/Clicks This Round/Cap','按下/松开/发送失败':'Press/Release/TX Fail','回声/动作帧':'Echo/Action Frames','提醒轮次/自愈':'Warning Rounds/Heals','已解除':'Disarmed','固件按当前 speedLimit 自动选择偏移比例，适合日常使用':'Firmware picks the offset ratio from the current speedLimit — good for daily use','固件版本':'Firmware Version',
   '固定':'Fixed','固定加值，范围 0-33 km/h':'Fixed add-on, 0-33 km/h','固定百分比':'Fixed Percent',
   '均衡响应':'Balanced Response','城市快速路':'Urban Expressway','城市快速路 cp2':'Urban Expressway cp2',
   '基于车速和驾驶模式的自动换挡策略（示意图）':'Speed- and style-based auto shift strategy (illustrative)','填写每个速度区间的偏移百分比，范围 0-50%':'Set offset percent per speed range, 0-50%','声音警告抑制':'Chime Suppression',
@@ -2146,7 +2155,7 @@ var I18N={
   '删除':'Delete','暂无插件。新安装默认禁用。':'No plugins yet. New installs start disabled.','目标ID: ':'Target ID: ',
   '详情':'Details','8.3.6防甩机制 ':'8.3.6 Anti-Jerk ','AP/EAP 兼容 ':'AP/EAP Compat ',
   'CAN2 ID 列表 ':'CAN2 ID List ','CAN2 控制 ':'CAN2 Control ','FSD-V14 模式 ':'FSD-V14 Mode ',
-  'Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','右滚轮按压免打扰 ':'Right-Wheel Press DND ','实车路径':'Field-verified','NAG 提醒时合成右滚轮按压帧（0x045 开关字 bit4）消除提示；骑原生帧 1:1 跟发、续 counter+重算 CRC。与下方左滚轮免打扰并行、互让路，可单独开启；实验功能默认关':'On a NAG warning, synthesize a right-wheel PRESS frame (0x045 switch word bit4) to clear it; rides the native frame 1:1, counter+1, CRC recomputed. Runs in parallel with the left-wheel DND below with mutual yield; experimental, default OFF.','0x3EE FSD 激活注入':'0x3EE FSD Activation Injection','TX 分路':'TX Split','默认开。关闭后本机 0x3EE 激活注入停发（含防甩程序——其 0x3EE 写入同样受本开关管辖），配合车辆原生激活使用；速度智能偏移继续经 0x3EE 纯速度通道写入速度字段、不碰激活位，不受影响；左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。':'Default ON. OFF stops the device 0x3EE activation injection (anti-jerk included — its 0x3EE writes answer to this switch too) for native-activation driving; the smart speed offset keeps flowing through the pure-speed 0x3EE channel (speed field only, activation bits untouched) and the wheel DND is unaffected. Same switch as the home-page master toggle — two entries, one state.','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
+  'Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','右滚轮按压免打扰 ':'Right-Wheel Press DND ','实车路径':'Field-verified','NAG 提醒时合成右滚轮中央键点击（0x045 开关字 bit4，按下帧+松开帧）；每轮提醒最多 2 次点击，提示消除即停。按压会触发车机中央键菜单，是否能避免尚待实车验证。与下方左滚轮免打扰并行、可单独开启；默认关':'On a NAG warning, synthesize a right-wheel CENTER-button click (0x045 switch word bit4, press frame + release frame); at most 2 clicks per warning, stops as soon as the prompt clears. The press triggers the center-button menu on the head unit; whether this click shape avoids it is still to be field-verified. Runs in parallel with the left-wheel DND below and can be enabled on its own; default OFF','0x3EE FSD 激活注入':'0x3EE FSD Activation Injection','TX 分路':'TX Split','默认开。关闭后本机 0x3EE 激活注入停发（含防甩程序——其 0x3EE 写入同样受本开关管辖），配合车辆原生激活使用；速度智能偏移继续经 0x3EE 纯速度通道写入速度字段、不碰激活位，不受影响；左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。':'Default ON. OFF stops the device 0x3EE activation injection (anti-jerk included — its 0x3EE writes answer to this switch too) for native-activation driving; the smart speed offset keeps flowing through the pure-speed 0x3EE channel (speed field only, activation bits untouched) and the wheel DND is unaffected. Same switch as the home-page master toggle — two entries, one state.','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
   '忽略车辆 OTA 守卫 ':'Ignore Vehicle OTA Guard ','最大性能 ':'Max Performance ','爆闪开关 ':'Burst Switch ',
   '自动换挡 ':'Auto Shift ','速度免打扰 ':'Speed DND ','限速覆盖 ':'Limit Override ',
   '未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。':'Unknown / invalid / SNA gears block injection by default; AP disconnect resets gate timing instantly. Enforced server-side in C++ (handlers.h) — the web UI cannot bypass it.',
@@ -3922,6 +3931,14 @@ function renderLegacyTruth(d){
   set('wheel-counter-state',`${wd.expectedCounterDuplicates||0} / ${wd.counterConflicts||0}`);
   set('wheel-echo-state',`${wd.ownEchoRx||0} / ${wd.gatewayMirrorRx||0}`);
   set('wheel-blocked-reason',wd.blockedReason||'--');
+  const rp=d.rightWheelPressDiag||{};
+  set('rp-hands-state',(rp.dasStatusAgeMs!==undefined&&rp.dasStatusAgeMs!==null)?`AP${rp.apState??'--'} · ${T('手部')}${rp.handsState??'--'} · ${rp.warningActive?T('告警'):T('等待')}${rp.disarmed?' · '+T('已解除'):''}`:T('等待 0x399'));
+  set('rp-native-045',rp.native045Seen?`${rp.native045AgeMs} ms · C${Number(rp.nativeCounter||0).toString(16).toUpperCase()}`:T('等待 CAN1 0x045'));
+  set('rp-sequence-state',`${rp.sequenceState||'idle'} / ${rp.pressesThisEpisode||0} / ${rp.maxPressesPerEpisode??2}`);
+  set('rp-click-counts',`${rp.pressed||0} / ${rp.released||0} / ${rp.txFail||0}`);
+  set('rp-echo-state',`${rp.echoSuppressed||0} / ${rp.actionFrameSkipped||0}`);
+  set('rp-episode-state',`${rp.warningEpisodes||0} / ${rp.disarmHeals||0}`);
+  set('rp-blocked-reason',rp.blockedReason||'--');
 }
 
 // ── Temp from system_status ────────────────────────────────

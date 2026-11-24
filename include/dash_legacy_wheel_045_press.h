@@ -1,45 +1,56 @@
-// dash_legacy_wheel_045_press.h — right-wheel PRESS DND (TX split v3.2).
+// dash_legacy_wheel_045_press.h — right-wheel CENTER-press DND (v3.3).
 //
-// Field basis (2026-11-24, Jordan's on-road captures): physically pressing
-// the RIGHT scroll wheel's LEFT side (side button B) clears a hands-on NAG.
-// On the wire this is the switch-word (b4 | b5<<8) bit 5 = 0x0020, i.e.
-// data[4] |= 0x20 (99 hits in the stationary 60 s capture). The left-wheel
-// DND rides the same native 0x045 stream with a balanced +/- tick pair
-// (bits 6..9); the press path is a PARALLEL sibling engine that rides the
-// side-button press bit instead.
+// v3.3 — FIELD VERDICT ACROSS beta.05-09 (23 captures, 2026-11-23/24):
 //
-// v3.2 — REVERT the [2,7] level-frenzy to the field-stable EDGE + episode
-// semantics. Field verdict on beta.08: gating on hands==2 (NOT_DETECTED)
-// is WRONG. hands==2 is the persistent "hands not on wheel" baseline while
-// AP is engaged — it is NOT a prompt. It sits in 2 for the entire drive and
-// jitters 1<->2 at 9-50 ms (detector noise), not NAG transitions. Gating on
-// it made the engine blast a press frame every idle beat for the WHOLE
-// engagement (96.9 s uninterrupted in capture 221001, 853 frames), which
-// the vehicle read as repeated-abuse of the side button and escalated to a
-// strike-out (ap 6->8->9->1->14, steering-assist disabled in 221005).
+//   press signal        version   warning episodes   result
+//   ------------------  --------  -----------------  ----------------------------
+//   CENTER  0x0010      beta.07   6                  6/6 CLEARED (2 with a
+//                                                     SINGLE frame, 9-26 ms)
+//   SIDE    0x0020      beta.09   8                  6 not cleared (warning
+//                                                     lasted 6-15 s), 2 were
+//                                                     self-clearing blips
+//   SIDE, hands=2 gate  beta.08   -                  96.9 s / 853-frame blast
+//                                                     -> strike-out
 //
-// The correct semantics — the ones the left-wheel DND has held stable for
-// six weeks — are: wait for the actual PROMPT. The prompt is the visual /
-// chime ladder, hands==3 (VISUAL) upward. So:
-//   - warning window is [3,6] ∪ [9,10] (identical to the left-wheel DND);
-//   - EDGE trigger: only a warning ENTRY (was not warning, now warning)
-//     starts an episode — a sustained hands==3 does NOT re-fire;
-//   - episode-limited: at most kMaxPressesPerEpisode press frames per
-//     episode, each riding the next fresh idle native beat, one beat apart;
-//   - clear stops immediately (no debounce — the debounce existed only to
-//     paper over the wrong [2,7] level window).
+// So the CENTER bit is the only field-verified press signal; the SIDE bit
+// is retired. Both engines share one frame skeleton, so the difference is
+// the button bit alone.
+//
+// The cost of a center press is a HEAD-UNIT side effect: the button is
+// bound to a menu ("phone not connected" card), and it popped on EVERY
+// press in the field. The head unit reads a lone press frame as a HELD
+// button (the engine used to wait ~100 ms for the car's own next native
+// frame to release it). A physical press is always followed by a released
+// (idle) frame. v3.3 emits one too: each click = press frame + immediate
+// RELEASE frame — the shortest click the bus can express. Whether that is
+// short enough for the head unit not to open the menu is the open field
+// question this build exists to answer.
+//
+// Trigger semantics are unchanged from v3.2 (field-stable, same as the
+// left-wheel DND): the PROMPT ladder hands in [3,6] ∪ [9,10] only, EDGE
+// entry opens an episode, clear stops at once. hands==2 is the "hands off
+// wheel" baseline and never triggers.
+//
+// Cadence: one click per fresh idle native beat, the press and its release
+// back to back, then the engine waits for the NEXT fresh idle native frame
+// before it may click again. At most kMaxPressesPerEpisode clicks per
+// warning episode (two: beta.07 cleared with a single frame twice, so the
+// second is the retry, and two clicks stay far below the beta.08 blast).
 //
 // Unlike the left-wheel tick (which shifts volume and needs a compensating
-// -1), a press has no cumulative side effect, so there is no balancing
-// pair — only a bounded number of presses per episode.
+// -1), a click has no cumulative side effect, so there is no balancing
+// pair — only a bounded number of clicks per episode.
 //
 // Safety gates retained (same discipline as the left-wheel DND):
 //   - idle-only riding (a frame carrying a wheel/stalk action payload is
 //     never used as a press source);
 //   - own-echo suppression (a press frame echoing back is not chained);
-//   - sibling recognition + beat-generational yield with the left-wheel DND;
-//   - TX-failure disarm self-heal (800 ms, 3-per-60 s).
-// Default OFF, fresh NVS key rwp.
+//   - sibling recognition + beat-generational yield with the left-wheel DND
+//     (the yield now holds until the first idle native frame AFTER the
+//     release);
+//   - TX-failure disarm self-heal (800 ms, 3-per-60 s); a press whose TX
+//     failed never reached the bus, so its release is dropped.
+// Default OFF, NVS key rwp.
 
 #pragma once
 
@@ -59,28 +70,43 @@ struct DashLegacyWheel045PressDiag
     uint8_t handsState = 0;
     uint8_t pressesThisEpisode = 0;
     uint32_t warningEpisodes = 0;
-    uint32_t pressed = 0;
+    uint32_t pressed = 0;      // press frames the bus accepted
+    uint32_t released = 0;     // release frames handed to the wiring
     uint32_t txFail = 0;
     uint32_t echoSuppressed = 0;
     uint32_t actionFrameSkipped = 0;
     uint32_t disarmHeals = 0;
     uint8_t consecutiveTxFailures = 0;
+    // Status-grid observability (mirrors DashLegacyWheel045Diag): the last
+    // native beat and the last 0x399 the engine acted on.
+    bool native045Seen = false;
+    uint32_t native045Ms = 0;
+    uint8_t nativeCounter = 0;
+    uint32_t dasStatusMs = 0;
+    const char *sequenceState = "idle";
     const char *blockedReason = "disabled";
 };
 
 struct DashLegacyWheel045Press
 {
     static constexpr uint32_t kCanId = 0x045;
-    // The side-button (left-press) bit in the switch word (b4 | b5<<8):
-    // bit 5 -> data[4] 0x20.
-    static constexpr uint16_t kPressMask = 0x0020;
+    // The CENTER button bit in the switch word (b4 | b5<<8): bit 4 ->
+    // data[4] 0x10. The only field-verified press signal (beta.07, 6/6).
+    static constexpr uint16_t kPressMask = 0x0010;
     // Any wheel/stalk action bits that make a frame non-idle (same mask the
     // left-wheel DND uses to reject action frames).
     static constexpr uint16_t kAnyWheelMask = 0x3FFF;
-    // Episode budget: at most this many press frames per warning episode.
-    // Mirrors the left-wheel DND's kMaxPairsPerEpisode shape — a bounded
-    // intervention, never a sustained blast.
-    static constexpr uint8_t kMaxPressesPerEpisode = 3;
+    // Episode budget: at most this many CLICKS (press + release) per
+    // warning episode. beta.07 cleared twice with a single frame; the
+    // second click is the retry. A bounded intervention, never a blast.
+    static constexpr uint8_t kMaxPressesPerEpisode = 2;
+    // Minimum spacing between the end of one click (its release) and the
+    // next press. Native 0x045 idles arrive ~100 ms apart on this vehicle,
+    // so 150 ms guarantees the bus carried at least one released native
+    // frame between two clicks — the head unit never sees a held button
+    // across them. Time-based as well as beat-based: a burst of native
+    // frames closer than that must not let two clicks stack.
+    static constexpr uint32_t kMinClickSpacingMs = 150;
     // A press frame is owned by the engine for one beat after it is sent;
     // the left-wheel DND yields its slot this long (beat-generational, the
     // actual release is the next fresh idle native frame — see
@@ -149,11 +175,31 @@ struct DashLegacyWheel045Press
         return lastPressMs_ != 0 && nowMs - lastPressMs_ < kCloneInFlightMs;
     }
 
-    // Beat ownership for the left-wheel DND yield gate: the press frame owns
-    // the beat until a FRESH idle native frame has been observed after it.
+    // Beat ownership for the left-wheel DND yield gate: the click owns the
+    // beat until a FRESH idle native frame has been observed after its last
+    // frame. While a release is still owed the click is not finished, so
+    // the slot is owned regardless of native traffic.
     bool siblingOwnsBeat(uint32_t /*nowMs*/) const
     {
-        return lastPressMs_ != 0 && lastIdleNativeMs_ <= lastPressMs_;
+        if (releasePending_)
+            return true;
+        return lastClickEndMs_ != 0 && lastIdleNativeMs_ <= lastClickEndMs_;
+    }
+
+    // True between a press frame and the moment its release is popped.
+    bool releasePending() const { return releasePending_; }
+
+    // Hands the owed release frame to the caller (the wiring sends it right
+    // after the press frame). Returns false when nothing is owed.
+    bool popRelease(uint8_t out[8], uint32_t nowMs)
+    {
+        if (!releasePending_)
+            return false;
+        memcpy(out, releaseFrame_, 8);
+        releasePending_ = false;
+        lastClickEndMs_ = nowMs;
+        diag.released++;
+        return true;
     }
 
     // EDGE trigger, identical to the left-wheel DND's onDasStatus episode
@@ -170,6 +216,7 @@ struct DashLegacyWheel045Press
         diag.handsState = handsState;
         diag.apActive = apActive_;
         diag.warningActive = warningActive_;
+        diag.dasStatusMs = nowMs;
 
         if (!enabled_ || !runtimeAllowed_ || disarmed_ || !apActive_)
         {
@@ -186,6 +233,7 @@ struct DashLegacyWheel045Press
             diag.pressesThisEpisode = 0;
             diag.warningEpisodes++;
             diag.blockedReason = "waiting_native";
+            diag.sequenceState = "armed";
         }
         else if (!warningActive_ && wasWarning)
         {
@@ -232,9 +280,21 @@ struct DashLegacyWheel045Press
         }
         // A fresh idle native beat: this is what releases the yield slot.
         lastIdleNativeMs_ = nowMs;
+        diag.native045Seen = true;
+        diag.native045Ms = nowMs;
+        diag.nativeCounter = static_cast<uint8_t>((data[6] >> 4) & 0x0F);
         if (!episodeActive_ || !warningActive_ || !apActive_)
         {
             diag.blockedReason = "idle";
+            return false;
+        }
+        if (dlc < 8)
+            return false;
+        if (releasePending_)
+        {
+            // The previous press has not been released yet: never stack a
+            // second press on a held button.
+            diag.blockedReason = "release_pending";
             return false;
         }
         if (pressesThisEpisode_ >= kMaxPressesPerEpisode)
@@ -242,21 +302,43 @@ struct DashLegacyWheel045Press
             // Episode budget exhausted: stop intervening for this warning.
             episodeActive_ = false;
             diag.blockedReason = "episode_limit";
+            diag.sequenceState = "episode_limit";
             return false;
         }
-        if (dlc < 8)
+        if (lastClickEndMs_ != 0 &&
+            (lastIdleNativeMs_ <= lastClickEndMs_ || nowMs - lastClickEndMs_ < kMinClickSpacingMs))
+        {
+            // Spacing: the click before this one has not yet been followed by
+            // a fresh idle native frame, or not enough time has passed.
+            diag.blockedReason = "spacing";
             return false;
+        }
 
+        // PRESS frame: the native idle frame with the center button bit set,
+        // counter +1, CRC recomputed.
         memcpy(out, data, 8);
-        out[4] = static_cast<uint8_t>(out[4] | 0x20U); // side-button press bit (switch word bit5)
-        out[6] = static_cast<uint8_t>(((out[6] & 0x0FU)) |
+        out[4] = static_cast<uint8_t>(out[4] | 0x10U); // center button (switch word bit4)
+        out[6] = static_cast<uint8_t>((out[6] & 0x0FU) |
                                       ((((out[6] >> 4) + 1U) & 0x0FU) << 4));
         out[7] = crc8J1850(out, 7);
+
+        // RELEASE frame, owed immediately after: the same idle frame, no
+        // button bits, counter +1 again, CRC recomputed. This is what a
+        // physical click looks like on the wire.
+        memcpy(releaseFrame_, data, 8);
+        releaseFrame_[6] = static_cast<uint8_t>((releaseFrame_[6] & 0x0FU) |
+                                                ((((releaseFrame_[6] >> 4) + 2U) & 0x0FU) << 4));
+        releaseFrame_[7] = crc8J1850(releaseFrame_, 7);
+        releasePending_ = true;
+
         lastPressMs_ = nowMs;
         pressesThisEpisode_++;
         diag.pressesThisEpisode = pressesThisEpisode_;
         diag.pressed++;
         diag.blockedReason = "armed";
+        diag.sequenceState = pressesThisEpisode_ >= kMaxPressesPerEpisode
+                                 ? "pressed_last"
+                                 : "pressed";
         return true;
     }
 
@@ -265,6 +347,9 @@ struct DashLegacyWheel045Press
         if (!ok)
         {
             diag.txFail++;
+            // A press that failed never reached the bus: nothing is held
+            // down, so its release must not go out on its own.
+            releasePending_ = false;
             if (consecutiveTxFailures_ < 0xFF)
                 consecutiveTxFailures_++;
             diag.consecutiveTxFailures = consecutiveTxFailures_;
@@ -321,6 +406,11 @@ private:
         warningActive_ = false;
         apActive_ = false;
         pressesThisEpisode_ = 0;
+        // The episode is over (or the engine went down): a release that was
+        // still owed is dropped — the press it belonged to may not have
+        // been sent either, and the caller must never emit a lone release.
+        releasePending_ = false;
+        diag.sequenceState = "idle";
         diag.warningActive = false;
         diag.apActive = false;
         diag.pressesThisEpisode = 0;
@@ -334,7 +424,12 @@ private:
     bool episodeActive_ = false;
     uint8_t pressesThisEpisode_ = 0;
     uint32_t lastPressMs_ = 0;
+    // Timestamp of the click's last frame (press or release, whichever was
+    // sent last); the next click waits for an idle native frame after it.
+    uint32_t lastClickEndMs_ = 0;
     uint32_t lastIdleNativeMs_ = 0;
+    bool releasePending_ = false;
+    uint8_t releaseFrame_[8] = {};
     uint32_t disarmedAtMs_ = 0;
     uint8_t consecutiveTxFailures_ = 0;
     uint8_t healsThisWindow_ = 0;

@@ -1544,11 +1544,18 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("t2canWheelDndTick();", can_task.group(0))
 
     def test_phase3_wheel_dnd_has_independent_legacy_gate(self) -> None:
-        """Legacy 0x045 DND requires its own switch, Legacy, TWAI and no OTA."""
+        """Legacy 0x045 DND requires its own switch, Legacy, TWAI and no OTA.
+
+        6.1.0-beta.08: the gate is bus connectivity (canOnline), NOT the FSD
+        injection master switch (canActive) — the DND rides the native 0x045
+        stream and must keep working with FSD injection switched off (field
+        report: the DND died with the master switch off).
+        """
         tick = re.search(r"static void t2canWheelDndTick\(\).*?\n}\n", self.main, re.S)
         self.assertIsNotNone(tick)
         body = tick.group(0)
-        self.assertIn("!canActive || !dashDndVolume", body)
+        self.assertIn("!canOnline || !dashDndVolume", body)
+        self.assertNotIn("!canActive || !dashDndVolume", body)
         self.assertNotIn("dashDefenseEnabled", body)
         self.assertIn("!dashLegacyHandlerActive()", body)
         self.assertIn("vehicleOtaActive", body)
