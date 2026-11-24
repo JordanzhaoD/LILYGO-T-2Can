@@ -1,4 +1,27 @@
-## 2026-11-24 · bit27 nagKill 电平型 1:1 跟随 · 6.1.0-beta.06（当前最新）
+## 2026-11-24 · 右滚轮按压免打扰 · 6.1.0-beta.07（当前最新）
+
+**实车判定**：beta.06 bit27 状态机制免打扰开启后车辆大量报警无法使用，路线整体否决。新方向：在**实车稳定的左滚轮免打扰**基础上开发并行机制——**NAG 提醒时合成右滚轮按压帧消除提示**。
+
+**抓包标定（三份实车 CSV 交叉验证）**：右滚轮按压 = 0x045 开关字（b4|b5<<8）**bit4 = data[4]|=0x10**；右滚轮侧键B=bit5(0x20)；左滚轮按压=bit1(0x02)。与 `docs/LEGACY-0X045-WHEEL-VEHICLE-ANALYSIS` 权威位表一致。
+
+**v3 实现（TDD RED→GREEN）**：
+- 新引擎 `dash_legacy_wheel_045_press.h`：**电平型**——警告激活（hands[3,6]|[9,10]）期间，每个原生 idle 0x045 克隆置按压位 bit4、counter+1、CRC，骑原生帧 1:1 跟发；警告清除即停。按压无音量累积副作用，**无需反向平衡对**（与左滚轮 tick 不同）。
+- **bit27 状态机制彻底删除**：引擎/测试/NVS nk27//status nagKillDiag//defense_config nag_kill/UI 开关全移除。
+- 与左滚轮 DND **并行互让路**（beat-generational yield，独立开关独立诊断）。
+- UI 新增「右滚轮按压免打扰」开关（实车路径徽标）；NVS `rwp`；/status `rightWheelPressDiag`；/defense_config `right_wheel_press`。
+- 测试 9/9：按压编码、电平语义、警告窗、echo 不链、动作帧拒绝、disarm 自愈、beat-yield。
+
+**门禁**：native 全量 **186/186 绿** + ESP 构建 SUCCESS。
+
+**★工具链修复**：ESP 工具链漂移（裸目录 `toolchain-xtensa-esp-elf` 被覆盖成 14.2.0，framework 需 15.2.0）→ 已修复：旧 14.2.0 目录改名 `@14.2.0-backup`，`@15.2.0` 目录 cp -a 为裸目录。
+
+**资产**：`firmware-assets/6.1.0-beta.07_20261124/`，uiBuildId `…-c5e476526276`，latest 三指针已更新。commit：`c5e4765`(代码) + `41fe447`(资产)。
+
+**待办**：①Jordan 车上 OTA 田野验证（右滚轮按压单独验证无红轮为关键闸）②两 commit push 到 origin。
+
+---
+
+## 2026-11-24 · bit27 nagKill 电平型 1:1 跟随 · 6.1.0-beta.06（已被 beta.07 取代）
 
 **断点续接（模型额度中断后恢复）**：田野判定 beta.05 沿型单发已死——单帧 bit27 淹没在 10Hz 原生流里无意义，「方向盘状态有效」声明必须持续覆盖（每个原生帧都跟一帧 bit27 版），与 DND 配对清除、0x3EE offsetOnly 速度写入同构（一切成功路线都是骑原生流、时序与原生同步）。
 
