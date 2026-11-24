@@ -1,4 +1,26 @@
-## 2026-11-24 · 右滚轮按压免打扰 · 6.1.0-beta.07（当前最新）
+## 2026-11-24 · 右滚轮按压修正 + DND 解耦 · 6.1.0-beta.08（当前最新）
+
+**实车 beta.07 反馈两个问题，全修复**：
+
+### 问题1：右滚轮按压"部分有效/偶发失效/出现提示"
+**★重大发现：0x399 hands 警告窗解码错了**。权威 opendbc DBC `DAS_autopilotHandsOnState`：0=NOT_REQD, 1=DETECTED, **2=NOT_DETECTED(NAG初始态)**, 3=VISUAL, 4/5=CHIME, 7=STRUCK_OUT, 8=SUSPENDED。现有 `[3,6]∪[9,10]` 漏掉 hands=2（最常见 NAG 态）。实车 hands 大部分在 2，短暂升 3。
+- **修1 警告窗** → `[2,7]` 全阶梯
+- **修2 按压位** → bit5 0x0020（右滚轮左侧键，停车抓包99次），原 bit4 0x0010 是中键
+- **修3 释放去抖** → 500ms（hands 1↔2 每21-26ms抖动，清除即停导致 NAG 反弹）
+
+### 问题2：免打扰机制被 FSD 注入总开关错误耦合
+免打扰引擎（左右滚轮 DND）gate 链错误依赖 `canActive`（FSD 注入总开关），总开关关→免打扰失效，需"先开后关"假动作。
+- **修4** → gate `canActive`→`canOnline`（总线连通），三处：main.cpp 右滚轮 tick(544)/左滚轮 tick(568)、mcp2515_dashboard.h setup(1716)。符合原设计注释"wheel DND unaffected — independent tick"。
+
+**门禁**：native 189/189 + ESP 构建 SUCCESS（工具链 15.2.0 已修）。
+
+**资产**：`firmware-assets/6.1.0-beta.08_20261124/`，uiBuildId `…-228a624831b2`。commit：`13d20c6`(警告窗/按压位/去抖) + `228a624`(DND解耦) + `c4320aa`(资产)。
+
+**待办**：①Jordan 车上 OTA 验证（右滚轮按压单独验证 + FSD总开关关时免打扰照常）②push origin。
+
+---
+
+## 2026-11-24 · 右滚轮按压免打扰 · 6.1.0-beta.07（已被 beta.08 取代）
 
 **实车判定**：beta.06 bit27 状态机制免打扰开启后车辆大量报警无法使用，路线整体否决。新方向：在**实车稳定的左滚轮免打扰**基础上开发并行机制——**NAG 提醒时合成右滚轮按压帧消除提示**。
 
