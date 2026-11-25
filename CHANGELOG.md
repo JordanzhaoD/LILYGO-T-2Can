@@ -1,5 +1,54 @@
 # Changelog
 
+## [6.1.0-beta.11] - 2026-11-25
+
+### Right-wheel click DND: independent-review fixes
+
+An independent review of beta.10 found one Critical and five Important
+defects in the center-click engine. Right-wheel switch OFF (the default)
+behaves exactly like beta.10; everything below applies once it is ON.
+
+- **Critical — no global TX bound.** The "2 clicks per episode" budget was
+  refilled on every warning ENTRY. With hands flickering 2<->3, or any gate
+  dropping and re-raising while hands stayed in the window, the engine
+  clicked at the spacing rate for as long as it lasted (the review
+  reproduced about 10 frames/s — above the beta.08 853-frame blast). A new
+  episode now opens only after the warning has been ABSENT for 1.5 s
+  (`kWarningSettleMs`). One rule, applied to hands, gates and the user
+  switch alike.
+- **Click shape: the release rides the next native frame.** beta.10 sent
+  the release back to back with the press (counter +2), which put a
+  counter regression on the bus (c, c+1, c+2, c+1) — a shape this device
+  had never sent. The release is now the next idle native frame (counter
+  +1 on it), so the button is held for about one native interval (~100 ms).
+  The bus sequence is native, press, native, release.
+- **Release TX result is reported back.** `released` counts only frames the
+  bus accepted. A failed release leaves the button held, so it is re-armed
+  for the next beat and counts toward the disarm; a failed press refunds
+  the click to the episode budget. `txCount` is no longer counted twice.
+- **Status grid.** `/status` never emitted `apState`, so the AP state showed
+  `AP--`; fixed. The block reason is now owned by the 0x399 path
+  (`warning_clear`, `settling`, `ap_inactive`, gate reasons) and only
+  refined inside an open episode (`spacing`, `release_pending`,
+  `episode_limit`, `armed`), so it is no longer overwritten one beat later.
+  `episode_limit` stays until the episode ends. The engine keeps observing
+  the bus while blocked, so a real warning shows as a warning.
+- **One writer for the runtime permission.** Saving any settings page used
+  to re-grant the permission from the web task with a weaker condition
+  (no OTA / abort-guard / jitter / TWAI gates). The CAN-task tick is now
+  the single owner of the full gate chain.
+- **Left-wheel DND can no longer be starved.** If a gate dropped right
+  after a click, the right-wheel engine kept owning the yield slot until
+  reboot. Losing the permission now ends the action state, and the engine
+  observes every beat the left-wheel engine observes (CH view included,
+  observe-only).
+- `right_wheel_press` was missing from the `/defense_config` argument
+  list (a POST with only that parameter was ignored).
+- Tests: native 175/175. The left-wheel coordination tests now use the
+  production bindings with both engines live (resume after a click, not
+  starved when gated, CH view releases without emitting). New contract
+  test: every key the status grid reads must be emitted by `/status`.
+
 ## [6.1.0-beta.10] - 2026-11-25
 
 ### Right-wheel press: back to the CENTER button, as a click
