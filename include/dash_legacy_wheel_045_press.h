@@ -1,3 +1,23 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// FROZEN — Jordan, 2026-11-26. Do not change this engine's behaviour.
+//
+// Field-verified on 6.1.0-beta.12 (75-minute drive, FSD injection OFF: 21
+// warning rounds, 126 press frames, 0 TX failures): this right-wheel held
+// press and the left-wheel DND (dash_legacy_wheel_045_dnd.h) both ran
+// stable. The same freeze covers their runtime gates in src/main.cpp
+// (t2canRightWheelPressTick / t2canWheelDndTick) and the TX split that lets
+// them run with the FSD master switch off. Jordan's verdict: "目前基本完美".
+//
+// Known and accepted: the head-unit center-button menu pops on a press and
+// goes away by itself after 3-4 s. Every round uses the full 6-frame cap;
+// if a nag ever fails to clear, the cap (not the trigger logic) is the first
+// thing to revisit — with Jordan's OK.
+//
+// Changing anything here (behaviour, timing constants, gates) needs Jordan
+// to lift the freeze explicitly. A bug fix is still a change: report it,
+// do not apply it.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // dash_legacy_wheel_045_press.h — right-wheel CENTER-press DND (v3.4).
 //
 // v3.4 (6.1.0-beta.12, 2026-11-26) — BOUNDED LEVEL PRESS.

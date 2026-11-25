@@ -1,3 +1,18 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// FROZEN — Jordan, 2026-11-26. Do not change this engine's behaviour.
+//
+// Field-verified on 6.1.0-beta.12 (75-minute drive, FSD injection OFF): this
+// left-wheel DND and the right-wheel held press
+// (dash_legacy_wheel_045_press.h) both ran stable. The same freeze covers
+// their runtime gates in src/main.cpp (t2canWheelDndTick /
+// t2canRightWheelPressTick) and the TX split that lets them run with the FSD
+// master switch off. Jordan's verdict: "目前基本完美".
+//
+// Changing anything here (behaviour, timing constants, gates) needs Jordan
+// to lift the freeze explicitly. A bug fix is still a change: report it,
+// do not apply it.
+// ─────────────────────────────────────────────────────────────────────────────
+
 #pragma once
 
 #include <cstdint>
