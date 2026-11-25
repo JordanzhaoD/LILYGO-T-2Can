@@ -17,6 +17,9 @@
 4. **i18n 字典行替换只做精确子串、替换后比对键集合**（这次又差点踩：数出 3 次而非 2 次，先定位再动）。
 5. **脚本化改测试连续失败两次就停手换 Read+Edit**——这次又绕了一圈。
 
+**推广素材（2026-11-26 备好，Jordan 定"先不发"）**：四件在 Desktop `share-t2can-6.1.0-beta.12-*`（copy.md 三版+portrait/wide/square 三图，逐张目检通过）。Jordan 拍板：**双卖点并列**（右滚轮按住 + 闸门状态横条）；右滚轮**如实提及不当作卖点**（文案与海报都写明"按住会弹车机菜单，优化中"+"实车验证中"）。口径纪律：beta.12 零实车数据→不写"已验证"；**"beta.07 6/6"不写**（该比率已被更正，只写"按住形态在实车清除过持续型提示"）；不写"左滚轮已恢复"（未验证，只写"不再受该标志拦截"）。海报上的数字与状态栏文案已逐项对照固件源码（上限 6/稳定 1.5s/172/两条横条/四种状态=固件原文）。
+★出图坑：**Playwright MCP 连接超时时，用本机 Chrome 无头模式替代**（`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu --hide-scrollbars --force-device-scale-factor=1 --window-size=W,H --virtual-time-budget=1500 --screenshot=out.png "url?only=<card>"`）；三张卡在同一页面时无头 Chrome 只截视口，需加 `?only=` 参数隐藏其余卡。square 用两节并排会下半空旷（内容仅到 60%）→改上下堆叠+状态栏竖排才填到约 82%。
+
 **待办**：①Jordan 车上 OTA beta.12——先只开左轮看横条是否绿色+清除；再开右轮看持续型提醒是否清除（会弹菜单）；无红轮。②若左轮仍不动，横条会写明闸门（剩「CAN 发送器未就绪」「连续发送失败」=硬件发送问题）。③菜单弹出问题未解决。④Desktop 的 beta.09 宣发四件须作废。
 
 ---
