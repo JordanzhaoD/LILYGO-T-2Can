@@ -341,10 +341,11 @@ void test_dnd_ignores_right_press_sibling_frames()
     TEST_ASSERT_EQUAL(DashLegacyWheel045State::WaitingIdleAfterPositive, dnd.diag.state);
 }
 
-// Review I5: while a click is in progress (press sent, release not yet out)
-// the left-wheel DND must yield; once the release has gone out AND a native
-// frame after it has been seen, it must transmit again — never starve.
-void test_dnd_yields_during_click_then_resumes()
+// Both engines ON (2026-11-26 level press): the right-wheel engine owns
+// EXACTLY the beats on which it emits a press frame. The next idle native
+// beat reports the button released and frees the beat, so the two engines
+// never transmit on one beat and the left DND is never starved.
+void test_dnd_yields_on_press_beats_then_resumes()
 {
     DashLegacyWheel045Dnd dnd;
     DashLegacyWheel045Press press;
@@ -354,72 +355,66 @@ void test_dnd_yields_during_click_then_resumes()
     press.setRuntimeAllowed(true);
     bindSiblings(dnd, press);
 
-    // Both engines see the same warning and the same native beats.
     dnd.onCan1Frame(kIdleC, 8, 1000);
     dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1000);
     press.onDasStatus(6, 3, 1000);
+    TEST_ASSERT_FALSE(press.siblingOwnsBeat(1001)); // nothing pressed yet
 
-    // The right-wheel engine presses on the 1050 beat.
+    // The right-wheel engine presses on the 1050 beat -> it owns that beat.
     uint8_t pressFrame[8];
     TEST_ASSERT_TRUE(press.onNative045(kIdleC, 8, 1050, pressFrame));
     press.recordTxResult(true, 1050);
-    // Left DND sees the press frame (sibling) and must not take the slot.
-    dnd.onCan1Frame(pressFrame, 8, 1050);
+    TEST_ASSERT_TRUE(press.siblingOwnsBeat(1051));
+    dnd.onCan1Frame(pressFrame, 8, 1050); // the sibling press frame is not a native beat
     TEST_ASSERT_FALSE(dnd.nextFrame(1050, out));
     TEST_ASSERT_TRUE(dnd.diag.siblingYields >= 1);
 
-    // The release rides the next native beat (1160).
-    uint8_t rel[8];
-    TEST_ASSERT_TRUE(press.onNative045(kIdleD, 8, 1160, rel));
-    TEST_ASSERT_FALSE(DashLegacyWheel045Press::isPressFrame(rel));
+    // The next idle native beat: the car reports the button released, which
+    // frees the beat — and the level engine presses again on it, so it owns
+    // this beat too. The left DND still must not transmit here.
+    dnd.onCan1Frame(kIdleD, 8, 1160);
+    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1160);
+    TEST_ASSERT_TRUE(press.onNative045(kIdleD, 8, 1160, out));
     press.recordTxResult(true, 1160);
+    TEST_ASSERT_TRUE(press.siblingOwnsBeat(1161));
+    TEST_ASSERT_FALSE(dnd.nextFrame(1160, out));
 
-    // Before any further native frame the right-wheel engine still owns the
-    // beat (the release went out, but no native frame has followed it).
+    // A beat where the right-wheel engine does NOT press: the warning is
+    // still on, so the LEFT DND must be free to take the beat.
+    press.onNative045(kIdleD, 8, 1160, out);
+    press.recordTxResult(true, 1160);
     dnd.onCan1Frame(kIdleC, 8, 1300);
     dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1300);
-    TEST_ASSERT_TRUE(press.siblingOwnsBeat(1301));
-    TEST_ASSERT_FALSE(dnd.nextFrame(1300, out));
-
-    // The SAME native frame reaches the right-wheel engine (the wiring feeds
-    // both): that is what frees the slot, and the left DND resumes.
-    uint8_t nothing[8];
-    TEST_ASSERT_FALSE(press.onNative045(kIdleC, 8, 1300, nothing)); // too soon to click again
+    press.onDasStatus(6, 3, 1300);
+    press.observeNative045(kIdleC, 8, 1300); // same beat reaches the press engine: not pressing
     TEST_ASSERT_FALSE(press.siblingOwnsBeat(1301));
+    TEST_ASSERT_TRUE(dnd.nextFrame(1300, out));
+
+    // Warning ends -> nothing more to clear -> the left DND goes quiet too.
+    dnd.onDasStatus(6, 1, CAN_BUS_VEH, 1400);
+    press.onDasStatus(6, 1, 1400);
     dnd.onCan1Frame(kIdleD, 8, 1500);
-    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1500);
-    TEST_ASSERT_TRUE(dnd.nextFrame(1500, out));
+    TEST_ASSERT_FALSE(press.siblingOwnsBeat(1501));
+    TEST_ASSERT_FALSE(dnd.nextFrame(1500, out));
 }
 
-// The CH-bus view feeds the right-wheel engine's observation only: it must
-// release the yield slot after a click, and never emit on it.
+// The CH-bus view feeds the right-wheel engine's observation only: it frees
+// the beat after a press, and never emits on it.
 void test_ch_view_releases_beat_without_emitting()
 {
-    DashLegacyWheel045Dnd dnd;
     DashLegacyWheel045Press press;
     uint8_t out[8];
-    arm(dnd);
     press.configure(true);
     press.setRuntimeAllowed(true);
-    bindSiblings(dnd, press);
-    dnd.onCan1Frame(kIdleC, 8, 1000);
-    dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1000);
     press.onDasStatus(6, 3, 1000);
-    uint8_t pressFrame[8];
-    TEST_ASSERT_TRUE(press.onNative045(kIdleC, 8, 1050, pressFrame));
+    TEST_ASSERT_TRUE(press.onNative045(kIdleC, 8, 1050, out));
     press.recordTxResult(true, 1050);
     TEST_ASSERT_TRUE(press.siblingOwnsBeat(1060));
     // A native frame arrives on the CH view: observed, nothing emitted.
     press.observeNative045(kIdleD, 8, 1160);
     TEST_ASSERT_EQUAL_UINT32(1, press.diag.pressed); // unchanged
-    TEST_ASSERT_TRUE(press.releasePending());         // release still owed
-    TEST_ASSERT_TRUE(press.siblingOwnsBeat(1170));    // click not finished
-    // Release goes out on the VEH beat, then a CH-view frame frees the slot.
-    uint8_t rel[8];
-    TEST_ASSERT_TRUE(press.onNative045(kIdleD, 8, 1270, rel));
-    press.recordTxResult(true, 1270);
-    press.observeNative045(kIdleC, 8, 1400);
-    TEST_ASSERT_FALSE(press.siblingOwnsBeat(1401));
+    TEST_ASSERT_FALSE(press.siblingOwnsBeat(1170));  // beat freed
+    TEST_ASSERT_EQUAL_UINT32(1160, press.diag.native045Ms);
 }
 
 // Review I5, the starvation case: a gate drops right after a click, before
@@ -450,6 +445,34 @@ void test_dnd_not_starved_when_press_engine_loses_its_gate()
     dnd.onCan1Frame(kIdleD, 8, 1200);
     dnd.onDasStatus(6, 3, CAN_BUS_VEH, 1200);
     TEST_ASSERT_TRUE(dnd.nextFrame(1200, out));
+}
+
+// ── Which gate is holding the engine back (2026-11-25) ──────────────────
+// The engine went silent on the car for two days and the owner could not see
+// why: `armed` is an AND of every gate. The runtime permission and the gate
+// that denied it are now reported on the Diag for the status grid.
+
+void test_diag_reports_the_denying_gate()
+{
+    DashLegacyWheel045Dnd dnd;
+    dnd.configure(true);
+    TEST_ASSERT_FALSE(dnd.diag.runtimeAllowed);
+
+    dnd.setRuntimeAllowed(false, DashLegacyWheel045Block::OtaGuard);
+    TEST_ASSERT_FALSE(dnd.diag.runtimeAllowed);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::OtaGuard, dnd.diag.runtimeBlock);
+
+    dnd.setRuntimeAllowed(false, DashLegacyWheel045Block::AbortGuard);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::AbortGuard, dnd.diag.runtimeBlock);
+
+    dnd.setRuntimeAllowed(true, DashLegacyWheel045Block::None);
+    TEST_ASSERT_TRUE(dnd.diag.runtimeAllowed);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::None, dnd.diag.runtimeBlock);
+
+    // denying again with the SAME gate must not lose the report
+    dnd.setRuntimeAllowed(false, DashLegacyWheel045Block::TwaiUnavailable);
+    dnd.setRuntimeAllowed(false, DashLegacyWheel045Block::TwaiUnavailable);
+    TEST_ASSERT_EQUAL(DashLegacyWheel045Block::TwaiUnavailable, dnd.diag.runtimeBlock);
 }
 
 static void disarmTwice(DashLegacyWheel045Dnd &dnd, uint32_t &nowMs)
@@ -645,9 +668,10 @@ int main()
     RUN_TEST(test_two_tx_failures_auto_disarm);
     RUN_TEST(test_disarm_heals_after_800ms);
     RUN_TEST(test_dnd_ignores_right_press_sibling_frames);
-    RUN_TEST(test_dnd_yields_during_click_then_resumes);
+    RUN_TEST(test_dnd_yields_on_press_beats_then_resumes);
     RUN_TEST(test_dnd_not_starved_when_press_engine_loses_its_gate);
     RUN_TEST(test_ch_view_releases_beat_without_emitting);
+    RUN_TEST(test_diag_reports_the_denying_gate);
     RUN_TEST(test_disarm_heal_capped_three_per_window);
     RUN_TEST(test_disarm_heal_window_slides_reopens);
     RUN_TEST(test_healthy_engine_edge_no_heal_reset);

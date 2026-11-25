@@ -2541,7 +2541,14 @@ static void appendWheelDndDiagJson(String &j, unsigned long now)
     j += d.configured ? "true" : "false";
     j += R"JSON(,"armed":)JSON";
     j += d.runtimeArmed ? "true" : "false";
-    j += R"JSON(,"autoDisarmed":)JSON";
+    // Which gate is holding the engine back (2026-11-25): `armed` is an AND
+    // of everything, so a silent engine showed no cause on screen. The
+    // runtime permission and the gate enum are what the status bar needs.
+    j += R"JSON(,"runtimeAllowed":)JSON";
+    j += d.runtimeAllowed ? "true" : "false";
+    j += R"JSON(,"runtimeBlock":")JSON";
+    j += dashLegacyWheel045BlockName(d.runtimeBlock);
+    j += R"JSON(","autoDisarmed":)JSON";
     j += d.autoDisarmed ? "true" : "false";
     j += R"JSON(,"volume":)JSON";
     j += dashDndVolume ? "true" : "false";
@@ -3219,8 +3226,6 @@ static void handleStatus()
         j += n.handsState;
         j += R"JSON(,"pressed":)JSON";
         j += n.pressed;
-        j += R"JSON(,"released":)JSON";
-        j += n.released;
         j += R"JSON(,"txFail":)JSON";
         j += n.txFail;
         j += R"JSON(,"echoSuppressed":)JSON";
@@ -3240,6 +3245,8 @@ static void handleStatus()
         j += n.dasStatusMs != 0 ? "true" : "false";
         j += R"JSON(,"runtimeAllowed":)JSON";
         j += n.runtimeAllowed ? "true" : "false";
+        j += R"JSON(,"pressInFlight":)JSON";
+        j += dashRightWheelPressCtrl.pressInFlight() ? "true" : "false";
         j += R"JSON(,"warningEpisodes":)JSON";
         j += n.warningEpisodes;
         j += R"JSON(,"pressesThisEpisode":)JSON";

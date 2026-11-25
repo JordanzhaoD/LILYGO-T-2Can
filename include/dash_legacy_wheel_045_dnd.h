@@ -122,6 +122,10 @@ struct DashLegacyWheel045Diag
     bool configured = false;
     bool runtimeArmed = false;
     bool autoDisarmed = false;
+    // Which gate holds the engine back (2026-11-25): the runtime permission
+    // and the gate that denied it, for the status grid.
+    bool runtimeAllowed = false;
+    DashLegacyWheel045Block runtimeBlock = DashLegacyWheel045Block::Disabled;
     bool apActive = false;
     bool warningActive = false;
     bool nativeSeen = false;
@@ -255,6 +259,8 @@ struct DashLegacyWheel045Dnd
     void setRuntimeAllowed(bool allowed, DashLegacyWheel045Block deniedReason)
     {
         const DashLegacyWheel045Block nextBlock = allowed ? DashLegacyWheel045Block::None : deniedReason;
+        diag.runtimeAllowed = allowed;
+        diag.runtimeBlock = nextBlock;
         if (runtimeAllowed_ == allowed && runtimeBlock_ == nextBlock)
         {
             updateArmed();

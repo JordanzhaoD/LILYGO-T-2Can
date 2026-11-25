@@ -21,7 +21,6 @@ static void warn(DashLegacyWheel045Press &p, uint32_t nowMs, uint8_t handsState)
 
 static uint8_t ctr(const uint8_t f[8]) { return (f[6] >> 4) & 0x0F; }
 
-// Native idle frame with an arbitrary counter (CRC recomputed).
 static void idleWithCtr(uint8_t out[8], uint8_t counter)
 {
     memcpy(out, kIdleC, 8);
@@ -29,9 +28,16 @@ static void idleWithCtr(uint8_t out[8], uint8_t counter)
     out[7] = DashLegacyWheel045Dnd::crc8J1850(out, 7);
 }
 
-// ═══ Click shape: press frame, then the release rides the NEXT native beat ═══
-// Field basis for the bit: the CENTER press (0x0010) cleared 6/6 warnings on
-// beta.07; the SIDE button (0x0020) cleared 0/6 on beta.09.
+// ═══ 6.1.0-beta.12: BOUNDED LEVEL press (the beta.07 shape, with a cap) ═══
+//
+// Field matrix for the center button (data[4] |= 0x10), 2026-11-24/25:
+//   beta.07  LEVEL: a press frame behind every idle native beat while the
+//            warning lasts          -> cleared 6/6 nags (P, P, PPPPP, PPPP...)
+//   beta.11  click: press + release, one per native beat
+//            -> persistent nags 0/3 (5-8 s = their natural length)
+// So what the vehicle accepts is a HELD button, not a tap. beta.07 had no
+// bound (that shape, gated on hands=2, became the beta.08 853-frame blast),
+// so the level press here is capped at kMaxPressesPerEpisode frames.
 
 void test_press_encodes_center_button_bit_and_counter_and_crc()
 {
@@ -40,157 +46,48 @@ void test_press_encodes_center_button_bit_and_counter_and_crc()
     warn(p, 1000, 3);
     uint8_t out[8];
     TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
-    // CENTER press bit set (data[4] bit4 = switch word 0x0010); the side
-    // button bit must stay clear.
-    TEST_ASSERT_EQUAL_UINT8(kIdleC[4] | 0x10, out[4]);
-    TEST_ASSERT_EQUAL_UINT8(0, out[4] & 0x20);
-    TEST_ASSERT_EQUAL_UINT8(kIdleC[0], out[0]);
-    TEST_ASSERT_EQUAL_UINT8(kIdleC[3], out[3]);
-    TEST_ASSERT_EQUAL_UINT8(kIdleC[5], out[5]);
-    TEST_ASSERT_EQUAL_UINT8(kIdleC[6] & 0x0F, out[6] & 0x0F);
-    TEST_ASSERT_EQUAL_UINT8(((kIdleC[6] >> 4) + 1) & 0x0F, ctr(out));
-    TEST_ASSERT_EQUAL_UINT8(DashLegacyWheel045Dnd::crc8J1850(out, 7), out[7]);
-    TEST_ASSERT_TRUE(p.releasePending());
-    p.recordTxResult(true, 1050);
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.pressed);
-    TEST_ASSERT_EQUAL_UINT32(0, p.diag.released);
-}
-
-// The release is the NEXT native frame untouched except counter+1 and CRC:
-// no button bits, every other byte exactly what the car sent. No c+2 frame,
-// so the bus counter never regresses (review M6).
-void test_release_rides_next_native_frame_without_counter_regression()
-{
-    DashLegacyWheel045Press p;
-    arm(p);
-    uint8_t out[8];
-    uint8_t n1[8], n2[8];
-    idleWithCtr(n1, 0xA);
-    idleWithCtr(n2, 0xB); // the car's own next frame already advanced
-    warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(n1, 8, 1050, out)); // press: c+1 = B
-    TEST_ASSERT_EQUAL_UINT8(0xB, ctr(out));
-    p.recordTxResult(true, 1050);
-    TEST_ASSERT_TRUE(p.onNative045(n2, 8, 1160, out)); // release rides n2: c+1 = C
-    TEST_ASSERT_EQUAL_UINT8(0x00, out[4] & 0x3F);
+    TEST_ASSERT_EQUAL_UINT8(kIdleC[4] | 0x10, out[4]); // center button (switch word bit4)
+    TEST_ASSERT_EQUAL_UINT8(0, out[4] & 0x20);         // side button never
     TEST_ASSERT_EQUAL_UINT8(kIdleC[0], out[0]);
     TEST_ASSERT_EQUAL_UINT8(kIdleC[1], out[1]);
     TEST_ASSERT_EQUAL_UINT8(kIdleC[2], out[2]);
     TEST_ASSERT_EQUAL_UINT8(kIdleC[3], out[3]);
     TEST_ASSERT_EQUAL_UINT8(kIdleC[5], out[5]);
-    TEST_ASSERT_EQUAL_UINT8(0xC, ctr(out));
+    TEST_ASSERT_EQUAL_UINT8(kIdleC[6] & 0x0F, out[6] & 0x0F);
+    TEST_ASSERT_EQUAL_UINT8(((kIdleC[6] >> 4) + 1) & 0x0F, ctr(out));
     TEST_ASSERT_EQUAL_UINT8(DashLegacyWheel045Dnd::crc8J1850(out, 7), out[7]);
-    TEST_ASSERT_FALSE(p.releasePending());
-    p.recordTxResult(true, 1160);
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.pressed);
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.released);
-    // Bus sequence: native A, press B, native B, release C — monotonic,
-    // duplicates only (the shape the field-stable left-wheel DND also has).
 }
 
-// Counter wrap, both frames (all 16 values).
-void test_counter_wraps_on_press_and_release()
-{
-    for (uint8_t c = 0; c < 16; c++)
-    {
-        DashLegacyWheel045Press p;
-        arm(p);
-        uint8_t out[8], n1[8], n2[8];
-        idleWithCtr(n1, c);
-        idleWithCtr(n2, static_cast<uint8_t>((c + 1) & 0x0F));
-        warn(p, 1000, 3);
-        TEST_ASSERT_TRUE(p.onNative045(n1, 8, 1050, out));
-        TEST_ASSERT_EQUAL_UINT8((c + 1) & 0x0F, ctr(out));
-        TEST_ASSERT_EQUAL_UINT8(DashLegacyWheel045Dnd::crc8J1850(out, 7), out[7]);
-        p.recordTxResult(true, 1050);
-        TEST_ASSERT_TRUE(p.onNative045(n2, 8, 1160, out));
-        TEST_ASSERT_EQUAL_UINT8((c + 2) & 0x0F, ctr(out));
-        TEST_ASSERT_EQUAL_UINT8(DashLegacyWheel045Dnd::crc8J1850(out, 7), out[7]);
-    }
-}
-
-// While a release is owed, a fresh native beat carries the release and
-// nothing else — never a second press stacked on a held button.
-void test_release_goes_out_before_any_second_press()
+// The shape that cleared nags in the field: one press frame behind EVERY
+// idle native beat for as long as the warning lasts.
+void test_level_presses_every_idle_beat_while_warning_lasts()
 {
     DashLegacyWheel045Press p;
     arm(p);
     uint8_t out[8];
     warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
-    p.recordTxResult(true, 1050);
-    warn(p, 1100, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1160, out)); // this is the RELEASE
-    TEST_ASSERT_EQUAL_UINT8(0x00, out[4] & 0x3F);
-    TEST_ASSERT_EQUAL_UINT8(1, p.diag.pressesThisEpisode);
-}
-
-// ═══ Episode budget: at most TWO clicks, sticky until the warning ends ═══
-
-void test_episode_caps_at_two_clicks_and_reason_is_sticky()
-{
-    DashLegacyWheel045Press p;
-    arm(p);
-    uint8_t out[8];
-    warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out)); // press 1
-    p.recordTxResult(true, 1050);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1160, out)); // release 1
-    p.recordTxResult(true, 1160);
-    warn(p, 1250, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1350, out)); // press 2 (190 ms after release 1)
-    p.recordTxResult(true, 1350);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1460, out)); // release 2
-    p.recordTxResult(true, 1460);
-    TEST_ASSERT_EQUAL_UINT32(2, p.diag.pressed);
-    TEST_ASSERT_EQUAL_UINT32(2, p.diag.released);
-    // The third click is refused, and the reason STAYS episode_limit on every
-    // following beat while the warning persists (review I2: it used to be
-    // overwritten by "idle" one beat later).
-    for (uint32_t t = 1600; t <= 2600; t += 100)
+    uint32_t pressed = 0;
+    for (uint32_t t = 1050; t < 1650; t += 100) // ~100 ms native cadence
     {
+        uint8_t n[8];
+        idleWithCtr(n, static_cast<uint8_t>(((t - 1050) / 100) & 0x0F));
         warn(p, t, 3);
-        TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, t + 50, out));
-        TEST_ASSERT_EQUAL_STRING("episode_limit", p.diag.blockedReason);
-    }
-    TEST_ASSERT_EQUAL_UINT32(2, p.diag.pressed);
-}
-
-// ═══ C1: a warning that flickers back must NOT re-open an episode ═══
-// The per-episode budget used to be refilled on every window ENTRY, so hands
-// jittering 2<->3 (or any gate dropping and re-raising) clicked at the
-// spacing rate for as long as the jitter lasted.
-
-void test_warning_flicker_does_not_reopen_episode()
-{
-    DashLegacyWheel045Press p;
-    arm(p);
-    uint8_t out[8];
-    warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out)); // click 1 (press)
-    p.recordTxResult(true, 1050);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1160, out)); // release
-    p.recordTxResult(true, 1160);
-    // 10 s of hands 2<->3 flicker at 50 ms with native beats every 100 ms.
-    uint32_t clicked = 1;
-    uint32_t t = 1200;
-    for (int i = 0; i < 200; i++)
-    {
-        warn(p, t, (i % 2) ? 3 : 2);
-        if (p.onNative045((i % 2) ? kIdleD : kIdleC, 8, t + 25, out))
+        const bool r = p.onNative045(n, 8, t, out);
+        if (r)
         {
-            clicked++;
-            p.recordTxResult(true, t + 25);
+            pressed++;
+            TEST_ASSERT_NOT_EQUAL_UINT8(0, out[4] & 0x10); // a press, never a lone release
+            TEST_ASSERT_EQUAL_UINT8((ctr(n) + 1) & 0x0F, ctr(out));
+            TEST_ASSERT_EQUAL_UINT8(DashLegacyWheel045Dnd::crc8J1850(out, 7), out[7]);
+            p.recordTxResult(true, t);
         }
-        t += 50;
     }
-    TEST_ASSERT_EQUAL_UINT32(1, clicked);
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.warningEpisodes);
+    TEST_ASSERT_EQUAL_UINT32(DashLegacyWheel045Press::kMaxPressesPerEpisode, pressed);
 }
 
-// A gate dropping and re-raising while hands STAYS in the window must not
-// re-arm either (second C1 scenario).
-void test_gate_flap_while_warning_persists_does_not_rearm()
+// The warning clears -> the press stops on the very next frame (the car's own
+// next native idle frame releases the button, exactly like beta.07).
+void test_clear_stops_the_press_at_once()
 {
     DashLegacyWheel045Press p;
     arm(p);
@@ -198,143 +95,49 @@ void test_gate_flap_while_warning_persists_does_not_rearm()
     warn(p, 1000, 3);
     TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
     p.recordTxResult(true, 1050);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1160, out));
-    p.recordTxResult(true, 1160);
-    uint32_t clicked = 1;
-    uint32_t t = 1200;
-    for (int i = 0; i < 30; i++)
-    {
-        p.setRuntimeAllowed(false);
-        p.setRuntimeAllowed(true);
-        warn(p, t, 3); // hands never left the window
-        if (p.onNative045(kIdleC, 8, t + 50, out))
-        {
-            clicked++;
-            p.recordTxResult(true, t + 50);
-        }
-        t += 300;
-    }
-    TEST_ASSERT_EQUAL_UINT32(1, clicked);
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.warningEpisodes);
-}
-
-// Once the warning has been absent for the settle time, a returning warning
-// IS a new episode with a fresh budget.
-void test_settled_clear_then_new_warning_reopens()
-{
-    DashLegacyWheel045Press p;
-    arm(p);
-    uint8_t out[8];
-    const uint32_t S = DashLegacyWheel045Press::kWarningSettleMs;
-    warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
-    p.recordTxResult(true, 1050);
-    warn(p, 1100, 1); // warning gone
-    // Back inside the settle window: no new episode, reason "settling"
-    warn(p, 1100 + S - 200, 3);
-    TEST_ASSERT_FALSE(p.onNative045(kIdleD, 8, 1100 + S - 150, out));
-    TEST_ASSERT_EQUAL_STRING("settling", p.diag.blockedReason);
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.warningEpisodes);
-    // A warning that keeps flickering back never settles: every return
-    // refreshes "last seen", so the absence never reaches S.
-    for (int i = 0; i < 20; i++)
-    {
-        warn(p, 1100 + S - 200 + 1000 * i + 100, 1);
-        warn(p, 1100 + S - 200 + 1000 * (i + 1), 3); // absent 900 ms < S
-    }
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.warningEpisodes);
-    // One uninterrupted absence of >= S: the next warning is a real new
-    // episode. (The settle point is S after the LAST warning frame.)
-    const uint32_t lastWarn = 1100 + S - 200 + 1000 * 20;
-    warn(p, lastWarn + S - 100, 1); // still 100 ms short
-    warn(p, lastWarn + S - 50, 3);  // flickered back in time: still episode 1
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.warningEpisodes);
-    const uint32_t lastWarn2 = lastWarn + S - 50;
-    warn(p, lastWarn2 + S, 1);      // absent for exactly S
-    warn(p, lastWarn2 + S + 50, 3); // a real new episode
-    TEST_ASSERT_EQUAL_UINT32(2, p.diag.warningEpisodes);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, lastWarn2 + S + 100, out));
-    // pressed/released count frames the BUS accepted (review I3): report
-    // the TX result before counting.
-    p.recordTxResult(true, lastWarn2 + S + 100);
+    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1150, out));
+    p.recordTxResult(true, 1150);
+    warn(p, 1200, 1); // hands back on the wheel
+    TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, 1250, out));
     TEST_ASSERT_EQUAL_UINT32(2, p.diag.pressed);
+    TEST_ASSERT_EQUAL_STRING("warning_clear", p.diag.blockedReason);
 }
 
-// ═══ TX failures (review I3) ═══
-
-// A press that failed never reached the bus: no release is owed, and the
-// click is given back to the episode budget.
-void test_failed_press_drops_release_and_refunds_the_click()
+// The cap (review C1 / the beta.08 blast): a warning that never clears gets
+// at most kMaxPressesPerEpisode frames, then nothing more until the episode
+// really ends — and the reason stays readable.
+void test_level_press_is_capped()
 {
     DashLegacyWheel045Press p;
     arm(p);
     uint8_t out[8];
     warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
-    p.recordTxResult(false, 1050);
-    TEST_ASSERT_FALSE(p.releasePending());
-    TEST_ASSERT_EQUAL_UINT8(0, p.diag.pressesThisEpisode);
-    TEST_ASSERT_EQUAL_UINT32(0, p.diag.pressed);
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.txFail);
-    // the next fresh beat may try again
-    warn(p, 1200, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1250, out));
-    TEST_ASSERT_NOT_EQUAL_UINT8(0, out[4] & 0x10); // a press, not a release
+    uint32_t pressed = 0;
+    for (uint32_t t = 1050; t < 12050; t += 100) // 11 s of relentless warning
+    {
+        uint8_t n[8];
+        idleWithCtr(n, static_cast<uint8_t>(((t - 1050) / 100) & 0x0F));
+        warn(p, t, 3);
+        if (p.onNative045(n, 8, t, out))
+        {
+            pressed++;
+            p.recordTxResult(true, t);
+        }
+        else if (pressed == DashLegacyWheel045Press::kMaxPressesPerEpisode)
+            TEST_ASSERT_EQUAL_STRING("episode_limit", p.diag.blockedReason);
+    }
+    TEST_ASSERT_EQUAL_UINT32(DashLegacyWheel045Press::kMaxPressesPerEpisode, pressed);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag.warningEpisodes);
 }
 
-// A release that failed leaves the button HELD on the bus: the release is
-// re-armed for the next native beat, counted as a failure, and no new press
-// may go out in between.
-void test_failed_release_is_retried_on_next_beat()
+// beta.08: gating on hands=2 (the "hands off wheel" baseline) blasted 853
+// frames. hands=2 must never press.
+void test_hands2_never_presses()
 {
     DashLegacyWheel045Press p;
     arm(p);
     uint8_t out[8];
-    warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
-    p.recordTxResult(true, 1050);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1160, out)); // release attempt
-    p.recordTxResult(false, 1160);
-    TEST_ASSERT_TRUE(p.releasePending());
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.pressed);
-    TEST_ASSERT_EQUAL_UINT32(0, p.diag.released); // not counted: the bus did not take it
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.txFail);
-    // next beat: the release again — not a second press
-    warn(p, 1250, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1360, out));
-    TEST_ASSERT_EQUAL_UINT8(0x00, out[4] & 0x3F);
-    p.recordTxResult(true, 1360);
-    TEST_ASSERT_FALSE(p.releasePending());
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.released);
-    TEST_ASSERT_EQUAL_UINT8(1, p.diag.pressesThisEpisode);
-}
-
-// Two failed releases in a row disarm (the button would stay held).
-void test_repeated_release_failures_disarm()
-{
-    DashLegacyWheel045Press p;
-    arm(p);
-    uint8_t out[8];
-    warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
-    p.recordTxResult(true, 1050);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1160, out));
-    p.recordTxResult(false, 1160);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1270, out));
-    p.recordTxResult(false, 1270);
-    TEST_ASSERT_TRUE(p.diag.disarmed);
-}
-
-// ═══ Warning window: the PROMPT ladder only ═══
-
-// hands=2 (NOT_DETECTED) is the persistent "hands off wheel" baseline, NOT a
-// prompt. beta.08 gated on it and blasted 853 frames -> strike-out.
-void test_hands2_does_not_trigger()
-{
-    DashLegacyWheel045Press p;
-    arm(p);
-    uint8_t out[8];
-    for (uint32_t t = 1000; t < 5000; t += 50)
+    for (uint32_t t = 1000; t < 6000; t += 50)
     {
         warn(p, t, 2);
         TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, t + 25, out));
@@ -343,16 +146,21 @@ void test_hands2_does_not_trigger()
     TEST_ASSERT_EQUAL_UINT32(0, p.diag.warningEpisodes);
 }
 
-void test_hands3_prompt_triggers()
+// 1<->2 detector jitter is not a warning.
+void test_hands12_jitter_does_not_press()
 {
     DashLegacyWheel045Press p;
     arm(p);
     uint8_t out[8];
-    warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
+    for (uint32_t t = 1000; t < 4000; t += 25)
+    {
+        warn(p, t, (t / 25) % 2 ? 1 : 2);
+        TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, t + 10, out));
+    }
+    TEST_ASSERT_EQUAL_UINT32(0, p.diag.warningEpisodes);
 }
 
-void test_prompt_ladder_triggers()
+void test_prompt_ladder_presses()
 {
     for (uint8_t h : {3, 4, 5, 6, 9, 10})
     {
@@ -372,9 +180,36 @@ void test_prompt_ladder_triggers()
     }
 }
 
-// Leaving the window closes the episode at once: a release still owed is
-// dropped (the car's own next native frame releases the button).
-void test_clear_stops_immediately()
+// ── C1: a warning that flickers back must NOT earn a new budget ─────────
+
+void test_warning_flicker_does_not_reopen_episode()
+{
+    DashLegacyWheel045Press p;
+    arm(p);
+    uint8_t out[8];
+    warn(p, 1000, 3);
+    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out)); // press 1
+    p.recordTxResult(true, 1050);
+    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1150, out)); // press 2
+    p.recordTxResult(true, 1150);
+    // 10 s of hands 2<->3 flicker at 50 ms, native beats every 100 ms.
+    uint32_t pressed = 2;
+    uint32_t t = 1200;
+    for (int i = 0; i < 200; i++)
+    {
+        warn(p, t, (i % 2) ? 3 : 2);
+        if (p.onNative045((i % 2) ? kIdleD : kIdleC, 8, t + 25, out))
+        {
+            pressed++;
+            p.recordTxResult(true, t + 25);
+        }
+        t += 50;
+    }
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag.warningEpisodes);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(DashLegacyWheel045Press::kMaxPressesPerEpisode, pressed);
+}
+
+void test_gate_flap_while_warning_persists_does_not_rearm()
 {
     DashLegacyWheel045Press p;
     arm(p);
@@ -382,50 +217,104 @@ void test_clear_stops_immediately()
     warn(p, 1000, 3);
     TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
     p.recordTxResult(true, 1050);
-    warn(p, 1100, 1);
-    TEST_ASSERT_FALSE(p.releasePending());
-    TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, 1160, out));
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.pressed);
-    TEST_ASSERT_EQUAL_STRING("warning_clear", p.diag.blockedReason);
+    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1150, out));
+    p.recordTxResult(true, 1150);
+    uint32_t pressed = 2;
+    uint32_t t = 1200;
+    for (int i = 0; i < 30; i++)
+    {
+        p.setRuntimeAllowed(false);
+        p.setRuntimeAllowed(true);
+        warn(p, t, 3); // hands never left the window
+        if (p.onNative045(kIdleC, 8, t + 50, out))
+        {
+            pressed++;
+            p.recordTxResult(true, t + 50);
+        }
+        t += 300;
+    }
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag.warningEpisodes);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(DashLegacyWheel045Press::kMaxPressesPerEpisode, pressed);
 }
 
-// The 1<->2 jitter (detector noise) must not open an episode.
-void test_hands12_jitter_does_not_open_episode()
+// After the warning has been gone for the settle time, a returning warning
+// is a real new episode with a fresh budget.
+void test_settled_clear_then_new_warning_reopens()
 {
     DashLegacyWheel045Press p;
     arm(p);
     uint8_t out[8];
-    for (uint32_t t = 1000; t < 4000; t += 25)
-    {
-        warn(p, t, (t / 25) % 2 ? 1 : 2);
-        TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, t + 10, out));
-    }
-    TEST_ASSERT_EQUAL_UINT32(0, p.diag.warningEpisodes);
+    const uint32_t S = DashLegacyWheel045Press::kWarningSettleMs;
+    warn(p, 1000, 3);
+    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
+    p.recordTxResult(true, 1050);
+    warn(p, 1100, 1);
+    // back inside the settle window: not a new episode
+    warn(p, 1100 + S - 200, 3);
+    TEST_ASSERT_EQUAL_STRING("warn_flicker", p.diag.blockedReason);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag.warningEpisodes);
+    warn(p, 1100 + S - 200, 1);
+    // gone for >= S: the next warning is a new episode
+    warn(p, 1100 + S - 200 + S + 50, 3);
+    TEST_ASSERT_EQUAL_UINT32(2, p.diag.warningEpisodes);
+    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1100 + S - 200 + S + 100, out));
 }
 
-// ═══ Runtime gates ═══
+// ── TX failures ─────────────────────────────────────────────────────────
+
+void test_failed_press_is_counted_and_not_retried_on_the_same_beat()
+{
+    DashLegacyWheel045Press p;
+    arm(p);
+    uint8_t out[8];
+    warn(p, 1000, 3);
+    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
+    p.recordTxResult(false, 1050);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag.txFail);
+    TEST_ASSERT_EQUAL_UINT32(0, p.diag.pressed); // the bus never took it
+    // the next native beat presses again (level semantics)
+    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1150, out));
+}
+
+void test_two_tx_failures_disarm_then_heal_800ms()
+{
+    DashLegacyWheel045Press p;
+    arm(p);
+    uint8_t out[8];
+    warn(p, 1000, 3);
+    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
+    p.recordTxResult(false, 1050);
+    TEST_ASSERT_FALSE(p.diag.disarmed);
+    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1150, out));
+    p.recordTxResult(false, 1150);
+    TEST_ASSERT_TRUE(p.diag.disarmed);
+    warn(p, 1300, 3);
+    TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, 1350, out));
+    warn(p, 1150 + 810, 3);
+    TEST_ASSERT_FALSE(p.diag.disarmed);
+    TEST_ASSERT_EQUAL_UINT32(1, p.diag.disarmHeals);
+}
+
+// ── Gates ───────────────────────────────────────────────────────────────
 
 void test_ap_inactive_blocks_press()
 {
     DashLegacyWheel045Press p;
     arm(p);
     uint8_t out[8];
-    p.onDasStatus(1, 3, 1000); // AP off, hands reads "warning"
+    p.onDasStatus(1, 3, 1000);
     TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, 1050, out));
     TEST_ASSERT_EQUAL_UINT32(0, p.diag.pressed);
 }
 
-// While blocked by a gate the engine still OBSERVES the bus (the status
-// grid shows the real warning) but never acts (review I2).
+// While blocked the engine still OBSERVES the bus, but never acts.
 void test_blocked_engine_observes_but_does_not_act()
 {
     DashLegacyWheel045Press p;
     p.configure(true);
     uint8_t out[8];
     p.onDasStatus(6, 4, 1000);
-    TEST_ASSERT_TRUE(p.diag.warningActive); // observed
-    TEST_ASSERT_TRUE(p.diag.apActive);
-    TEST_ASSERT_EQUAL_UINT8(4, p.diag.handsState);
+    TEST_ASSERT_TRUE(p.diag.warningActive);
     TEST_ASSERT_EQUAL_STRING("runtime", p.diag.blockedReason);
     TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, 1050, out));
     TEST_ASSERT_EQUAL_UINT32(0, p.diag.warningEpisodes);
@@ -443,7 +332,7 @@ void test_disabled_reports_disabled_and_observes()
     TEST_ASSERT_FALSE(p.siblingOwnsBeat(1060));
 }
 
-// ═══ Source-frame hygiene ═══
+// ── Source-frame hygiene ────────────────────────────────────────────────
 
 void test_own_press_echo_does_not_chain()
 {
@@ -454,11 +343,9 @@ void test_own_press_echo_does_not_chain()
     TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, press));
     p.recordTxResult(true, 1050);
     TEST_ASSERT_TRUE(DashLegacyWheel045Press::isPressFrame(press));
-    // The echoed press frame comes back: recognised, never a release source.
     uint8_t out2[8];
-    TEST_ASSERT_FALSE(p.onNative045(press, 8, 1160, out2));
+    TEST_ASSERT_FALSE(p.onNative045(press, 8, 1100, out2)); // same beat, our own echo
     TEST_ASSERT_EQUAL_UINT32(1, p.diag.echoSuppressed);
-    TEST_ASSERT_TRUE(p.releasePending()); // still owed to a real idle frame
 }
 
 void test_action_frames_are_never_used()
@@ -476,78 +363,52 @@ void test_action_frames_are_never_used()
     TEST_ASSERT_EQUAL_UINT32(0, p.diag.pressed);
 }
 
-// ═══ Disarm / heal ═══
+// ── Yield to the left-wheel DND ─────────────────────────────────────────
 
-void test_two_tx_failures_disarm_then_heal_800ms()
+// With BOTH engines on they must not both transmit on one native beat. The
+// left-wheel DND owns every beat the press engine does not take.
+void test_yield_only_on_beats_where_it_presses()
 {
     DashLegacyWheel045Press p;
     arm(p);
     uint8_t out[8];
     warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
-    p.recordTxResult(false, 1050);
-    TEST_ASSERT_FALSE(p.diag.disarmed);
-    warn(p, 1200, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1250, out));
-    p.recordTxResult(false, 1250); // second consecutive failure
-    TEST_ASSERT_TRUE(p.diag.disarmed);
-    TEST_ASSERT_EQUAL_STRING("disarmed", p.diag.blockedReason);
-    // While disarmed, in-window beats do not press
-    warn(p, 1300, 3);
-    TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, 1350, out));
-    // 810 ms after the disarm: healed
-    warn(p, 1250 + 810, 3);
-    TEST_ASSERT_FALSE(p.diag.disarmed);
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.disarmHeals);
-}
-
-// ═══ Yield to the left-wheel DND (review I5) ═══
-
-// The click owns the beat from the press until the first idle native frame
-// AFTER its release.
-void test_yield_holds_until_native_after_release()
-{
-    DashLegacyWheel045Press p;
-    arm(p);
-    uint8_t out[8];
-    warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out)); // press
-    TEST_ASSERT_TRUE(p.siblingOwnsBeat(1060));
+    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out)); // press on this beat
+    TEST_ASSERT_TRUE(p.siblingOwnsBeat(1051));             // -> owns it
     p.recordTxResult(true, 1050);
-    TEST_ASSERT_TRUE(p.siblingOwnsBeat(1090)); // release not sent yet
-    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1160, out)); // release rides this beat
-    p.recordTxResult(true, 1160);
-    TEST_ASSERT_TRUE(p.siblingOwnsBeat(1170)); // owned until a native frame AFTER it
-    // A native beat 30 ms after the release: too soon for another click
-    // (spacing), and it is the first native frame after the release, so the
-    // beat is released.
-    warn(p, 1180, 3);
-    TEST_ASSERT_FALSE(p.onNative045(kIdleC, 8, 1190, out));
-    TEST_ASSERT_EQUAL_STRING("spacing", p.diag.blockedReason);
-    TEST_ASSERT_FALSE(p.siblingOwnsBeat(1191));
+    p.setRuntimeAllowed(false);                            // a gate drops
+    TEST_ASSERT_FALSE(p.siblingOwnsBeat(1060));            // -> owns nothing
+    p.setRuntimeAllowed(true);
+    TEST_ASSERT_FALSE(p.siblingOwnsBeat(1070));
 }
 
-// I5: if a gate drops right after a click, the engine must stop owning the
-// beat — otherwise the left-wheel DND yields forever (until reboot).
+// A gate dropping right after a press must not wedge the left-wheel DND.
 void test_blocked_engine_releases_the_beat()
 {
     DashLegacyWheel045Press p;
     arm(p);
     uint8_t out[8];
     warn(p, 1000, 3);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out)); // press
+    TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
     p.recordTxResult(true, 1050);
     TEST_ASSERT_TRUE(p.siblingOwnsBeat(1060));
-    // the gate drops before any further native frame is seen
     p.setRuntimeAllowed(false);
-    TEST_ASSERT_FALSE(p.siblingOwnsBeat(1070));
     TEST_ASSERT_FALSE(p.siblingOwnsBeat(5000));
-    // and comes back: still not owning
-    p.setRuntimeAllowed(true);
-    TEST_ASSERT_FALSE(p.siblingOwnsBeat(5010));
 }
 
-// ═══ Diagnostics for the status grid ═══
+// The CH-bus view is observe-only.
+void test_ch_view_observes_without_emitting()
+{
+    DashLegacyWheel045Press p;
+    arm(p);
+    warn(p, 1000, 3);
+    p.observeNative045(kIdleD, 8, 1160);
+    TEST_ASSERT_EQUAL_UINT32(0, p.diag.pressed);
+    TEST_ASSERT_TRUE(p.diag.native045Seen);
+    TEST_ASSERT_EQUAL_UINT32(1160, p.diag.native045Ms);
+}
+
+// ── Diagnostics for the status grid ─────────────────────────────────────
 
 void test_diag_tracks_native_beat_and_counters()
 {
@@ -558,16 +419,17 @@ void test_diag_tracks_native_beat_and_counters()
     warn(p, 1000, 3);
     TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, 1050, out));
     p.recordTxResult(true, 1050);
-    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1160, out));
-    p.recordTxResult(true, 1160);
+    TEST_ASSERT_TRUE(p.onNative045(kIdleD, 8, 1150, out));
+    p.recordTxResult(true, 1150);
     TEST_ASSERT_TRUE(p.diag.native045Seen);
-    TEST_ASSERT_EQUAL_UINT32(1160, p.diag.native045Ms);
+    TEST_ASSERT_EQUAL_UINT32(1150, p.diag.native045Ms);
     TEST_ASSERT_EQUAL_UINT8(kIdleD[6] >> 4, p.diag.nativeCounter);
     TEST_ASSERT_EQUAL_UINT32(1000, p.diag.dasStatusMs);
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.pressed);
-    TEST_ASSERT_EQUAL_UINT32(1, p.diag.released);
+    TEST_ASSERT_EQUAL_UINT32(2, p.diag.pressed);
     TEST_ASSERT_EQUAL_UINT32(0, p.diag.txFail);
-    TEST_ASSERT_EQUAL_UINT8(1, p.diag.pressesThisEpisode); // ONE click (press + release)
+    TEST_ASSERT_EQUAL_UINT8(2, p.diag.pressesThisEpisode);
+    TEST_ASSERT_EQUAL_UINT8(6, p.diag.apState);
+    TEST_ASSERT_TRUE(p.diag.apActive);
 }
 
 // Every "why not" the owner can read on the grid must be a distinct string.
@@ -583,58 +445,40 @@ void test_blocked_reasons_are_distinct()
     p.onDasStatus(6, 3, 1100);
     TEST_ASSERT_EQUAL_STRING("runtime", p.diag.blockedReason);
     arm(p);
-    p.onDasStatus(6, 1, 1200); // gates open, bus quiet (AP engaged, no warning)
+    p.onDasStatus(6, 1, 1150); // gates open, bus quiet (AP engaged, no warning)
     TEST_ASSERT_EQUAL_STRING("idle", p.diag.blockedReason);
-    p.onNative045(kIdleC, 8, 1250, out); // a native beat does not overwrite it
+    p.onNative045(kIdleC, 8, 1200, out); // a native beat does not overwrite it
     TEST_ASSERT_EQUAL_STRING("idle", p.diag.blockedReason);
-    // A warning this soon after the one at 1100 is still inside the settle
-    // time (counted from the LAST warning frame): "settling", not a new episode.
-    p.onDasStatus(6, 3, 1300);
-    TEST_ASSERT_EQUAL_STRING("settling", p.diag.blockedReason);
-    // After the full settle time — counted from the LAST warning frame,
-    // which is now 1300 — the next warning opens an episode.
-    const uint32_t tReady = 1300 + DashLegacyWheel045Press::kWarningSettleMs + 100;
-    p.onDasStatus(6, 1, tReady - 50);
+    const uint32_t tReady = 1100 + DashLegacyWheel045Press::kWarningSettleMs + 100;
     p.onDasStatus(6, 3, tReady);
     TEST_ASSERT_EQUAL_STRING("waiting_native", p.diag.blockedReason);
     TEST_ASSERT_TRUE(p.onNative045(kIdleC, 8, tReady + 50, out));
     TEST_ASSERT_EQUAL_STRING("armed", p.diag.blockedReason);
-    p.recordTxResult(true, tReady + 50);
-    // The same native beat processed again (same timestamp, as when a frame
-    // is delivered twice): not a fresh beat, so the owed release cannot go
-    // out and no second press may either.
-    p.onDasStatus(6, 3, tReady + 60);
-    TEST_ASSERT_FALSE(p.onNative045(kIdleD, 8, tReady + 50, out));
-    TEST_ASSERT_EQUAL_STRING("release_pending", p.diag.blockedReason);
 }
 
 int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_press_encodes_center_button_bit_and_counter_and_crc);
-    RUN_TEST(test_release_rides_next_native_frame_without_counter_regression);
-    RUN_TEST(test_counter_wraps_on_press_and_release);
-    RUN_TEST(test_release_goes_out_before_any_second_press);
-    RUN_TEST(test_episode_caps_at_two_clicks_and_reason_is_sticky);
+    RUN_TEST(test_level_presses_every_idle_beat_while_warning_lasts);
+    RUN_TEST(test_clear_stops_the_press_at_once);
+    RUN_TEST(test_level_press_is_capped);
+    RUN_TEST(test_hands2_never_presses);
+    RUN_TEST(test_hands12_jitter_does_not_press);
+    RUN_TEST(test_prompt_ladder_presses);
     RUN_TEST(test_warning_flicker_does_not_reopen_episode);
     RUN_TEST(test_gate_flap_while_warning_persists_does_not_rearm);
     RUN_TEST(test_settled_clear_then_new_warning_reopens);
-    RUN_TEST(test_failed_press_drops_release_and_refunds_the_click);
-    RUN_TEST(test_failed_release_is_retried_on_next_beat);
-    RUN_TEST(test_repeated_release_failures_disarm);
-    RUN_TEST(test_hands2_does_not_trigger);
-    RUN_TEST(test_hands3_prompt_triggers);
-    RUN_TEST(test_prompt_ladder_triggers);
-    RUN_TEST(test_clear_stops_immediately);
-    RUN_TEST(test_hands12_jitter_does_not_open_episode);
+    RUN_TEST(test_failed_press_is_counted_and_not_retried_on_the_same_beat);
+    RUN_TEST(test_two_tx_failures_disarm_then_heal_800ms);
     RUN_TEST(test_ap_inactive_blocks_press);
     RUN_TEST(test_blocked_engine_observes_but_does_not_act);
     RUN_TEST(test_disabled_reports_disabled_and_observes);
     RUN_TEST(test_own_press_echo_does_not_chain);
     RUN_TEST(test_action_frames_are_never_used);
-    RUN_TEST(test_two_tx_failures_disarm_then_heal_800ms);
-    RUN_TEST(test_yield_holds_until_native_after_release);
+    RUN_TEST(test_yield_only_on_beats_where_it_presses);
     RUN_TEST(test_blocked_engine_releases_the_beat);
+    RUN_TEST(test_ch_view_observes_without_emitting);
     RUN_TEST(test_diag_tracks_native_beat_and_counters);
     RUN_TEST(test_blocked_reasons_are_distinct);
     return UNITY_END();

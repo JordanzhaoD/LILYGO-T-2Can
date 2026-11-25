@@ -546,8 +546,14 @@ static void t2canRightWheelPressTick()
     // the DND died whenever the FSD master switch was off, so it required a
     // bogus "open-then-close" toggle to take effect. Gate on canOnline (bus
     // connectivity) instead, plus the per-feature switch.
+    // 6.1.0-beta.12: the vehicle-OTA flag no longer gates this engine (nor
+    // the left-wheel one). The flag is only ever CLEARED by 0x318 frames and
+    // this vehicle's bus carries none, so once set it stayed set for the
+    // whole drive and both wheel engines went silent. A button bit on the
+    // car's own 0x045 frame has nothing to do with a software update; the
+    // FSD activation paths and the anti-jerk procedure keep the gate.
     bool allowed = canOnline && dashRightWheelPressEnabled && dashLegacyHandlerActive() &&
-                   !dashJitterCtrl.procedureActive() && !vehicleOtaActive;
+                   !dashJitterCtrl.procedureActive();
     if (allowed && dashHandler && !dashHandler->abortGuard.allowsInjection())
     {
         dashHandler->abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyWheel045Dnd);
@@ -576,8 +582,9 @@ static void t2canWheelDndTick()
         gateBlock = DashLegacyWheel045Block::NotLegacy;
     else if (dashJitterCtrl.procedureActive())
         gateBlock = DashLegacyWheel045Block::StalkOwnedByJitter;
-    else if (vehicleOtaActive)
-        gateBlock = DashLegacyWheel045Block::OtaGuard;
+    // 6.1.0-beta.12: the vehicle-software-update gate that used to sit here
+    // is removed (see the note in t2canRightWheelPressTick() above). The
+    // OtaGuard enum value is kept so an old log string still resolves.
     else if (dashHandler && !dashHandler->abortGuard.allowsInjection())
     {
         dashHandler->abortGuard.recordBlock(DashAbortGuardBlockPath::LegacyWheel045Dnd);

@@ -194,6 +194,63 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn("canActive", expr)
         self.assertNotIn("canOnline", expr)
 
+    def _can_task_tick(self, name: str) -> str:
+        m = re.search(r"static void " + name + r"\(\).*?\n}\n", self.main, re.S)
+        self.assertIsNotNone(m, f"{name}() not found in src/main.cpp")
+        return m.group(0)
+
+    def test_wheel_dnd_ticks_do_not_gate_on_vehicle_ota(self) -> None:
+        """Both wheel-DND engines ride the car's own 0x045 stream (a scroll
+        tick / a button bit) and have nothing to do with a vehicle software
+        update, so the vehicle-OTA flag must not gate them.
+
+        Field history: the flag can only be CLEARED by 0x318 frames, and this
+        vehicle's bus carries none in any capture — once set it stays set for
+        the whole drive, and both engines go silent (left wheel: 0 frames
+        from 11-24 on, while the same frames replayed on the bench emit 67).
+        Jordan, 2026-11-25: drop this gate from the wheel engines.
+        The FSD activation paths and the anti-jerk procedure keep it.
+        """
+        for name in ("t2canWheelDndTick", "t2canRightWheelPressTick"):
+            with self.subTest(tick=name):
+                body = self._can_task_tick(name)
+                self.assertNotIn("vehicleOtaActive", body)
+                self.assertNotIn("dashOtaGuardAllowInjection", body)
+                self.assertNotIn("dashOtaGuardStatus", body)
+                self.assertNotIn("DashLegacyWheel045Block::OtaGuard", body)
+                # the gates that must stay
+                self.assertIn("canOnline", body)
+                self.assertIn("dashLegacyHandlerActive()", body)
+                self.assertIn("dashJitterCtrl.procedureActive()", body)
+                self.assertIn("abortGuard", body)
+
+    def test_activation_and_jitter_keep_the_vehicle_ota_gate(self) -> None:
+        """Removing the OTA gate from the wheel engines must not remove it
+        from the paths that write FSD activation (0x3EE) or run anti-jerk."""
+        jitter = self._can_task_tick("t2canJitterTick")
+        self.assertIn("vehicleOtaActive", jitter)
+        self.assertIn("dashOtaGuardProcessFrame", self.dash)
+
+    def test_wheel_dnd_exposes_which_gate_blocks_it(self) -> None:
+        """The left-wheel grid must be able to say WHICH gate is holding the
+        engine back. `armed` alone is an AND of everything; the runtime
+        permission and the gate enum are what the owner needs on screen
+        (2026-11-25: the engine went silent on the car for two days and the
+        bench replay could not tell which gate it was)."""
+        start = self.dash.index('"wheelDndDiag":{"enabled":')
+        end = self.dash.index("appendWheelDndDiagJson(j, now);", start) if "appendWheelDndDiagJson(j, now);" in self.dash[start:] else start + 4000
+        block = self.dash[start:start + 4000]
+        for key in ("runtimeAllowed", "runtimeBlock"):
+            with self.subTest(key=key):
+                self.assertIn(',"' + key + '":', block)
+        self.assertIn("d.runtimeAllowed", block)
+        self.assertIn("dashLegacyWheel045BlockName(d.runtimeBlock)", block)
+        # the grid renders both, with a human-readable gate bar
+        self.assertIn("wheel-gate-bar", self.ui)
+        self.assertIn("rp-gate-bar", self.ui)
+        self.assertIn("wd.runtimeAllowed", self.ui)
+        self.assertIn("wd.runtimeBlock", self.ui)
+
     def test_right_wheel_press_grid_keys_match_status_json(self) -> None:
         """Every `rp.<key>` the right-wheel status grid reads must be emitted
         in the /status `rightWheelPressDiag` object (review I1: `apState` was
@@ -1564,21 +1621,22 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertIn("t2canWheelDndTick();", can_task.group(0))
 
     def test_phase3_wheel_dnd_has_independent_legacy_gate(self) -> None:
-        """Legacy 0x045 DND requires its own switch, Legacy, TWAI and no OTA.
+        """Legacy 0x045 DND requires its own switch, Legacy, TWAI and no anti-jerk procedure.
 
         6.1.0-beta.08: the gate is bus connectivity (canOnline), NOT the FSD
         injection master switch (canActive) — the DND rides the native 0x045
         stream and must keep working with FSD injection switched off (field
         report: the DND died with the master switch off).
+        6.1.0-beta.12: the vehicle-OTA flag is no longer a gate either (see
+        test_wheel_dnd_ticks_do_not_gate_on_vehicle_ota).
         """
         tick = re.search(r"static void t2canWheelDndTick\(\).*?\n}\n", self.main, re.S)
         self.assertIsNotNone(tick)
         body = tick.group(0)
         self.assertIn("!canOnline || !dashDndVolume", body)
         self.assertNotIn("!canActive || !dashDndVolume", body)
-        self.assertNotIn("dashDefenseEnabled", body)
+        self.assertNotIn("vehicleOtaActive", body)
         self.assertIn("!dashLegacyHandlerActive()", body)
-        self.assertIn("vehicleOtaActive", body)
         self.assertIn("DashLegacyWheel045Block::TwaiUnavailable", body)
         self.assertNotIn("appDriverSecondary", body)
 

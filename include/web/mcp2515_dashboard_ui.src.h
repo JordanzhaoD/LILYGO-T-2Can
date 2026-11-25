@@ -519,6 +519,20 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
 .sp-val { font-size:24px; font-weight:700; color:var(--tx3); margin:6px 0; }
 .state-panel.active .sp-val { color:var(--ok-ink); }
 .sp-desc { font-size:10.5px; color:var(--cockpit-dim); }
+/* Engine status bar (2026-11-25): says in plain words WHICH gate holds a
+   wheel-DND engine back. The engines went silent on the car for two days
+   while every counter read zero — the cause never reached the screen. */
+.eng-status{display:flex;align-items:center;gap:8px;margin:8px 0 2px;padding:7px 12px;border-radius:10px;font-size:12.5px;line-height:1.4;border:1px solid transparent}
+.eng-status .led{width:8px;height:8px;border-radius:50%;flex:none}
+.eng-ok{background:rgba(74,222,128,.10);border-color:rgba(74,222,128,.35);color:#86efac}
+.eng-ok .led{background:#4ade80;box-shadow:0 0 8px #4ade80}
+.eng-off{background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.30);color:#cbd5e1}
+.eng-off .led{background:#94a3b8}
+.eng-blocked{background:rgba(248,113,113,.13);border-color:rgba(248,113,113,.55);color:#fca5a5}
+.eng-blocked .led{background:#f87171;box-shadow:0 0 8px #f87171}
+.eng-warn{background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.50);color:#fde68a}
+.eng-warn .led{background:#fbbf24;box-shadow:0 0 8px #fbbf24}
+.eng-status code{font-family:var(--font-mono);font-size:11.5px;opacity:.85}
 .gate-bar { height:5px; background:rgba(52,211,153,.15); border-radius:999px; margin-top:9px; overflow:hidden; }
 .gate-bar i { display:block; height:100%; width:0; background:linear-gradient(90deg,#34d399,#10b981); border-radius:999px; transition:width .2s; }
 .src-row { display:flex; align-items:center; justify-content:space-between; background:var(--row-sink); border:1px solid var(--ds-card-stroke); border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:12px; }
@@ -1335,15 +1349,16 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
   <div class="setting-row">
     <div>
       <div class="setting-name"><span data-i18n="右滚轮按压免打扰 ">右滚轮按压免打扰 </span><span class="exp-badge" data-i18n="实验">实验</span></div>
-      <div class="setting-desc" data-i18n="NAG 提醒时合成右滚轮中央键点击（0x045 开关字 bit4，按下帧+松开帧）；每轮提醒最多 2 次点击，提示消除即停。按压会触发车机中央键菜单，是否能避免尚待实车验证。与下方左滚轮免打扰并行、可单独开启；默认关">NAG 提醒时合成右滚轮中央键点击（0x045 开关字 bit4，按下帧+松开帧）；每轮提醒最多 2 次点击，提示消除即停。按压会触发车机中央键菜单，是否能避免尚待实车验证。与下方左滚轮免打扰并行、可单独开启；默认关</div>
+      <div class="setting-desc" data-i18n="提醒出现时按住右滚轮中央键（0x045 开关字 bit4）：每个原生滚轮帧后跟一帧按压，提醒消失即停，每轮最多 6 帧。按压会弹出车机中央键菜单（已知代价）。与下方左滚轮免打扰并行、可单独开启；默认关">提醒出现时按住右滚轮中央键（0x045 开关字 bit4）：每个原生滚轮帧后跟一帧按压，提醒消失即停，每轮最多 6 帧。按压会弹出车机中央键菜单（已知代价）。与下方左滚轮免打扰并行、可单独开启；默认关</div>
     </div>
     <label class="tgl"><input type="checkbox" id="def-right-press-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
+  <div class="eng-status eng-off" id="rp-gate-bar"><span class="led"></span><span id="rp-gate-text">--</span></div>
   <div class="diag-grid" style="margin:6px 0 4px">
     <div class="diag-item"><span class="lbl" data-i18n="告警状态">告警状态</span><span class="v-dim" id="rp-hands-state">--</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="原生 0x045">原生 0x045</span><span class="v-dim" id="rp-native-045" data-i18n="等待">等待</span></div>
-    <div class="diag-item"><span class="lbl" data-i18n="状态/本轮点击/上限">状态/本轮点击/上限</span><span class="v-dim" id="rp-sequence-state">idle / 0 / 2</span></div>
-    <div class="diag-item"><span class="lbl" data-i18n="按下/松开/发送失败">按下/松开/发送失败</span><span class="v-dim" id="rp-click-counts">0 / 0 / 0</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="状态/本轮按压帧/上限">状态/本轮按压帧/上限</span><span class="v-dim" id="rp-sequence-state">idle / 0 / 2</span></div>
+    <div class="diag-item"><span class="lbl" data-i18n="按下帧/按住中/发送失败">按下帧/按住中/发送失败</span><span class="v-dim" id="rp-click-counts">0 / 0 / 0</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="回声/动作帧">回声/动作帧</span><span class="v-dim" id="rp-echo-state">0 / 0</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="提醒轮次/自愈">提醒轮次/自愈</span><span class="v-dim" id="rp-episode-state">0 / 0</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="阻断原因">阻断原因</span><span class="v-dim" id="rp-blocked-reason">disabled</span></div>
@@ -1355,6 +1370,7 @@ textarea.inp { resize: vertical; min-height: 60px; font-family: monospace;
     </div>
     <label class="tgl"><input type="checkbox" id="def-dnd-vol-tgl" onchange="saveDefenseConfig()"><div class="tgl-track"></div></label>
   </div>
+  <div class="eng-status eng-off" id="wheel-gate-bar"><span class="led"></span><span id="wheel-gate-text">--</span></div>
   <div class="diag-grid" style="margin:6px 0 4px">
     <div class="diag-item"><span class="lbl" data-i18n="告警状态">告警状态</span><span class="v-dim" id="wheel-hands-state">--</span></div>
     <div class="diag-item"><span class="lbl" data-i18n="原生 0x045">原生 0x045</span><span class="v-dim" id="wheel-native-3c2" data-i18n="等待">等待</span></div>
@@ -2060,7 +2076,7 @@ var I18N={
   '后台流式写入，不阻塞 CAN':'Background streaming write, no CAN blocking','含 Model X CAN1 0x045 滚轮 RX/TX 及只读网关别名 0x238 / 0x292':'Model X CAN1 0x045 wheel RX/TX plus read-only gateway aliases 0x238 / 0x292','启动保存: ':'Boot save: ',
   '启用':'Enable','启用双拨触发':'Enable Double-Stalk Trigger','启用后按配置执行多次拨杆注入':'When enabled, runs multi-shot stalk injection per config',
   '启用自动偏移':'Enable Auto Offset','告警':'Alert','告警状态':'Alert Status',
-  '回声/镜像':'Echo/Mirror','状态/本轮点击/上限':'State/Clicks This Round/Cap','按下/松开/发送失败':'Press/Release/TX Fail','回声/动作帧':'Echo/Action Frames','提醒轮次/自愈':'Warning Rounds/Heals','已解除':'Disarmed','闸门拦截':'Gate blocked','固件按当前 speedLimit 自动选择偏移比例，适合日常使用':'Firmware picks the offset ratio from the current speedLimit — good for daily use','固件版本':'Firmware Version',
+  '回声/镜像':'Echo/Mirror','状态/本轮按压帧/上限':'State/Press Frames This Round/Cap','按下帧/按住中/发送失败':'Press Frames/Held/TX Fail','回声/动作帧':'Echo/Action Frames','提醒轮次/自愈':'Warning Rounds/Heals','已解除':'Disarmed','闸门拦截':'Gate blocked','确认开启 FSD 注入（0x3EE）？':'Enable FSD injection (0x3EE)?','闸门全开':'All gates open','开关未开启':'Switch is off','当前不是 Legacy 模式':'Not in Legacy mode','AP 未激活':'AP not active','提醒已消失':'Warning cleared','还没收到原生 0x045':'No native 0x045 yet','原生 0x045 已过期':'Native 0x045 stale','原生 0x045 校验失败':'Native 0x045 check failed','车辆 OTA 标志拦截':'Blocked by the vehicle OTA flag','CAN 发送器未就绪':'CAN transmitter not ready','0x399 状态已过期':'0x399 status stale','检测到真实滚轮操作':'Real scroll wheel input detected','计数器冲突':'Counter conflict','松开超时':'Release timeout','发送失败':'TX failed','连续发送失败已停用':'Auto-disabled after repeated TX failures','本轮配对已用完':'Episode budget used up','Abort Guard 锁止':'Abort guard latched','防甩程序占用 0x045':'Anti-jerk procedure owns 0x045','被闸门拦截':'Blocked by a gate','提醒闪回·稳定等待中':'Warning flickered back, waiting for a clean gap','等待原生帧':'Waiting for a native frame','按压中':'Pressing','待命':'Idle','左滚轮免打扰：开关未开启':'Left-wheel DND: switch is off','左滚轮免打扰：连续发送失败，已自动停用（约 0.8 秒后自恢复）':'Left-wheel DND: auto-disabled after repeated TX failures (self-recovers in about 0.8 s)','左滚轮免打扰：被闸门拦截':'Left-wheel DND: blocked by a gate','左滚轮免打扰：运行中':'Left-wheel DND: running','右滚轮按压免打扰：开关未开启':'Right-wheel press DND: switch is off','右滚轮按压免打扰：连续发送失败，已自动停用（约 0.8 秒后自恢复）':'Right-wheel press DND: auto-disabled after repeated TX failures (self-recovers in about 0.8 s)','右滚轮按压免打扰：被闸门拦截':'Right-wheel press DND: blocked by a gate','右滚轮按压免打扰：按键按下中':'Right-wheel press DND: button held','右滚轮按压免打扰：运行中':'Right-wheel press DND: running','固件按当前 speedLimit 自动选择偏移比例，适合日常使用':'Firmware picks the offset ratio from the current speedLimit — good for daily use','固件版本':'Firmware Version',
   '固定':'Fixed','固定加值，范围 0-33 km/h':'Fixed add-on, 0-33 km/h','固定百分比':'Fixed Percent',
   '均衡响应':'Balanced Response','城市快速路':'Urban Expressway','城市快速路 cp2':'Urban Expressway cp2',
   '基于车速和驾驶模式的自动换挡策略（示意图）':'Speed- and style-based auto shift strategy (illustrative)','填写每个速度区间的偏移百分比，范围 0-50%':'Set offset percent per speed range, 0-50%','声音警告抑制':'Chime Suppression',
@@ -2155,7 +2171,7 @@ var I18N={
   '删除':'Delete','暂无插件。新安装默认禁用。':'No plugins yet. New installs start disabled.','目标ID: ':'Target ID: ',
   '详情':'Details','8.3.6防甩机制 ':'8.3.6 Anti-Jerk ','AP/EAP 兼容 ':'AP/EAP Compat ',
   'CAN2 ID 列表 ':'CAN2 ID List ','CAN2 控制 ':'CAN2 Control ','FSD-V14 模式 ':'FSD-V14 Mode ',
-  'Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','右滚轮按压免打扰 ':'Right-Wheel Press DND ','实车路径':'Field-verified','NAG 提醒时合成右滚轮中央键点击（0x045 开关字 bit4，按下帧+松开帧）；每轮提醒最多 2 次点击，提示消除即停。按压会触发车机中央键菜单，是否能避免尚待实车验证。与下方左滚轮免打扰并行、可单独开启；默认关':'On a NAG warning, synthesize a right-wheel CENTER-button click (0x045 switch word bit4, press frame + release frame); at most 2 clicks per warning, stops as soon as the prompt clears. The press triggers the center-button menu on the head unit; whether this click shape avoids it is still to be field-verified. Runs in parallel with the left-wheel DND below and can be enabled on its own; default OFF','0x3EE FSD 激活注入':'0x3EE FSD Activation Injection','TX 分路':'TX Split','默认开。关闭后本机 0x3EE 激活注入停发（含防甩程序——其 0x3EE 写入同样受本开关管辖），配合车辆原生激活使用；速度智能偏移继续经 0x3EE 纯速度通道写入速度字段、不碰激活位，不受影响；左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。':'Default ON. OFF stops the device 0x3EE activation injection (anti-jerk included — its 0x3EE writes answer to this switch too) for native-activation driving; the smart speed offset keeps flowing through the pure-speed 0x3EE channel (speed field only, activation bits untouched) and the wheel DND is unaffected. Same switch as the home-page master toggle — two entries, one state.','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
+  'Legacy 左滚轮免打扰 ':'Legacy Left-Wheel DND ','右滚轮按压免打扰 ':'Right-Wheel Press DND ','实车路径':'Field-verified','提醒出现时按住右滚轮中央键（0x045 开关字 bit4）：每个原生滚轮帧后跟一帧按压，提醒消失即停，每轮最多 6 帧。按压会弹出车机中央键菜单（已知代价）。与下方左滚轮免打扰并行、可单独开启；默认关':'On a warning, HOLD the right-wheel CENTER button (0x045 switch word bit4): one press frame behind every native wheel frame until the warning clears, at most 6 frames per warning. The press pops the center-button menu on the head unit (a known cost). Runs in parallel with the left-wheel DND below and can be enabled on its own; default OFF','0x3EE FSD 激活注入':'0x3EE FSD Activation Injection','TX 分路':'TX Split','默认开。关闭后本机 0x3EE 激活注入停发（含防甩程序——其 0x3EE 写入同样受本开关管辖），配合车辆原生激活使用；速度智能偏移继续经 0x3EE 纯速度通道写入速度字段、不碰激活位，不受影响；左滚轮免打扰不受影响。与首页「模块总开关」为同一开关的两个入口，状态互通。':'Default ON. OFF stops the device 0x3EE activation injection (anti-jerk included — its 0x3EE writes answer to this switch too) for native-activation driving; the smart speed offset keeps flowing through the pure-speed 0x3EE channel (speed field only, activation bits untouched) and the wheel DND is unaffected. Same switch as the home-page master toggle — two entries, one state.','Release 在线更新 ':'Release Online Update ','双拨爆闪 ':'Double-Stalk Burst ',
   '忽略车辆 OTA 守卫 ':'Ignore Vehicle OTA Guard ','最大性能 ':'Max Performance ','爆闪开关 ':'Burst Switch ',
   '自动换挡 ':'Auto Shift ','速度免打扰 ':'Speed DND ','限速覆盖 ':'Limit Override ',
   '未知 / 无效 / SNA 档位默认禁止注入；AP 断开立即清零 Gate 计时。此策略由服务端 C++ 强制（handlers.h），客户端 UI 无法绕过。':'Unknown / invalid / SNA gears block injection by default; AP disconnect resets gate timing instantly. Enforced server-side in C++ (handlers.h) — the web UI cannot bypass it.',
@@ -3922,6 +3938,24 @@ function renderLegacyTruth(d){
   set('service-burst-state',`${svc.lastCommand==='enter'?T('进入'):svc.lastCommand==='exit'?T('退出'):T('无')} / ${T('剩余')} ${svc.remaining||0}`);
   set('service-last-data',svctx.lastData||'--');
   set('service-tx-evidence',`${T('成功')} ${svctx.txOk||0} / ${T('失败')} ${svctx.txErr||0}`);
+// Plain-language gate reasons for the two wheel-DND engines (the codes are
+// what /status emits; T() keys are the Chinese wording, the dict carries EN).
+var GATE_TEXT={
+  none:'闸门全开', disabled:'开关未开启', 'not_legacy':'当前不是 Legacy 模式', ap_inactive:'AP 未激活',
+  warning_clear:'提醒已消失', no_native:'还没收到原生 0x045', stale_native:'原生 0x045 已过期',
+  invalid_native:'原生 0x045 校验失败', ota_guard:'车辆 OTA 标志拦截', twai_unavailable:'CAN 发送器未就绪',
+  context_stale:'0x399 状态已过期', physical_input:'检测到真实滚轮操作', counter_conflict:'计数器冲突',
+  release_timeout:'松开超时', tx_failed:'发送失败', auto_disarmed:'连续发送失败已停用',
+  episode_limit:'本轮配对已用完', abort_guard:'Abort Guard 锁止', stalk_owned_by_jitter:'防甩程序占用 0x045',
+  runtime:'被闸门拦截', warn_flicker:'提醒闪回·稳定等待中',
+  waiting_native:'等待原生帧', armed:'按压中', idle:'待命'
+};
+function gateText(code){ if(!code) return '--'; var k=String(code); return GATE_TEXT.hasOwnProperty(k)?T(GATE_TEXT[k]):k; }
+function paintEngBar(barId,textId,cls,text,code){
+  var bar=$(barId); if(!bar) return;
+  bar.className='eng-status '+cls;
+  $(textId).innerHTML=code?T(text)+' <code>'+code+'</code>':T(text);
+}
   const wd=d.wheelDndDiag||{};
   set('wheel-hands-state',wd.dasStatusSeen?`AP${wd.apState??'--'} · ${T('手部')}${wd.handsState??'--'} · ${wd.warningActive?T('告警'):T('等待')} · ${wd.dasStatusDriver||'unknown'}`:T('等待 0x399'));
   set('wheel-native-3c2',wd.native045Seen?`${wd.native045AgeMs} ms · C${Number(wd.nativeCounter||0).toString(16).toUpperCase()}`:T('等待 CAN1 0x045'));
@@ -3930,15 +3964,24 @@ function renderLegacyTruth(d){
   set('wheel-action-type',`${wd.positiveTx||0} / ${wd.negativeTx||0} / ${wd.volumeNeutralEpisodes||0}`);
   set('wheel-counter-state',`${wd.expectedCounterDuplicates||0} / ${wd.counterConflicts||0}`);
   set('wheel-echo-state',`${wd.ownEchoRx||0} / ${wd.gatewayMirrorRx||0}`);
-  set('wheel-blocked-reason',wd.blockedReason||'--');
+  set('wheel-blocked-reason',gateText(wd.blockedReason));
+  if(!wd.enabled) paintEngBar('wheel-gate-bar','wheel-gate-text','eng-off','左滚轮免打扰：开关未开启','');
+  else if(wd.autoDisarmed) paintEngBar('wheel-gate-bar','wheel-gate-text','eng-blocked','左滚轮免打扰：连续发送失败，已自动停用（约 0.8 秒后自恢复）',wd.blockedReason);
+  else if(wd.runtimeAllowed===false) paintEngBar('wheel-gate-bar','wheel-gate-text','eng-blocked','左滚轮免打扰：被闸门拦截',wd.runtimeBlock);
+  else paintEngBar('wheel-gate-bar','wheel-gate-text','eng-ok','左滚轮免打扰：运行中','');
   const rp=d.rightWheelPressDiag||{};
   set('rp-hands-state',rp.dasStatusSeen?`AP${rp.apState??'--'} · ${T('手部')}${rp.handsState??'--'} · ${rp.warningActive?T('告警'):T('等待')}${rp.disarmed?' · '+T('已解除'):(rp.enabled&&!rp.runtimeAllowed?' · '+T('闸门拦截'):'')}`:T('等待 0x399'));
   set('rp-native-045',rp.native045Seen?`${rp.native045AgeMs} ms · C${Number(rp.nativeCounter||0).toString(16).toUpperCase()}`:T('等待 CAN1 0x045'));
   set('rp-sequence-state',`${rp.sequenceState||'idle'} / ${rp.pressesThisEpisode||0} / ${rp.maxPressesPerEpisode??2}`);
-  set('rp-click-counts',`${rp.pressed||0} / ${rp.released||0} / ${rp.txFail||0}`);
+  set('rp-click-counts',`${rp.pressed||0} / ${rp.pressInFlight?'1':'0'} / ${rp.txFail||0}`);
   set('rp-echo-state',`${rp.echoSuppressed||0} / ${rp.actionFrameSkipped||0}`);
   set('rp-episode-state',`${rp.warningEpisodes||0} / ${rp.disarmHeals||0}`);
-  set('rp-blocked-reason',rp.blockedReason||'--');
+  set('rp-blocked-reason',gateText(rp.blockedReason));
+  if(!rp.enabled) paintEngBar('rp-gate-bar','rp-gate-text','eng-off','右滚轮按压免打扰：开关未开启','');
+  else if(rp.disarmed) paintEngBar('rp-gate-bar','rp-gate-text','eng-blocked','右滚轮按压免打扰：连续发送失败，已自动停用（约 0.8 秒后自恢复）',rp.blockedReason);
+  else if(rp.runtimeAllowed===false) paintEngBar('rp-gate-bar','rp-gate-text','eng-blocked','右滚轮按压免打扰：被闸门拦截',rp.blockedReason);
+  else if(rp.pressInFlight) paintEngBar('rp-gate-bar','rp-gate-text','eng-warn','右滚轮按压免打扰：按键按下中','');
+  else paintEngBar('rp-gate-bar','rp-gate-text','eng-ok','右滚轮按压免打扰：运行中','');
 }
 
 // ── Temp from system_status ────────────────────────────────
