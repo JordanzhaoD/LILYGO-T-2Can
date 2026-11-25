@@ -1,5 +1,58 @@
 # Changelog
 
+## [6.1.0-beta.12] - 2026-11-26
+
+### Wheel engines: vehicle-OTA gate removed; right-wheel back to a held press; gate status on screen
+
+Field verdict on beta.11 (9 captures, 2026-11-25): the right-wheel press
+was "occasionally effective, mostly not", and the left-wheel DND — stable
+for six weeks — went silent too.
+
+**What the data showed**
+
+- Left-wheel DND: 0 frames on the car, twice, for 6-second nags. The same
+  frames replayed through the production engines (with the production
+  coordination bindings) emit 67 frames. The engine logic is right; a
+  runtime gate was closed on the car. The left-wheel tick has not
+  transmitted in any capture since 11-23 22:48.
+- Right-wheel center **click** (beta.11): of the nags that persist (5-9 s
+  when nothing intervenes), 0 of 3 were cleared — they ran their natural
+  length. The nags it did "clear" were the short ones that go away on
+  their own within 0.5 s.
+- beta.07's press was **not** a click: it was a held button — a press
+  frame behind every idle native beat until hands dropped (4-8 frames,
+  0.4-0.7 s) — and that cleared 6 of 6.
+
+**Changes**
+
+- **Vehicle-OTA gate removed from both wheel engines.** The flag is only
+  ever cleared by 0x318 frames, and this vehicle's bus carries none in any
+  capture, so once set it stays set for the whole drive. A button bit on
+  the car's own 0x045 frame has nothing to do with a software update. The
+  FSD activation paths and the anti-jerk procedure keep the gate.
+- **Right-wheel: bounded held press.** A press frame behind every idle
+  native beat while the warning lasts — the beta.07 shape — capped at 6
+  frames per warning (beta.07 had no bound, and an unbounded press gated
+  on hands=2 is the beta.08 853-frame blast). No release frame and no
+  click spacing; the car's own next native frame reports the button
+  released, so the bus counter only repeats and never regresses. Kept from
+  beta.11: a new warning episode needs 1.5 s of clean warning, hands=2
+  never fires, a flicker or a gate flap never re-arms.
+- **Known cost, unchanged since beta.07: every press pops the head-unit
+  center-button menu.** Not solved in this version.
+- **The screen now says which gate holds an engine back.** A status bar
+  above each wheel grid: running / switch is off / blocked by `<gate>` /
+  auto-disabled after TX failures — in plain words, zh and en. `/status`
+  gains `wheelDndDiag.runtimeAllowed` + `runtimeBlock`, and
+  `rightWheelPressDiag.pressInFlight` (replacing the click-era `released`
+  and `releasePending`).
+
+Tests: native 172/172 (press 22, left-wheel 27 including four live
+two-engine coordination cases). New contracts: the wheel ticks must not
+reference the OTA flag while activation and anti-jerk must; the left-wheel
+grid must be able to name its gate. Also fixes a pre-existing i18n key
+mismatch on the home-page "enable FSD injection" confirm dialog.
+
 ## [6.1.0-beta.11] - 2026-11-25
 
 ### Right-wheel click DND: independent-review fixes
