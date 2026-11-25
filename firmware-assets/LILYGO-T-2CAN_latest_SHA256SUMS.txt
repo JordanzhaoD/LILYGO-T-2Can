@@ -1,4 +1,4 @@
-LILYGO-T-2CAN_latest_ota_app.bin = 6.1.0-beta.10 (uiBuildId 6.1.0-beta.10-lilygo_t2can_dual-47bc051b65c4)
-LILYGO-T-2CAN_latest_full_merged.bin = 6.1.0-beta.10
-d9191d48074f14dc1cd56eacbba959e2cbc00aa3c8586d2502ed9984518c7eb1  LILYGO-T-2CAN_v6.1.0-beta.10_ota_app.bin
-22869a4c82d9e9aa82ccd8e3b28e0aa3612d733352e528b4bc4e226ceffb4438  LILYGO-T-2CAN_v6.1.0-beta.10_full_merged.bin
+LILYGO-T-2CAN_latest_ota_app.bin = 6.1.0-beta.11 (uiBuildId 6.1.0-beta.11-lilygo_t2can_dual-cc5eea0b6fe0)
+LILYGO-T-2CAN_latest_full_merged.bin = 6.1.0-beta.11
+d485256da1a1c73adfef7b677e562527a15fe170b351f9ba2b025ead9b927a1f  LILYGO-T-2CAN_v6.1.0-beta.11_ota_app.bin
+4a049d2fbeedf1bea0057ad9185bf8fb0b4c2ebad93d3697f13385679c2db970  LILYGO-T-2CAN_v6.1.0-beta.11_full_merged.bin
