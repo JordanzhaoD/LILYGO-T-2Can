@@ -194,6 +194,26 @@ class DashboardApiContractTests(unittest.TestCase):
         self.assertNotIn("canActive", expr)
         self.assertNotIn("canOnline", expr)
 
+    def test_right_wheel_press_grid_keys_match_status_json(self) -> None:
+        """Every `rp.<key>` the right-wheel status grid reads must be emitted
+        in the /status `rightWheelPressDiag` object (review I1: `apState` was
+        read by the grid and never sent, so the AP state showed `AP--`)."""
+        reads = set(re.findall(r"\brp\.([A-Za-z0-9_]+)", self.ui))
+        self.assertGreaterEqual(len(reads), 15, "right-wheel grid fill code not found")
+        start = self.dash.index('"rightWheelPressDiag":{"enabled":')
+        end = self.dash.index("appendLegacySmartSpeedJson(j, now);", start)
+        block = self.dash[start:end]
+        # Emitted keys look like:  j += R"JSON(,"warningEpisodes":)JSON";
+        emitted = {"enabled"} | set(re.findall(r',"([A-Za-z0-9_]+)":', block))
+        self.assertGreaterEqual(len(emitted), 18, "rightWheelPressDiag block not parsed")
+        self.assertEqual(sorted(reads - emitted), [], "grid reads keys /status never emits")
+        # every grid cell id is filled by the JS
+        for cell in ("rp-hands-state", "rp-native-045", "rp-sequence-state", "rp-click-counts",
+                     "rp-echo-state", "rp-episode-state", "rp-blocked-reason"):
+            with self.subTest(cell=cell):
+                self.assertIn(f'id="{cell}"', self.ui)
+                self.assertIn(f"set('{cell}'", self.ui)
+
     def test_status_exposes_build_and_legacy_diagnostics(self) -> None:
         """Device status must show which firmware/UI and handler mode are running."""
         for token in [

@@ -1123,32 +1123,33 @@ static void mcpDashOnFrame(const CanFrame &f)
         dashLegacyWheel045DndCtrl.onCan1Frame(f.data, f.dlc, static_cast<uint32_t>(now));
         // TX split v3: right-wheel PRESS DND rides the same native beat
         // (VEH only — a CH view double-feeding the engine would double-fire).
-        // The press frame goes out in-line, one beat behind the native frame,
-        // exactly like the beta02 offsetOnly writer on 0x3EE.
-        if (f.bus == CAN_BUS_VEH && appDriver)
+        // The click is two frames, each riding its own native beat: the PRESS
+        // goes out one beat behind a native frame; the RELEASE rides the next
+        // idle native frame (counter +1 on that frame, no counter regression
+        // on the bus — review M6). Both are reported back through
+        // recordTxResult(); a failed release is re-armed for the next beat.
+        // txCount is NOT bumped here: the driver's onSendFrame hook
+        // (mcpDashOnTxFrame) already counts every transmitted frame.
+        // The right-wheel engine OBSERVES every beat the left-wheel engine
+        // observes (both buses). Feeding it only on VEH left it blind to
+        // CH-view frames: after a click it would never see the "native frame
+        // after the release" and would keep owning the yield slot, so the
+        // left-wheel DND could be wedged (review I5). Transmitting is still
+        // VEH-only and driver-gated inside.
+        uint8_t click[8];
+        const bool emit = f.bus == CAN_BUS_VEH && appDriver &&
+                          dashRightWheelPressCtrl.onNative045(f.data, f.dlc, static_cast<uint32_t>(now), click);
+        if (emit)
         {
-            uint8_t press[8];
-            if (dashRightWheelPressCtrl.onNative045(f.data, f.dlc, static_cast<uint32_t>(now), press))
-            {
-                CanFrame out = f;
-                memcpy(out.data, press, 8);
-                const bool ok = appDriver->send(out);
-                dashRightWheelPressCtrl.recordTxResult(ok, static_cast<uint32_t>(now));
-                if (ok)
-                    txCount++;
-                // v3.3 click shape: a press frame alone reads as a HELD
-                // button (and pops the center-button menu). A physical click
-                // is press + released frame back to back, so emit the
-                // release right behind the press. recordTxResult() dropped
-                // it if the press failed.
-                uint8_t release[8];
-                if (dashRightWheelPressCtrl.popRelease(release, static_cast<uint32_t>(now)))
-                {
-                    memcpy(out.data, release, 8);
-                    if (appDriver->send(out))
-                        txCount++;
-                }
-            }
+            CanFrame out = f;
+            memcpy(out.data, click, 8);
+            const bool ok = appDriver->send(out);
+            dashRightWheelPressCtrl.recordTxResult(ok, static_cast<uint32_t>(now));
+        }
+        else if (f.bus != CAN_BUS_VEH)
+        {
+            // CH view: observe the beat only (never a source for a frame).
+            dashRightWheelPressCtrl.observeNative045(f.data, f.dlc, static_cast<uint32_t>(now));
         }
     }
     else if (f.id == DashLegacyWheel045Dnd::kGatewayMirrorId && f.dlc >= 8 &&
@@ -1724,8 +1725,12 @@ static void dashApplyRuntimeState()
         // source; pairing from it would repeat the counter).
         dashLegacyWheel045DndCtrl.setYieldGate(
             [](uint32_t nowMs) { return dashRightWheelPressCtrl.siblingOwnsBeat(nowMs); });
+        // configure() is a plain flag (safe from the web task). The RUNTIME
+        // permission is NOT set here: that would be a second, weaker writer
+        // (no OTA / abort-guard / jitter / TWAI gates) racing the CAN task's
+        // full gate chain in t2canRightWheelPressTick() (review I4). The tick
+        // is the single owner of setRuntimeAllowed().
         dashRightWheelPressCtrl.configure(dashRightWheelPressEnabled);
-        dashRightWheelPressCtrl.setRuntimeAllowed(canOnline && dashLegacyHandlerActive());
         dashHandler->pluginOwnsFsdActivation = dashPluginOwnsFsdActivation;
         dashHandler->jitterObserve3ee = dashJitterObserve3ee;
         dashHandler->jitterInhibit3ee = dashJitterInhibit3ee;
@@ -3225,10 +3230,16 @@ static void handleStatus()
         j += R"JSON(,"disarmHeals":)JSON";
         j += n.disarmHeals;
         // Status-grid observability (same contract shape as wheelDndDiag).
+        j += R"JSON(,"apState":)JSON";
+        j += n.apState;
         j += R"JSON(,"warningActive":)JSON";
         j += n.warningActive ? "true" : "false";
         j += R"JSON(,"apActive":)JSON";
         j += n.apActive ? "true" : "false";
+        j += R"JSON(,"dasStatusSeen":)JSON";
+        j += n.dasStatusMs != 0 ? "true" : "false";
+        j += R"JSON(,"runtimeAllowed":)JSON";
+        j += n.runtimeAllowed ? "true" : "false";
         j += R"JSON(,"warningEpisodes":)JSON";
         j += n.warningEpisodes;
         j += R"JSON(,"pressesThisEpisode":)JSON";
@@ -4199,6 +4210,7 @@ static void handleDefenseConfig()
         server.hasArg("sound_warning_suppression") || server.hasArg("speed_no_disturb") ||
         server.hasArg("ap_eap_compatible") || server.hasArg("dnd_volume") ||
         server.hasArg("fsd_3ee_inject") ||
+        server.hasArg("right_wheel_press") ||
         server.hasArg("legacy_scroll_dnd") ||
         server.hasArg("dnd_speed") || server.hasArg("isa_override") ||
         server.hasArg("abort_guard") ||

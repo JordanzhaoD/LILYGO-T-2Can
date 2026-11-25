@@ -107,11 +107,12 @@ struct DashLegacyWheel045Press
     // across them. Time-based as well as beat-based: a burst of native
     // frames closer than that must not let two clicks stack.
     static constexpr uint32_t kMinClickSpacingMs = 150;
-    // A press frame is owned by the engine for one beat after it is sent;
-    // the left-wheel DND yields its slot this long (beat-generational, the
-    // actual release is the next fresh idle native frame — see
-    // siblingOwnsBeat).
-    static constexpr uint32_t kCloneInFlightMs = 20;
+    // A new episode needs the warning to have been ABSENT for this long.
+    // Without it every hands 2<->3 flicker (and every gate drop/re-raise
+    // while hands stayed in the window) refilled the per-episode budget, and
+    // the engine clicked at the spacing rate for as long as the flicker
+    // lasted (review C1; density above the beta.08 blast).
+    static constexpr uint32_t kWarningSettleMs = 1500;
     // TX-failure disarm self-heal (same shape as the left-wheel DND).
     static constexpr uint8_t kMaxConsecutiveTxFailures = 2;
     static constexpr uint32_t kHealDelayMs = 800;
@@ -132,27 +133,38 @@ struct DashLegacyWheel045Press
         return static_cast<uint8_t>(crc ^ 0xFF);
     }
 
+    // Switches are PLAIN FLAGS (review I4): these two are called from the
+    // web task (config saves), while the engine itself runs in the CAN task.
+    // They never touch episode state here — the next onDasStatus() /
+    // onNative045() in the CAN task applies them.
     void configure(bool enabled)
     {
         enabled_ = enabled;
         diag.enabled = enabled;
         if (!enabled)
-        {
-            resetEpisode();
-            diag.blockedReason = "disabled";
-        }
+            endEpisode("disabled");
     }
 
     void setRuntimeAllowed(bool allowed)
     {
         runtimeAllowed_ = allowed;
         diag.runtimeAllowed = allowed;
+        // Losing the permission ends the action state (review I4/I5): a
+        // release still owed is dropped — the car's own next native frame
+        // releases the button — so nothing stays pending that would let the
+        // engine re-own the beat (and starve the left-wheel DND) once the
+        // permission comes back.
         if (!allowed)
-            resetEpisode();
+            endEpisode("runtime");
     }
 
-    // A press frame is identified by the side-button press bit (switch word
-    // bit 5).
+    // True when the engine is permitted to emit right now. The CAN-task tick
+    // owns the full gate chain; this lets a caller that only holds the
+    // engine see whether a click could go out.
+    bool acting() const { return canAct(); }
+
+    // A press frame is identified by the center-button press bit (switch
+    // word bit 4).
     static bool isPressFrame(const uint8_t data[8])
     {
         const uint16_t wheel = static_cast<uint16_t>(data[4]) |
@@ -160,9 +172,8 @@ struct DashLegacyWheel045Press
         return (wheel & kPressMask) != 0;
     }
 
-    // True when the frame carries no wheel/stalk action payload other than
-    // possibly our own press bit — the same switch-word shape the left-wheel
-    // DND requires before it will use a frame as source.
+    // True when the frame carries no wheel/stalk action payload — the same
+    // switch-word shape the left-wheel DND requires of a source frame.
     static bool isIdleActionFrame(const uint8_t data[8])
     {
         const uint16_t wheel = static_cast<uint16_t>(data[4]) |
@@ -170,46 +181,31 @@ struct DashLegacyWheel045Press
         return (wheel & kAnyWheelMask) == 0;
     }
 
-    bool cloneInFlight(uint32_t nowMs) const
-    {
-        return lastPressMs_ != 0 && nowMs - lastPressMs_ < kCloneInFlightMs;
-    }
-
-    // Beat ownership for the left-wheel DND yield gate: the click owns the
-    // beat until a FRESH idle native frame has been observed after its last
-    // frame. While a release is still owed the click is not finished, so
-    // the slot is owned regardless of native traffic.
+    // Beat ownership for the left-wheel DND yield gate. The click owns the
+    // beat from its press frame until the first idle native frame AFTER its
+    // release. While the engine is not permitted to act it owns nothing —
+    // otherwise a gate dropping right after a click would leave the left
+    // DND yielding forever (review I5: it starved until reboot).
     bool siblingOwnsBeat(uint32_t /*nowMs*/) const
     {
+        if (!canAct())
+            return false;
         if (releasePending_)
             return true;
         return lastClickEndMs_ != 0 && lastIdleNativeMs_ <= lastClickEndMs_;
     }
 
-    // True between a press frame and the moment its release is popped.
+    // True between a press frame and the native beat that carries its
+    // release.
     bool releasePending() const { return releasePending_; }
 
-    // Hands the owed release frame to the caller (the wiring sends it right
-    // after the press frame). Returns false when nothing is owed.
-    bool popRelease(uint8_t out[8], uint32_t nowMs)
-    {
-        if (!releasePending_)
-            return false;
-        memcpy(out, releaseFrame_, 8);
-        releasePending_ = false;
-        lastClickEndMs_ = nowMs;
-        diag.released++;
-        return true;
-    }
-
-    // EDGE trigger, identical to the left-wheel DND's onDasStatus episode
-    // entry: a warning ENTRY (was not warning -> now warning) opens an
-    // episode; staying inside the warning ladder does NOT re-open it. Leaving
-    // the window (or AP out, or engine down) closes the episode immediately.
+    // ── 0x399: observe unconditionally, act only when allowed ────────────
     void onDasStatus(uint8_t apState, uint8_t handsState, uint32_t nowMs)
     {
         healTick(nowMs);
-        const bool wasWarning = warningActive_;
+
+        // Observation (always): the status grid and the settle timer must
+        // reflect the bus even while the engine is off or blocked (review I2).
         apActive_ = apState >= 3 && apState <= 6;
         warningActive_ = isWarningState(handsState);
         diag.apState = apState;
@@ -217,99 +213,134 @@ struct DashLegacyWheel045Press
         diag.apActive = apActive_;
         diag.warningActive = warningActive_;
         diag.dasStatusMs = nowMs;
+        // Sample the PREVIOUS warning time before overwriting it: "how long
+        // had the warning been absent before this frame" is what the settle
+        // rule needs. (Updating first and then subtracting would always give
+        // 0 — the engine could then never open an episode.)
+        const uint32_t warningAbsentForMs =
+            warningActive_ ? (lastWarningMs_ == 0 ? 0xFFFFFFFFu : nowMs - lastWarningMs_)
+                           : 0;
+        if (warningActive_)
+            lastWarningMs_ = nowMs;
 
-        if (!enabled_ || !runtimeAllowed_ || disarmed_ || !apActive_)
+        // Episode rule (one rule, reviewed C1): an episode opens when the
+        // warning is present, no episode is open, and no warning has been
+        // seen for kWarningSettleMs. A flicker — hands dropping out and
+        // back inside the settle time — never earns a new budget, whichever
+        // side moved: hands, a gate, or the user switch.
+        // Rule for the readable reason (review I2): the 0x399 path owns it
+        // whenever the WARNING state is not "present with an open episode":
+        //   no AP            -> ap_inactive
+        //   no warning       -> warning_clear if an episode just ended, else idle
+        //   warning, blocked -> disabled / disarmed / runtime
+        //   warning, settling-> settling
+        //   warning, ready   -> waiting_native
+        // The 0x045 path only refines it INSIDE an open episode (spacing,
+        // release_pending, episode_limit, armed) and never touches it
+        // otherwise, so none of the values above is overwritten one beat later.
+        if (!apActive_)
         {
-            resetEpisode();
-            return;
+            endEpisode("ap_inactive");
+            diag.blockedReason = "ap_inactive";
         }
-
-        if (warningActive_ && !wasWarning)
+        else if (!warningActive_)
         {
-            // Fresh warning edge: open the episode, reset the press budget,
-            // and arm for the next idle native beat.
-            episodeActive_ = true;
-            pressesThisEpisode_ = 0;
-            diag.pressesThisEpisode = 0;
-            diag.warningEpisodes++;
-            diag.blockedReason = "waiting_native";
-            diag.sequenceState = "armed";
+            const bool wasOpen = episodeActive_;
+            endEpisode(wasOpen ? "warning_clear" : "idle");
+            diag.blockedReason = wasOpen ? "warning_clear" : "idle";
         }
-        else if (!warningActive_ && wasWarning)
+        else if (!episodeActive_)
         {
-            // Warning cleared (hands back to 0/1/2, or AP out): close it.
-            resetEpisode();
-            diag.blockedReason = "warning_clear";
+            const bool settled = lastWarningMs_ == 0 ||
+                                 warningAbsentForMs >= kWarningSettleMs;
+            if (!canAct())
+                diag.blockedReason = !enabled_ ? "disabled" : (disarmed_ ? "disarmed" : "runtime");
+            else if (settled)
+                openEpisode();
+            else
+                diag.blockedReason = "settling";
         }
     }
 
-    // Returns true and fills `out` when a press frame should be transmitted
-    // for this native frame. EDGE + episode-limited: at most
-    // kMaxPressesPerEpisode presses, each riding a fresh idle native beat.
+    // Observe a native beat without ever emitting on it (the CH-bus view,
+    // or any path that must not transmit). Keeps "have I seen a native frame
+    // after my release" true to the bus on both buses.
+    void observeNative045(const uint8_t data[8], uint8_t dlc, uint32_t nowMs)
+    {
+        if (dlc < 8 || isPressFrame(data) || !isIdleActionFrame(data))
+            return;
+        lastIdleNativeMs_ = nowMs;
+        diag.native045Seen = true;
+        diag.native045Ms = nowMs;
+        diag.nativeCounter = static_cast<uint8_t>((data[6] >> 4) & 0x0F);
+    }
+
+    // ── 0x045: the click itself ──────────────────────────────────────────
+    // PRESS: returns true and fills `out` when a press frame should go out
+    // for this native frame. The release does NOT go out with it any more:
+    // it rides the NEXT idle native frame (review M6 — an immediate c+2
+    // release put a counter regression on the bus: c, c+1, c+2, c+1).
     bool onNative045(const uint8_t data[8], uint8_t dlc, uint32_t nowMs, uint8_t out[8])
     {
-        if (!enabled_)
-        {
-            diag.blockedReason = "disabled";
-            return false;
-        }
-        if (!runtimeAllowed_)
-        {
-            diag.blockedReason = "runtime";
-            return false;
-        }
-        if (disarmed_)
-        {
-            diag.blockedReason = "disarmed";
-            return false;
-        }
         if (isPressFrame(data))
         {
-            // Our own echo (or a sibling's press frame): never chain and
-            // never count as a fresh native beat.
+            // A press frame (ours echoing back, or the driver really pressing
+            // the center button): never chain, never a fresh native beat.
             diag.echoSuppressed++;
             return false;
         }
         if (!isIdleActionFrame(data))
         {
-            // Left-wheel DND tick echoes / jitter stalk frames carry a
-            // functional payload — pressing those would re-send another
-            // engine's action with the press bit stitched on.
+            // A frame carrying a wheel/stalk action payload is never a source.
             diag.actionFrameSkipped++;
             return false;
         }
-        // A fresh idle native beat: this is what releases the yield slot.
-        lastIdleNativeMs_ = nowMs;
-        diag.native045Seen = true;
-        diag.native045Ms = nowMs;
-        diag.nativeCounter = static_cast<uint8_t>((data[6] >> 4) & 0x0F);
+        const bool fresh = lastIdleNativeMs_ != nowMs;
+        if (fresh)
+        {
+            lastIdleNativeMs_ = nowMs;
+            diag.native045Seen = true;
+            diag.native045Ms = nowMs;
+            diag.nativeCounter = static_cast<uint8_t>((data[6] >> 4) & 0x0F);
+        }
+
+        if (!canAct() || dlc < 8)
+            return false; // reason already set by the 0x399 path
+
+        // RELEASE first: a click is press frame, then the next native beat
+        // carries the released frame. The button is held for exactly one
+        // native interval (~100 ms on this vehicle).
+        if (releasePending_ && fresh)
+        {
+            memcpy(out, data, 8);
+            out[6] = static_cast<uint8_t>((out[6] & 0x0FU) |
+                                          ((((out[6] >> 4) + 1U) & 0x0FU) << 4));
+            out[7] = crc8J1850(out, 7);
+            releasePending_ = false;
+            releaseConfirmed_ = true;      // handed to the wiring
+            lastClickEndMs_ = nowMs;
+            return true;
+        }
+
         if (!episodeActive_ || !warningActive_ || !apActive_)
         {
-            diag.blockedReason = "idle";
+            // No open episode: the 0x399 path owns the reason (see there).
+            // Writing "idle" here used to erase warning_clear / settling one
+            // beat after they were recorded.
             return false;
         }
-        if (dlc < 8)
+        if (episodeExhausted_)
+        {
+            diag.blockedReason = "episode_limit"; // sticky until the episode ends
             return false;
+        }
         if (releasePending_)
         {
-            // The previous press has not been released yet: never stack a
-            // second press on a held button.
             diag.blockedReason = "release_pending";
             return false;
         }
-        if (pressesThisEpisode_ >= kMaxPressesPerEpisode)
+        if (lastClickEndMs_ != 0 && nowMs - lastClickEndMs_ < kMinClickSpacingMs)
         {
-            // Episode budget exhausted: stop intervening for this warning.
-            episodeActive_ = false;
-            diag.blockedReason = "episode_limit";
-            diag.sequenceState = "episode_limit";
-            return false;
-        }
-        if (lastClickEndMs_ != 0 &&
-            (lastIdleNativeMs_ <= lastClickEndMs_ || nowMs - lastClickEndMs_ < kMinClickSpacingMs))
-        {
-            // Spacing: the click before this one has not yet been followed by
-            // a fresh idle native frame, or not enough time has passed.
             diag.blockedReason = "spacing";
             return false;
         }
@@ -321,50 +352,66 @@ struct DashLegacyWheel045Press
         out[6] = static_cast<uint8_t>((out[6] & 0x0FU) |
                                       ((((out[6] >> 4) + 1U) & 0x0FU) << 4));
         out[7] = crc8J1850(out, 7);
-
-        // RELEASE frame, owed immediately after: the same idle frame, no
-        // button bits, counter +1 again, CRC recomputed. This is what a
-        // physical click looks like on the wire.
-        memcpy(releaseFrame_, data, 8);
-        releaseFrame_[6] = static_cast<uint8_t>((releaseFrame_[6] & 0x0FU) |
-                                                ((((releaseFrame_[6] >> 4) + 2U) & 0x0FU) << 4));
-        releaseFrame_[7] = crc8J1850(releaseFrame_, 7);
         releasePending_ = true;
-
-        lastPressMs_ = nowMs;
         pressesThisEpisode_++;
         diag.pressesThisEpisode = pressesThisEpisode_;
-        diag.pressed++;
         diag.blockedReason = "armed";
-        diag.sequenceState = pressesThisEpisode_ >= kMaxPressesPerEpisode
-                                 ? "pressed_last"
-                                 : "pressed";
+        if (pressesThisEpisode_ >= kMaxPressesPerEpisode)
+        {
+            // Budget spent: the episode stays open but exhausted, so a
+            // flicker cannot reopen it; it ends when the warning clears.
+            episodeExhausted_ = true;
+            diag.sequenceState = "pressed_last";
+        }
+        else
+        {
+            diag.sequenceState = "pressed";
+        }
         return true;
     }
 
+    // Which frame a true return from onNative045 delivered. The wiring calls
+    // recordTxResult() for either; it matters for the counters.
+    bool lastWasRelease() const { return releaseConfirmed_; }
+
     void recordTxResult(bool ok, uint32_t nowMs)
     {
-        if (!ok)
+        const bool wasRelease = releaseConfirmed_;
+        releaseConfirmed_ = false;
+        if (ok)
         {
-            diag.txFail++;
-            // A press that failed never reached the bus: nothing is held
-            // down, so its release must not go out on its own.
-            releasePending_ = false;
-            if (consecutiveTxFailures_ < 0xFF)
-                consecutiveTxFailures_++;
-            diag.consecutiveTxFailures = consecutiveTxFailures_;
-            if (consecutiveTxFailures_ >= kMaxConsecutiveTxFailures)
-            {
-                disarmed_ = true;
-                diag.disarmed = true;
-                disarmedAtMs_ = nowMs;
-                resetEpisode();
-                diag.blockedReason = "disarmed";
-            }
+            consecutiveTxFailures_ = 0;
+            diag.consecutiveTxFailures = 0;
+            if (wasRelease)
+                diag.released++; // only once the bus accepted it (review I3)
+            else
+                diag.pressed++;
             return;
         }
-        consecutiveTxFailures_ = 0;
-        diag.consecutiveTxFailures = 0;
+        diag.txFail++;
+        if (wasRelease)
+        {
+            // The button is left HELD on the bus. Re-arm the release so the
+            // next idle native beat retries it, and no new press may stack.
+            releasePending_ = true;
+        }
+        else
+        {
+            // The press never reached the bus: nothing is held, no release.
+            releasePending_ = false;
+            pressesThisEpisode_--; // the click did not happen: give it back
+            diag.pressesThisEpisode = pressesThisEpisode_;
+        }
+        if (consecutiveTxFailures_ < 0xFF)
+            consecutiveTxFailures_++;
+        diag.consecutiveTxFailures = consecutiveTxFailures_;
+        if (consecutiveTxFailures_ >= kMaxConsecutiveTxFailures)
+        {
+            disarmed_ = true;
+            diag.disarmed = true;
+            disarmedAtMs_ = nowMs;
+            endEpisode("disarmed");
+        }
     }
 
     void healTick(uint32_t nowMs)
@@ -392,28 +439,42 @@ private:
     {
         // The PROMPT ladder — identical to the field-stable left-wheel DND.
         // hands==2 (NOT_DETECTED) is the persistent "hands off wheel"
-        // baseline, NOT a prompt: it must never trigger an intervention
-        // (the beta.08 [2,7] regression). The prompt starts at hands==3
-        // (VISUAL) and escalates 4/5 (CHIME) to 7 (STRUCK_OUT). 9/10 are
-        // the escalated warning domain the left-wheel DND also covers.
+        // baseline, NOT a prompt (the beta.08 [2,7] regression). The prompt
+        // starts at hands==3 (VISUAL); 9/10 are the escalated domain.
         return (handsState >= 3 && handsState <= 6) ||
                (handsState >= 9 && handsState <= 10);
     }
 
-    void resetEpisode()
+    bool canAct() const { return enabled_ && runtimeAllowed_ && !disarmed_; }
+
+    void openEpisode()
     {
-        episodeActive_ = false;
-        warningActive_ = false;
-        apActive_ = false;
+        episodeActive_ = true;
+        episodeExhausted_ = false;
         pressesThisEpisode_ = 0;
-        // The episode is over (or the engine went down): a release that was
-        // still owed is dropped — the press it belonged to may not have
-        // been sent either, and the caller must never emit a lone release.
-        releasePending_ = false;
-        diag.sequenceState = "idle";
-        diag.warningActive = false;
-        diag.apActive = false;
         diag.pressesThisEpisode = 0;
+        diag.warningEpisodes++;
+        diag.sequenceState = "armed";
+        diag.blockedReason = "waiting_native";
+    }
+
+    // Closes the episode and forgets the action state. The OBSERVATION
+    // (apActive_, warningActive_, lastWarningMs_) is deliberately kept: it
+    // belongs to the bus, not to the engine's permission to act.
+    void endEpisode(const char *why)
+    {
+        const bool wasOpen = episodeActive_;
+        episodeActive_ = false;
+        episodeExhausted_ = false;
+        pressesThisEpisode_ = 0;
+        diag.pressesThisEpisode = 0;
+        releasePending_ = false;
+        releaseConfirmed_ = false;
+        if (wasOpen)
+        {
+            diag.sequenceState = "idle";
+            diag.blockedReason = why;
+        }
     }
 
     bool enabled_ = false;
@@ -422,14 +483,16 @@ private:
     bool warningActive_ = false;
     bool apActive_ = false;
     bool episodeActive_ = false;
+    bool episodeExhausted_ = false;
     uint8_t pressesThisEpisode_ = 0;
-    uint32_t lastPressMs_ = 0;
-    // Timestamp of the click's last frame (press or release, whichever was
-    // sent last); the next click waits for an idle native frame after it.
+    // A press frame went out; the next idle native beat owes the release.
+    bool releasePending_ = false;
+    // Last frame the engine handed to the wiring was a release.
+    bool releaseConfirmed_ = false;
     uint32_t lastClickEndMs_ = 0;
     uint32_t lastIdleNativeMs_ = 0;
-    bool releasePending_ = false;
-    uint8_t releaseFrame_[8] = {};
+    // Last 0x399 that carried a warning; 0 = none seen since boot.
+    uint32_t lastWarningMs_ = 0;
     uint32_t disarmedAtMs_ = 0;
     uint8_t consecutiveTxFailures_ = 0;
     uint8_t healsThisWindow_ = 0;

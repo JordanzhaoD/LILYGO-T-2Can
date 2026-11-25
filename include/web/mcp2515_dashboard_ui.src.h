@@ -2060,7 +2060,7 @@ var I18N={
   '后台流式写入，不阻塞 CAN':'Background streaming write, no CAN blocking','含 Model X CAN1 0x045 滚轮 RX/TX 及只读网关别名 0x238 / 0x292':'Model X CAN1 0x045 wheel RX/TX plus read-only gateway aliases 0x238 / 0x292','启动保存: ':'Boot save: ',
   '启用':'Enable','启用双拨触发':'Enable Double-Stalk Trigger','启用后按配置执行多次拨杆注入':'When enabled, runs multi-shot stalk injection per config',
   '启用自动偏移':'Enable Auto Offset','告警':'Alert','告警状态':'Alert Status',
-  '回声/镜像':'Echo/Mirror','状态/本轮点击/上限':'State/Clicks This Round/Cap','按下/松开/发送失败':'Press/Release/TX Fail','回声/动作帧':'Echo/Action Frames','提醒轮次/自愈':'Warning Rounds/Heals','已解除':'Disarmed','固件按当前 speedLimit 自动选择偏移比例，适合日常使用':'Firmware picks the offset ratio from the current speedLimit — good for daily use','固件版本':'Firmware Version',
+  '回声/镜像':'Echo/Mirror','状态/本轮点击/上限':'State/Clicks This Round/Cap','按下/松开/发送失败':'Press/Release/TX Fail','回声/动作帧':'Echo/Action Frames','提醒轮次/自愈':'Warning Rounds/Heals','已解除':'Disarmed','闸门拦截':'Gate blocked','固件按当前 speedLimit 自动选择偏移比例，适合日常使用':'Firmware picks the offset ratio from the current speedLimit — good for daily use','固件版本':'Firmware Version',
   '固定':'Fixed','固定加值，范围 0-33 km/h':'Fixed add-on, 0-33 km/h','固定百分比':'Fixed Percent',
   '均衡响应':'Balanced Response','城市快速路':'Urban Expressway','城市快速路 cp2':'Urban Expressway cp2',
   '基于车速和驾驶模式的自动换挡策略（示意图）':'Speed- and style-based auto shift strategy (illustrative)','填写每个速度区间的偏移百分比，范围 0-50%':'Set offset percent per speed range, 0-50%','声音警告抑制':'Chime Suppression',
@@ -3932,7 +3932,7 @@ function renderLegacyTruth(d){
   set('wheel-echo-state',`${wd.ownEchoRx||0} / ${wd.gatewayMirrorRx||0}`);
   set('wheel-blocked-reason',wd.blockedReason||'--');
   const rp=d.rightWheelPressDiag||{};
-  set('rp-hands-state',(rp.dasStatusAgeMs!==undefined&&rp.dasStatusAgeMs!==null)?`AP${rp.apState??'--'} · ${T('手部')}${rp.handsState??'--'} · ${rp.warningActive?T('告警'):T('等待')}${rp.disarmed?' · '+T('已解除'):''}`:T('等待 0x399'));
+  set('rp-hands-state',rp.dasStatusSeen?`AP${rp.apState??'--'} · ${T('手部')}${rp.handsState??'--'} · ${rp.warningActive?T('告警'):T('等待')}${rp.disarmed?' · '+T('已解除'):(rp.enabled&&!rp.runtimeAllowed?' · '+T('闸门拦截'):'')}`:T('等待 0x399'));
   set('rp-native-045',rp.native045Seen?`${rp.native045AgeMs} ms · C${Number(rp.nativeCounter||0).toString(16).toUpperCase()}`:T('等待 CAN1 0x045'));
   set('rp-sequence-state',`${rp.sequenceState||'idle'} / ${rp.pressesThisEpisode||0} / ${rp.maxPressesPerEpisode??2}`);
   set('rp-click-counts',`${rp.pressed||0} / ${rp.released||0} / ${rp.txFail||0}`);
